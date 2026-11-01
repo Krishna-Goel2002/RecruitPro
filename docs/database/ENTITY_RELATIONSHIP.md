@@ -30,6 +30,7 @@
 | 17 | Offer | Hiring | Formal job offer issued to a selected candidate |
 | 18 | Onboarding | Onboarding | Onboarding process for an accepted candidate |
 | 19 | OnboardingTask | Onboarding | Individual task/checklist item in onboarding |
+| 20 | RefreshToken | Auth | Hashed, expiring and revocable refresh-token record |
 
 ---
 
@@ -47,16 +48,16 @@
 | password_hash | VARCHAR(255) | NOT NULL |
 | first_name | VARCHAR(100) | NOT NULL |
 | last_name | VARCHAR(100) | NOT NULL |
-| phone | VARCHAR(20) | NULLABLE |
-| is_active | BOOLEAN | DEFAULT TRUE |
-| email_verified | BOOLEAN | DEFAULT FALSE |
+| role | VARCHAR(50) | NOT NULL; one of the predefined roles |
+| enabled | BOOLEAN | DEFAULT TRUE |
 | created_at | TIMESTAMP | NOT NULL |
 | updated_at | TIMESTAMP | NOT NULL |
 
 **Relationships:**
-- User → Many Roles (via user_roles join table)
+- User → One Role (stored as an enum string; Phase 2 implementation)
+- User → Many RefreshToken records (hashed tokens, deleted when the user is deleted)
 - User → Zero or One Candidate (if the user is a candidate)
-- User → Zero or One HRProfile (if the user is HR)
+- User → Zero or One HRProfile (for HR_MANAGER or RECRUITER users)
 
 ---
 
@@ -65,28 +66,37 @@
 **Module:** Auth  
 **Purpose:** Defines access levels within the system.
 
+Role is a Java enum persisted in `users.role` as a string. Phase 2 uses one role per user; separate `roles` and `user_roles` tables are not part of the current schema.
+
+**Predefined Values:**
+- ADMIN
+- HR_MANAGER
+- RECRUITER
+- INTERVIEWER
+- CANDIDATE
+
+**Relationships:**
+- User → one Role
+
+### 2.2a RefreshToken (Phase 2)
+
 | Field | Type | Constraints |
 |-------|------|------------|
 | id | BIGINT | PK, AUTO_INCREMENT |
-| name | VARCHAR(50) | UNIQUE, NOT NULL |
-| description | VARCHAR(255) | NULLABLE |
+| user_id | BIGINT | FK to users.id, ON DELETE CASCADE |
+| token_hash | VARCHAR(64) | UNIQUE, NOT NULL |
+| expires_at | TIMESTAMP | NOT NULL |
+| revoked_at | TIMESTAMP | NULLABLE |
+| created_at / updated_at | TIMESTAMP | NOT NULL |
 
-**Predefined Values:**
-- ROLE_ADMIN
-- ROLE_HR_MANAGER
-- ROLE_RECRUITER
-- ROLE_INTERVIEWER
-- ROLE_CANDIDATE
-
-**Relationships:**
-- Role → Many Users (via user_roles join table)
+The raw opaque token is returned once to the client. Only its SHA-256 hash is persisted. Successful refresh revokes the current record and creates a replacement.
 
 ---
 
-### 2.3 Candidate
+### 2.3 CandidateProfile (Phase 4)
 
 **Module:** Candidate  
-**Purpose:** Extended profile for users who are job seekers.
+**Purpose:** Extended profile for users who are job seekers. Table: `candidate_profiles`.
 
 | Field | Type | Constraints |
 |-------|------|------------|
@@ -112,7 +122,7 @@
 
 **Relationships:**
 - Candidate → One User (FK: user_id)
-- Candidate → Zero or One Resume
+- CandidateProfile → Many Resume records (resume history)
 - Candidate → Many Applications
 
 ---
@@ -149,18 +159,20 @@
 | created_by | BIGINT | FK → HRProfile, NOT NULL |
 | title | VARCHAR(255) | NOT NULL |
 | description | TEXT | NOT NULL |
-| department | VARCHAR(100) | NULLABLE |
-| location | VARCHAR(255) | NULLABLE |
-| job_type | ENUM | FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP |
-| experience_level | ENUM | ENTRY, MID, SENIOR, LEAD, EXECUTIVE |
-| min_salary | DECIMAL(12,2) | NULLABLE |
-| max_salary | DECIMAL(12,2) | NULLABLE |
-| vacancies | INTEGER | DEFAULT 1 |
-| status | ENUM | DRAFT, PUBLISHED, CLOSED, ON_HOLD, CANCELLED |
+| department | VARCHAR(100) | NOT NULL |
+| location | VARCHAR(255) | NOT NULL |
+| job_type | VARCHAR(30) | NOT NULL; FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP |
+| experience_level | VARCHAR(30) | NOT NULL; ENTRY, MID, SENIOR, LEAD, EXECUTIVE |
+| minimum_salary | DECIMAL(12,2) | NULLABLE, NON-NEGATIVE |
+| maximum_salary | DECIMAL(12,2) | NULLABLE, NON-NEGATIVE, >= minimum_salary |
+| vacancies | INTEGER | NOT NULL, DEFAULT 1, POSITIVE |
+| status | VARCHAR(30) | NOT NULL; DRAFT, PUBLISHED, ON_HOLD, CLOSED, CANCELLED |
 | published_at | TIMESTAMP | NULLABLE |
 | deadline | TIMESTAMP | NULLABLE |
 | created_at | TIMESTAMP | NOT NULL |
 | updated_at | TIMESTAMP | NOT NULL |
+
+The Phase 3 migration is `V4__create_hr_profiles_jobs_and_job_requirements.sql`. Jobs are editable and physically deletable only while DRAFT. Job requirements can be created, updated, and deleted only while their job is DRAFT. Enum names are persisted as strings.
 
 **Relationships:**
 - Job → One HRProfile (FK: created_by)
@@ -183,13 +195,15 @@
 | description | VARCHAR(500) | NOT NULL |
 | is_mandatory | BOOLEAN | DEFAULT TRUE |
 | min_years | INTEGER | NULLABLE |
+| created_at | TIMESTAMP | NOT NULL |
+| updated_at | TIMESTAMP | NOT NULL |
 
 **Relationships:**
 - JobRequirement → One Job (FK: job_id)
 
 ---
 
-### 2.7 Resume
+### 2.7 Resume (Phase 4 metadata; parsing is future scope)
 
 **Module:** Candidate  
 **Purpose:** Uploaded resume file and AI-extracted metadata.
@@ -197,22 +211,20 @@
 | Field | Type | Constraints |
 |-------|------|------------|
 | id | BIGINT | PK, AUTO_INCREMENT |
-| candidate_id | BIGINT | FK → Candidate, UNIQUE, NOT NULL |
-| file_name | VARCHAR(255) | NOT NULL |
-| file_path | VARCHAR(500) | NOT NULL |
-| file_type | VARCHAR(50) | NOT NULL |
+| candidate_id | BIGINT | FK → CandidateProfile, NOT NULL |
+| storage_key | VARCHAR(36) | UNIQUE opaque identifier, NOT NULL |
+| original_filename | VARCHAR(255) | Display metadata, NOT NULL |
+| file_extension | VARCHAR(10) | NOT NULL |
+| content_type | VARCHAR(100) | Detected type, NOT NULL |
 | file_size | BIGINT | NOT NULL |
 | uploaded_at | TIMESTAMP | NOT NULL |
-| is_parsed | BOOLEAN | DEFAULT FALSE |
-| parsed_at | TIMESTAMP | NULLABLE |
-| extracted_text | TEXT | NULLABLE |
-| extracted_skills | JSON | NULLABLE |
-| extracted_education | JSON | NULLABLE |
-| extracted_experience | JSON | NULLABLE |
+| created_at / updated_at | TIMESTAMP | NOT NULL |
 
 **Relationships:**
-- Resume → One Candidate (FK: candidate_id)
-- Resume → Zero or Many AIAnalysis
+- Resume → One CandidateProfile (FK: candidate_id)
+- Resume → Many Applications (the submitted resume is retained per application)
+
+The file itself is stored in a private filesystem directory. API DTOs never expose the storage key or an absolute path. Resume records are retained when new resumes are uploaded.
 
 ---
 
@@ -226,17 +238,20 @@
 | id | BIGINT | PK, AUTO_INCREMENT |
 | candidate_id | BIGINT | FK → Candidate, NOT NULL |
 | job_id | BIGINT | FK → Job, NOT NULL |
-| status | ENUM | SUBMITTED, UNDER_REVIEW, SHORTLISTED, ASSESSMENT, INTERVIEW, SELECTED, OFFERED, HIRED, REJECTED, WITHDRAWN |
+| resume_id | BIGINT | FK → Resume, NOT NULL |
+| status | VARCHAR(30) | SUBMITTED or WITHDRAWN in Phase 4 |
 | cover_letter | TEXT | NULLABLE |
 | applied_at | TIMESTAMP | NOT NULL |
 | updated_at | TIMESTAMP | NOT NULL |
 
 **Constraints:**
 - UNIQUE(candidate_id, job_id) — a candidate can apply to a job only once.
+- Phase 4 creates applications as SUBMITTED. Candidates may withdraw only while SUBMITTED; HR transitions are future scope.
 
 **Relationships:**
 - Application → One Candidate (FK: candidate_id)
 - Application → One Job (FK: job_id)
+- Application → One Resume (FK: resume_id; exact uploaded version used)
 - Application → Zero or One MatchResult
 - Application → Zero or Many AssessmentAttempts
 - Application → Zero or Many Interviews
@@ -501,8 +516,7 @@
 
 ```mermaid
 erDiagram
-    USER ||--o{ USER_ROLES : has
-    ROLE ||--o{ USER_ROLES : assigned_to
+    USER ||--o{ REFRESH_TOKEN : owns
     USER ||--o| CANDIDATE : "may be"
     USER ||--o| HR_PROFILE : "may be"
 
@@ -539,13 +553,17 @@ erDiagram
         varchar password_hash
         varchar first_name
         varchar last_name
-        boolean is_active
+        varchar role
+        boolean enabled
         timestamp created_at
     }
 
-    ROLE {
+    REFRESH_TOKEN {
         bigint id PK
-        varchar name UK
+        bigint user_id FK
+        varchar token_hash UK
+        timestamp expires_at
+        timestamp revoked_at
     }
 
     CANDIDATE {
@@ -580,16 +598,18 @@ erDiagram
     RESUME {
         bigint id PK
         bigint candidate_id FK
-        varchar file_path
-        boolean is_parsed
-        json extracted_skills
+        varchar storage_key UK
+        varchar original_filename
+        varchar content_type
+        bigint file_size
     }
 
     APPLICATION {
         bigint id PK
         bigint candidate_id FK
         bigint job_id FK
-        enum status
+        bigint resume_id FK
+        varchar status
         timestamp applied_at
     }
 
@@ -678,7 +698,7 @@ erDiagram
 ## 4. Module-Entity Ownership
 
 ```
-Module 1 (Auth)        → User, Role, user_roles
+Module 1 (Auth)        → User (enum role), RefreshToken
 Module 2 (HR)          → HRProfile, Job, JobRequirement
 Module 3 (Candidate)   → Candidate, Resume
 Module 4 (Application) → Application

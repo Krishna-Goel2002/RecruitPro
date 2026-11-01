@@ -1,84 +1,36 @@
-# AI Service — Python FastAPI
+# RecruitPro resume intelligence service
 
-## AI-Powered Recruitment & Hiring Management Platform
+This internal FastAPI service extracts evidence from private candidate resumes and compares structured resume facts with Spring Boot job requirements. Spring Boot remains authoritative for candidate identity, roles, resumes, applications, jobs, permissions, and persistent results. The service does not make hiring decisions.
 
-This is the AI/NLP microservice responsible for intelligent analysis of resumes and job matching.
+## Processing behavior
 
-## Tech Stack
+- Text-based PDF and DOCX files are parsed locally with `pdfplumber` and `python-docx`.
+- The parser stores no full resume text. It returns typed facts with source section, optional PDF page reference, and a short evidence excerpt. Email and phone facts are candidate-only at the Spring API; contact details are removed from other evidence snippets.
+- Text extraction is rule-based and intentionally conservative. It recognizes a small versioned set of common skills and labeled education, experience, and certification sections. A partial result means facts were not all recognized; it does not mean an unobserved qualification is absent.
+- Image-only scanned PDFs and DOCX files return `NEEDS_OCR`. OCR is not enabled. Legacy `.doc` uploads remain in resume history and can be used in applications, but extraction returns `UNSUPPORTED_FORMAT`.
+- Matching is deterministic weighted requirement evidence coverage: mandatory requirements have weight 2, optional requirements weight 1, and only fully `MATCHED` requirements contribute. `UNCLEAR` and `NOT_OBSERVED` do not add points. The score is not a probability of success. `OTHER` requirements are left for human review; protected characteristics are not matched.
+- No external model, paid API, cloud storage, or outbound resume upload is used. Semantic matching and OCR are not included in this initial implementation.
 
-- **Python 3.11+**
-- **FastAPI** — high-performance async web framework
-- **Uvicorn** — ASGI server
-- **Pydantic** — data validation and serialization
-- **spaCy** / **transformers** / **scikit-learn** — NLP and ML (future phases)
+## Run locally
 
-## Project Structure
+Python 3.10 or later is required. Set the same generated random value for `AI_SERVICE_TOKEN` in the environment of both processes before starting them. Do not commit the actual value.
 
-```
-ai-service/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI application entry point
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── v1/
-│   │       ├── __init__.py
-│   │       ├── resume.py    # Resume parsing endpoints
-│   │       ├── matching.py  # Candidate-job matching endpoints
-│   │       └── ranking.py   # Candidate ranking endpoints
-│   ├── core/
-│   │   ├── __init__.py
-│   │   └── config.py        # Application settings
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── requests.py      # Pydantic request models
-│   │   └── responses.py     # Pydantic response models
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── resume_parser.py
-│   │   ├── matching_engine.py
-│   │   └── ranking_engine.py
-│   ├── ml/                  # ML model code (Phase 5+)
-│   │   └── __init__.py
-│   └── utils/
-│       ├── __init__.py
-│       └── text_processing.py
-├── tests/
-│   ├── __init__.py
-│   └── test_main.py
-├── models/                  # Trained ML model files (gitignored)
-├── requirements.txt
-├── requirements-dev.txt
-└── README.md                # This file
-```
-
-## API Endpoints (Planned)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| POST | `/api/v1/resume/parse` | Parse and extract resume data |
-| POST | `/api/v1/match` | Match candidate to job |
-| POST | `/api/v1/rank` | Rank candidates for a job |
-
-## Setup (Phase 5+)
-
-```bash
+```powershell
 cd ai-service
-python -m venv venv
-venv\Scripts\activate        # Windows
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+$env:AI_SERVICE_TOKEN = "<same-random-value-as-backend>"
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-The API will be available at `http://localhost:8000`.  
-Swagger docs at `http://localhost:8000/docs`.
+The Python API has no browser CORS access and its interactive API documentation is disabled. Spring Boot calls the protected endpoints with `X-Internal-Service-Token`. Keep the service bound to localhost for development and on a private network in deployment.
 
-## Key Constraint
+## Tests
 
-This service provides **analysis and recommendations only**. It does NOT make hiring decisions or modify recruitment state. The Spring Boot backend is the sole authority for business state.
+```powershell
+pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
+```
 
----
-
-> 🚧 The AI service will be implemented starting in Phase 5 (Resume Intelligence).
-> This README serves as the architectural placeholder.
+The tests cover PDF/DOCX extraction, evidence and contact redaction, scanned/empty/malformed/oversized/unsupported files, deterministic matching, and internal service authentication.

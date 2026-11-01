@@ -14,34 +14,22 @@ It does NOT independently make hiring decisions.
 """
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.v1.intelligence import router as intelligence_router
 
 app = FastAPI(
     title="Recruitment AI Service",
     description="AI/NLP service for resume analysis, candidate-job matching, and ranking",
     version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
-# CORS — allow the Spring Boot backend to call this service
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:8080"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.include_router(intelligence_router, prefix="/api/v1", tags=["Resume intelligence"])
 
 
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "recruitment-ai-service", "version": "0.1.0"}
-
-
-# ---- Future route registrations (Phase 5+) ----
-# from app.api.v1 import resume, matching, ranking
-# app.include_router(resume.router, prefix="/api/v1/resume", tags=["Resume"])
-# app.include_router(matching.router, prefix="/api/v1/match", tags=["Matching"])
-# app.include_router(ranking.router, prefix="/api/v1/rank", tags=["Ranking"])

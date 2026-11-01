@@ -26,6 +26,7 @@ backend/*.war
 backend/*.class
 backend/.mvn/wrapper/maven-wrapper.jar
 backend/logs/
+backend/uploads/
 
 # === Node / React Frontend ===
 frontend/node_modules/
@@ -40,6 +41,8 @@ frontend/yarn-debug.log*
 frontend/yarn-error.log*
 
 # === Python AI Service ===
+**/__pycache__/
+*.py[cod]
 ai-service/__pycache__/
 ai-service/*.pyc
 ai-service/*.pyo
@@ -60,6 +63,10 @@ ai-service/.pytest_cache/
 # === Logs ===
 *.log
 logs/
+
+# === Local-only isolated integration-test launcher and storage ===
+/test-data/scripts/Start-RecruitProMigrationTest.ps1
+test-data/resume-storage-*/
 
 # === Docker (future) ===
 docker-compose.override.yml

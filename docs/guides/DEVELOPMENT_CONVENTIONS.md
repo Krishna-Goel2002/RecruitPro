@@ -236,6 +236,37 @@ Examples:
 - Complex business logic must have inline comments
 - Architecture decisions must be documented in `docs/architecture/`
 
+## 8. Authentication & Authorization (Phase 2)
+
+- Run backend checks from `backend/`: `mvnw.cmd clean test` and `mvnw.cmd clean compile` (or `./mvnw` on Unix-like shells).
+- Public authentication routes are `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, and `POST /api/v1/auth/logout`. Refresh and logout authenticate using the refresh-token body. Health and Swagger endpoints are public; application routes and non-health actuator routes require authentication.
+- Registration always creates a `CANDIDATE`, regardless of any submitted role. Assign `ADMIN`, `HR_MANAGER`, `RECRUITER`, or `INTERVIEWER` only through trusted provisioning.
+- Each user has one role. Spring authorities use the `ROLE_` prefix (for example `ROLE_HR_MANAGER`), while API responses and `users.role` use the enum name without the prefix.
+- Access tokens are signed JWTs. Refresh tokens are opaque, persisted only as SHA-256 hashes, single-use, rotated on refresh, and revocable through logout. Default lifetimes are 24 hours and 7 days respectively.
+- Supply `JWT_SECRET` in every environment (at least 256 bits); production also requires `CORS_ALLOWED_ORIGINS` set to the deployed frontend origin list. Keep credentials in environment variables, never in committed configuration.
+- Auth and API errors use the shared `ApiResponse` shape: `success`, `message`, optional `errors`, and `timestamp`. Authentication failures return 401; authorization failures return 403.
+
+## 9. HR Job Management (Phase 3)
+
+- Jobs are created as DRAFT. Only ADMIN and HR_MANAGER can create, edit, transition, or delete; RECRUITER has read-only list/detail access; INTERVIEWER and CANDIDATE are denied.
+- `PUT /api/v1/jobs/{id}` and all requirement mutations are limited to DRAFT jobs. Physical job deletion is limited to DRAFT; other statuses are retained.
+- Lifecycle transitions are DRAFT → PUBLISHED/CANCELLED, PUBLISHED → ON_HOLD/CLOSED, and ON_HOLD → PUBLISHED/CLOSED. CLOSED and CANCELLED are terminal. Never change lifecycle through the full update API.
+- Publishing requires title, description, department, location, job type, experience level, positive vacancies, valid non-negative salary range, and a future deadline if provided. A structured requirement is not mandatory to publish; deadline itself is optional.
+- List parameters: page default 0, size default 20 (1–100), status, department (case-insensitive exact), location (case-insensitive substring), jobType, search (title substring), sort (`createdAt`, `title`, `department`, `location`, `status`, `deadline` only; default `createdAt`), and direction (default `DESC`).
+- Provision HR profiles through trusted account provisioning. Job creation does not silently create a profile; it returns a clear error when none exists.
+- V4 adds `hr_profiles`, `jobs`, and `job_requirements`; enum values use strings and JPA schema generation remains `validate`.
+
+## 10. Candidate Portal (Phase 4)
+
+- Candidate identity comes from the authenticated principal. Do not accept candidate or user IDs from client input as an ownership boundary.
+- Public registration continues to force the CANDIDATE role and provisions the candidate profile transactionally.
+- Candidates see only PUBLISHED jobs; unpublished direct lookups return 404. Existing HR and recruiter job permissions stay unchanged.
+- Keep resumes in private storage configured with `FILE_STORAGE_PATH`. Use generated opaque names, never a client filename for a storage path, and serve downloads only after resolving the resume through the authenticated candidate.
+- Accept only the configured PDF, DOCX, and DOC formats, validate extension and file content, and cap file size at 10 MB. Do not expose storage keys or absolute paths in API responses.
+- Keep resume history. Every application references the exact resume row selected at submission; uploading another resume must not change prior applications.
+- Applications require an owned resume and an open PUBLISHED job. Enforce duplicate prevention in service logic and with a unique `(candidate_id, job_id)` database constraint. Phase 4 statuses are SUBMITTED and WITHDRAWN; only SUBMITTED applications can be withdrawn by a candidate.
+- V5–V7 add candidate profiles, resume metadata, and applications. Never edit V1–V4; Flyway remains the schema authority and Hibernate uses `validate`.
+
 ---
 
 *This document defines the development standards for all contributors. Follow these conventions consistently across all phases.*
