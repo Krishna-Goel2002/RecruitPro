@@ -1,5 +1,7 @@
 # RecruitPro — Admin Portal Architecture & Specification
 
+> **Update (WP-BE-A, November 2026).** Administrators now manage one organisation: every admin query is scoped to the caller's organisation and other organisations' users and jobs return 404. The audit trail is persisted in the `audit_events` table (`AuditService`, `GET /api/v1/admin/audit-logs?action=`, `GET /api/v1/admin/audit-export`), replacing the in-memory ring buffer. The console provisioners were removed; first accounts come from organisation sign-up, `BootstrapRunner` (`BOOTSTRAP_*` variables) or invitations (`/api/v1/admin/invitations`). Role changes are limited to staff roles, and the job override follows the transition table PUBLISHED→ON_HOLD/CLOSED, ON_HOLD→CLOSED, DRAFT→CANCELLED. The database is PostgreSQL 16. See [docs/plan/WP-BE-A-NOTES.md](../plan/WP-BE-A-NOTES.md). Diagrams below predate these changes where they mention MySQL, the ring buffer or `AdminProvisioningService`.
+
 ## 1. Executive Summary
 
 The **Admin Portal** is a production-oriented management and governance subsystem within RecruitPro. It equips authorized platform administrators with global oversight of user identities, recruitment personnel, job opportunities, applications, and system operations while preserving the Spring Boot backend as the single system of record and maintaining strict data isolation.
@@ -27,11 +29,11 @@ flowchart TD
         AUS["AdminUserService"]
         AHS["AdminHrManagementService"]
         AJS["AdminJobService"]
-        AAS["AdminAuditService (Ring-Buffer + SLF4J)"]
-        APS["AdminProvisioningService"]
+        AAS["AuditService (audit_events table + SLF4J)"]
+        APS["OrganizationService / InvitationService"]
     end
 
-    subgraph Data_Layer["Database & Infrastructure (MySQL 8 / H2 in Tests)"]
+    subgraph Data_Layer["Database & Infrastructure (PostgreSQL 16 / H2 in Tests)"]
         UR["UserRepository"]
         HRR["HRProfileRepository"]
         CPR["CandidateProfileRepository"]
@@ -205,7 +207,7 @@ sequenceDiagram
     rect rgb(255, 250, 240)
         Note over Svc,Audit: Audit Recording Phase
         Svc->>Audit: record("ADMIN_JOB_STATUS_OVERRIDE", "JOB", jobId, details)
-        Audit->>Audit: Add AdminAuditRecord to Concurrent Ring Buffer
+        Audit->>Audit: Insert AuditEvent into audit_events (same transaction)
         Audit->>Logger: structured log (actor, target, reason)
     end
 
@@ -251,7 +253,7 @@ flowchart TD
 
     RoleType -- "ADMIN or INTERVIEWER" --> Audit
 
-    Audit["Record Audit Event in Concurrent Ring-Buffer"] --> Done(["Return Updated AdminUserResponse (HTTP 200)"])
+    Audit["Persist AuditEvent in audit_events"] --> Done(["Return Updated AdminUserResponse (HTTP 200)"])
 ```
 
 ---
@@ -269,25 +271,26 @@ All endpoints reside under `/api/v1/admin/**` and are secured with `@PreAuthoriz
 | `GET` | `/api/v1/admin/hr-team` | Directory of HR & recruiter staff | None | `List<AdminHrMemberResponse>` | 401, 403 |
 | `GET` | `/api/v1/admin/jobs` | Global job postings across all HRs | `page`, `size`, `status`, `department`, `search` | `PageResponse<AdminJobOverviewResponse>` | 400, 401, 403 |
 | `PATCH` | `/api/v1/admin/jobs/{id}/status` | Administrative status override | `{"status": JobStatus, "reason": String}` | `AdminJobOverviewResponse` | 400 (missing reason or invalid status), 401, 403, 404 |
-| `GET` | `/api/v1/admin/audit-logs` | Query administrative audit trail | `page`, `size` | `PageResponse<AdminAuditRecord>` | 400, 401, 403 |
+| `GET` | `/api/v1/admin/audit-logs` | Query the organisation's persistent audit trail | `page`, `size`, `action` | `PageResponse<AuditEventResponse>` | 400, 401, 403 |
+| `GET` | `/api/v1/admin/audit-export` | CSV export of the audit trail | `from`, `to` (ISO-8601) | `text/csv` | 400, 401, 403 |
+| `GET`/`PATCH` | `/api/v1/admin/organization` | Organisation settings | `{name?, blindReview?, shareVerificationStatus?}` | `OrganizationResponse` | 400, 401, 403 |
+| `GET`/`POST` | `/api/v1/admin/invitations` | List / invite staff | `{email, role}` | `InvitationResponse` | 400, 401, 403, 409 |
+| `DELETE` | `/api/v1/admin/invitations/{id}` | Revoke an invitation | None | `null` | 400, 401, 403, 404 |
 
 ---
 
 ## 7. Security Safeguards & Governance Rules
 
-1. **Zero Schema Mutations / Flyway Boundary**:
-   - `Start-RecruitProRebuildTest.ps1` mandates that Flyway history match exactly V1–V10.
-   - The administrative audit log is intentionally maintained in an in-memory concurrent ring buffer (`AdminAuditService`) backed by structured SLF4J security logger output, satisfying complete audit trail criteria without generating forward Flyway migrations that violate test database preflights.
-2. **Last-Active-Administrator Guard**:
+1. **Persistent audit trail**:
+   - Every administrative and security action is written to `audit_events` (Flyway V13) with organisation, actor, client IP and sanitised details, in the same transaction as the change, and mirrored to the `SECURITY_AUDIT` log.
+2. **Last-Active-Administrator Guard** (the organisation's administrators are locked with `PESSIMISTIC_WRITE` before the check):
    - Deactivating the last active administrator account is unconditionally rejected with HTTP 400.
    - Changing the role of the last active administrator is unconditionally rejected with HTTP 400.
    - Self-deactivation by the caller is rejected to prevent accidental administrative lockout.
 3. **Audit Log Privacy**:
    - Password hashes, session tokens, and sensitive candidate PII are never recorded in audit log records or log streams.
-4. **Interactive Bootstrap Provisioning**:
-   - `LocalAdminProvisioner` runs only in the `dev` Spring profile and throws `IllegalStateException` if `prod` is active.
-   - Prompt input passwords are zeroed out (`Arrays.fill(password, '\0')`) in memory immediately after use.
-   - If an administrator already exists in the database, provisioning automatically skips.
+4. **First-account bootstrap**:
+   - `BootstrapRunner` creates the first organisation and administrator from `BOOTSTRAP_ORG_NAME`, `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` when no organisation exists; otherwise organisation sign-up and invitations are used. The interactive console provisioners were removed.
 
 ---
 

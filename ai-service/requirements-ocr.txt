@@ -1,0 +1,3 @@
+# Optional OCR for scanned resumes. Install on top of requirements.txt and set OCR_ENABLED=true.
+-r requirements.txt
+rapidocr-onnxruntime==1.4.4

@@ -2,11 +2,9 @@ package com.recruitpro.candidate.dto;
 
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
-import java.time.LocalDate;
 
+/** PUT /api/v1/candidates/me. {@code dateOfBirth} and {@code gender} are no longer accepted (D14); unknown keys are ignored. */
 public record CandidateProfileUpdateRequest(
-        @Past LocalDate dateOfBirth,
-        @Size(max = 30) String gender,
         @Size(max = 5000) String address,
         @Size(max = 100) String city,
         @Size(max = 100) String state,

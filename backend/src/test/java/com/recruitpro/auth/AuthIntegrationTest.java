@@ -10,6 +10,7 @@ import com.recruitpro.auth.entity.RefreshToken;
 import com.recruitpro.candidate.repository.CandidateProfileRepository;
 import com.recruitpro.security.jwt.JwtService;
 import com.recruitpro.security.userdetails.CustomUserDetails;
+import com.recruitpro.support.TestDatabase;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -31,6 +33,8 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.UUID;
 import java.security.MessageDigest;
 import java.util.Date;
 import java.util.Map;
@@ -53,12 +57,16 @@ class AuthIntegrationTest {
     @Autowired CandidateProfileRepository candidateProfileRepository;
     @Autowired PasswordEncoder passwordEncoder;
     @Autowired JwtService jwtService;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setUp() {
-        refreshTokenRepository.deleteAll();
-        candidateProfileRepository.deleteAll();
-        userRepository.deleteAll();
+        TestDatabase.clean(jdbcTemplate);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void tearDown() {
+        TestDatabase.clean(jdbcTemplate);
     }
 
     @Test
@@ -69,7 +77,16 @@ class AuthIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.data.accessToken").isNotEmpty())
                 .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
-                .andExpect(jsonPath("$.data.user.role").value("CANDIDATE")).andReturn();
+                .andExpect(jsonPath("$.data.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.data.expiresInSeconds").value(900))
+                .andExpect(jsonPath("$.data.user.role").value("CANDIDATE"))
+                .andExpect(jsonPath("$.data.user.emailVerified").value(false)).andReturn();
+        String setCookie = result.getResponse().getHeader("Set-Cookie");
+        assertNotNull(setCookie);
+        assertTrue(setCookie.startsWith("rp_refresh="));
+        assertTrue(setCookie.contains("HttpOnly"));
+        assertTrue(setCookie.contains("SameSite=Strict"));
+        assertTrue(setCookie.contains("Path=/api/v1/auth"));
         String body = result.getResponse().getContentAsString();
         assertFalse(body.contains("passwordHash"));
         assertFalse(body.contains("SecurePassword123!"));
@@ -94,6 +111,16 @@ class AuthIntegrationTest {
         weak.setPassword("short");
         mockMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(weak)))
+                .andExpect(status().isBadRequest());
+        RegisterRequest noDigit = registration("nodigit@example.com");
+        noDigit.setPassword("OnlyLettersHere");
+        mockMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(noDigit)))
+                .andExpect(status().isBadRequest());
+        RegisterRequest nineChars = registration("nine@example.com");
+        nineChars.setPassword("Abcdefg12");
+        mockMvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(nineChars)))
                 .andExpect(status().isBadRequest());
     }
 
@@ -147,12 +174,19 @@ class AuthIntegrationTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("data");
         String secondRefresh = refreshed.get("refreshToken").asText();
         assertNotEquals(firstRefresh, secondRefresh);
+        // Within the 30-second grace window the rotated token still yields an access token (concurrent tabs)
+        // but no new refresh token.
         mockMvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(refreshBody(firstRefresh)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.refreshToken").doesNotExist());
         mockMvc.perform(post("/api/v1/auth/logout").contentType(MediaType.APPLICATION_JSON)
                         .content(refreshBody(secondRefresh)))
                 .andExpect(status().isOk());
         mockMvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(refreshBody(secondRefresh)))
+                .andExpect(status().isUnauthorized());
+        // After logout the whole family is revoked, so the grace window no longer applies either.
+        mockMvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON).content(refreshBody(firstRefresh)))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -161,7 +195,8 @@ class AuthIntegrationTest {
         User user = userRepository.save(user("expired-refresh@example.com", Role.CANDIDATE, true));
         String rawToken = "expired-refresh-token";
         refreshTokenRepository.save(RefreshToken.builder().user(user).tokenHash(hashForTest(rawToken))
-                .expiresAt(LocalDateTime.now().minusMinutes(1)).build());
+                .familyId(UUID.randomUUID().toString())
+                .expiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1)).build());
         mockMvc.perform(post("/api/v1/auth/refresh").contentType(MediaType.APPLICATION_JSON)
                         .content(refreshBody(rawToken)))
                 .andExpect(status().isUnauthorized());
@@ -178,6 +213,33 @@ class AuthIntegrationTest {
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/test/security/admin").header("Authorization", "Bearer " + expiredJwt()))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void validTokenOfDeletedOrDisabledUserIsUnauthenticatedNotServerError() throws Exception {
+        User saved = userRepository.save(user("vanishing@example.com", Role.ADMIN, true));
+        String token = jwtService.generateToken(new CustomUserDetails(saved));
+        mockMvc.perform(get("/test/security/admin").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        saved.setEnabled(false);
+        userRepository.save(saved);
+        mockMvc.perform(get("/test/security/admin").header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+        userRepository.deleteById(saved.getId());
+        mockMvc.perform(get("/test/security/admin").header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void accessTokenCarriesUserIdRoleAndOrganizationClaims() {
+        User saved = userRepository.save(user("claims@example.com", Role.CANDIDATE, true));
+        String token = jwtService.generateToken(new CustomUserDetails(saved));
+        var claims = jwtService.parse(token).orElseThrow();
+        assertEquals(saved.getId(), JwtService.userIdClaim(claims));
+        assertEquals("CANDIDATE", claims.get(JwtService.CLAIM_ROLE));
+        assertEquals("claims@example.com", claims.getSubject());
+        long lifetimeSeconds = (claims.getExpiration().getTime() - claims.getIssuedAt().getTime()) / 1000;
+        assertEquals(900, lifetimeSeconds);
     }
 
     @Test

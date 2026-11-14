@@ -3,9 +3,12 @@ package com.recruitpro.hr;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.recruitpro.hr.entity.HRProfile;
 import com.recruitpro.hr.repository.HRProfileRepository;
+import com.recruitpro.organization.entity.Organization;
+import com.recruitpro.support.TestDataFactory;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,14 +33,25 @@ class JobManagementIntegrationTest {
     @Autowired UserRepository users;
     @Autowired HRProfileRepository profiles;
     @Autowired ObjectMapper mapper;
+    @Autowired TestDataFactory fixtures;
     private String email;
+    private String recruiterEmail;
+    private Organization organization;
 
     @BeforeEach
     void setUp() {
+        fixtures.cleanDatabase();
+        organization = fixtures.organization("Job Management Org");
         email = "hr-" + UUID.randomUUID() + "@example.test";
-        User user = users.save(User.builder().email(email).passwordHash("test").firstName("Test")
-                .lastName("HR").role(Role.HR_MANAGER).enabled(true).build());
+        User user = fixtures.staff(organization, email, Role.HR_MANAGER);
         HRProfile profile = new HRProfile(); profile.setUser(user); profile.setDepartment("People"); profiles.save(profile);
+        recruiterEmail = "recruiter-" + UUID.randomUUID() + "@example.test";
+        fixtures.staff(organization, recruiterEmail, Role.RECRUITER);
+    }
+
+    @AfterEach
+    void tearDown() {
+        fixtures.cleanDatabase();
     }
 
     private String jobJson() {
@@ -96,36 +110,76 @@ class JobManagementIntegrationTest {
         String result = mvc.perform(post("/api/v1/jobs").with(auth).contentType(MediaType.APPLICATION_JSON).content(jobJson()))
                 .andReturn().getResponse().getContentAsString();
         long id = mapper.readTree(result).path("data").path("id").asLong();
-        mvc.perform(get("/api/v1/jobs/{id}", id).with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("recruiter").roles("RECRUITER")))
+        mvc.perform(get("/api/v1/jobs/{id}", id).with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(recruiterEmail).roles("RECRUITER")))
                 .andExpect(status().isOk());
-        mvc.perform(delete("/api/v1/jobs/{id}", id).with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("recruiter").roles("RECRUITER")))
+        mvc.perform(delete("/api/v1/jobs/{id}", id).with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(recruiterEmail).roles("RECRUITER")))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void anotherHrManagerCannotMutateOrCloseAJobTheyDoNotOwn() throws Exception {
+    void hrManagerOfAnotherOrganisationCannotSeeOrMutateTheJob() throws Exception {
         var owner = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(email).roles("HR_MANAGER");
         String created = mvc.perform(post("/api/v1/jobs").with(owner).contentType(MediaType.APPLICATION_JSON).content(jobJson()))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         long id = mapper.readTree(created).path("data").path("id").asLong();
+        Organization otherOrganization = fixtures.organization("Other Job Org");
+        String otherEmail = "other-manager-" + UUID.randomUUID() + "@example.test";
+        fixtures.staff(otherOrganization, otherEmail, Role.HR_MANAGER);
         var otherManager = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors
-                .user("other-manager@example.test").roles("HR_MANAGER");
+                .user(otherEmail).roles("HR_MANAGER");
 
+        mvc.perform(get("/api/v1/jobs/{id}", id).with(otherManager))
+                .andExpect(status().isNotFound());
         mvc.perform(put("/api/v1/jobs/{id}", id).with(otherManager)
                         .contentType(MediaType.APPLICATION_JSON).content(jobJson()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mvc.perform(patch("/api/v1/jobs/{id}/status", id).with(otherManager)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"PUBLISHED\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mvc.perform(post("/api/v1/jobs/{id}/requirements", id).with(otherManager)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"type\":\"SKILL\",\"description\":\"Java\",\"mandatory\":true}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mvc.perform(delete("/api/v1/jobs/{id}", id).with(otherManager))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/jobs").with(otherManager))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements", is(0)));
 
         mvc.perform(get("/api/v1/jobs/{id}", id).with(owner))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status", is("DRAFT")));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status", is("DRAFT")))
+                .andExpect(jsonPath("$.data.organizationId", is(organization.getId().intValue())));
+    }
+
+    @Test
+    void anotherHrManagerOfTheSameOrganisationManagesTheJob() throws Exception {
+        var owner = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(email).roles("HR_MANAGER");
+        String created = mvc.perform(post("/api/v1/jobs").with(owner).contentType(MediaType.APPLICATION_JSON).content(jobJson()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        long id = mapper.readTree(created).path("data").path("id").asLong();
+        String colleagueEmail = "colleague-" + UUID.randomUUID() + "@example.test";
+        fixtures.staff(organization, colleagueEmail, Role.HR_MANAGER);
+        var colleague = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors
+                .user(colleagueEmail).roles("HR_MANAGER");
+        mvc.perform(patch("/api/v1/jobs/{id}/status", id).with(colleague)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"PUBLISHED\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status", is("PUBLISHED")));
+    }
+
+    @Test
+    void searchTreatsLikeWildcardsLiterally() throws Exception {
+        var hr = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(email).roles("HR_MANAGER");
+        mvc.perform(post("/api/v1/jobs").with(hr).contentType(MediaType.APPLICATION_JSON).content(jobJson()))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/jobs").with(hr).contentType(MediaType.APPLICATION_JSON)
+                        .content(jobJson().replace("Backend Engineer", "100% Remote_Role")))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/v1/jobs").param("search", "%").with(hr))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements", is(1)))
+                .andExpect(jsonPath("$.data.content[0].title", is("100% Remote_Role")));
+        mvc.perform(get("/api/v1/jobs").param("search", "_").with(hr))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements", is(1)));
+        mvc.perform(get("/api/v1/jobs").param("search", "engineer").with(hr))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements", is(1)));
     }
 
     @Test
@@ -140,11 +194,18 @@ class JobManagementIntegrationTest {
     }
 
     @Test
-    @WithMockUser(roles="ADMIN")
-    void missingProfileReturnsClearBusinessErrorAndInvalidPayloadIsRejected() throws Exception {
-        var auth = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("no-profile@example.test").roles("ADMIN");
+    void adminWithoutProfileGetsOneAutomaticallyAndInvalidPayloadIsRejected() throws Exception {
+        String adminEmail = "admin-no-profile-" + UUID.randomUUID() + "@example.test";
+        User admin = fixtures.staff(organization, adminEmail, Role.ADMIN);
+        var auth = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(adminEmail).roles("ADMIN");
         mvc.perform(post("/api/v1/jobs").with(auth).contentType(MediaType.APPLICATION_JSON).content(jobJson()))
-                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("does not have an HR profile")));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.createdByEmail", is(adminEmail)));
+        org.junit.jupiter.api.Assertions.assertTrue(profiles.findByUserId(admin.getId()).isPresent());
+
+        var unknown = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("no-account@example.test").roles("ADMIN");
+        mvc.perform(post("/api/v1/jobs").with(unknown).contentType(MediaType.APPLICATION_JSON).content(jobJson()))
+                .andExpect(status().isUnauthorized());
+
         var hr = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(email).roles("HR_MANAGER");
         mvc.perform(post("/api/v1/jobs").with(hr).contentType(MediaType.APPLICATION_JSON)
                         .content(jobJson().replace("\"vacancies\":2", "\"vacancies\":0")))
@@ -182,8 +243,7 @@ class JobManagementIntegrationTest {
     void adminCanManageAndLifecycleCanHoldResumeAndClose() throws Exception {
         // Associate this ADMIN account with a provisioned HR profile, as required for job ownership.
         String adminEmail = "admin-" + UUID.randomUUID() + "@example.test";
-        User admin = users.save(User.builder().email(adminEmail).passwordHash("test").firstName("Test")
-                .lastName("Admin").role(Role.ADMIN).enabled(true).build());
+        User admin = fixtures.staff(organization, adminEmail, Role.ADMIN);
         HRProfile profile = new HRProfile(); profile.setUser(admin); profiles.save(profile);
         var auth = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(adminEmail).roles("ADMIN");
         String result = mvc.perform(post("/api/v1/jobs").with(auth).contentType(MediaType.APPLICATION_JSON).content(jobJson()))

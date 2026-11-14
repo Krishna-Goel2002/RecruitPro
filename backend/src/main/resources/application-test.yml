@@ -1,6 +1,8 @@
 # ============================================
 # Test Environment Configuration
-# Profile: test
+# Profile: test — Flyway runs the PostgreSQL migrations on H2 in PostgreSQL mode.
+# ddl-auto is "none" because H2 reports TEXT as CLOB, which Hibernate's validator rejects;
+# schema/entity agreement is validated against real PostgreSQL by the CI smoke job instead.
 # ============================================
 
 spring:
@@ -9,7 +11,7 @@ spring:
       on-profile: test
 
   datasource:
-    url: jdbc:h2:mem:recruitment_test_db;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
+    url: jdbc:h2:mem:recruitpro;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
     username: sa
     password:
@@ -20,20 +22,44 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
     show-sql: false
     open-in-view: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.H2Dialect
 
 app:
-  ai-service:
-    queue-enabled: false
-  file-storage:
-    upload-dir: ./target/test-uploads
   jwt:
     secret: test-signing-key-for-recruitpro-tests-minimum-32-bytes
+  auth:
+    cookie-secure: false
+    expose-refresh-token-in-body: true
+    require-verified-email-to-apply: false
+  rate-limit:
+    enabled: false
+  background-jobs:
+    enabled: false
+  jobs:
+    deadline-closer:
+      enabled: false
+  work-samples:
+    expiry-sweep:
+      enabled: false
+  notifications:
+    sender-enabled: false
+  mail:
+    enabled: false
+  invitations:
+    expose-link: true
+  frontend:
+    candidate-url: http://localhost:5173
+    hr-url: http://localhost:5174
+  seed:
+    demo: false
+  bootstrap:
+    org-name: ""
+    admin-email: ""
+    admin-password: ""
+  file-storage:
+    upload-dir: ./target/test-uploads
 
 logging:
   level:

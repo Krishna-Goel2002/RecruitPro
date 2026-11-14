@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+/** AuthUser (Section 5.1). */
 @Data
 @Builder
 @AllArgsConstructor
@@ -15,4 +16,7 @@ public class UserResponse {
     private String firstName;
     private String lastName;
     private String role;
+    private Long organizationId;
+    private String organizationName;
+    private boolean emailVerified;
 }

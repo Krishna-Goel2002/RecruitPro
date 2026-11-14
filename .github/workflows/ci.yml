@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (mvn verify, JDK 21)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build and test
+        run: |
+          chmod +x mvnw
+          ./mvnw -B verify
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: backend/target/surefire-reports
+
+  backend-smoke:
+    name: Backend smoke test on PostgreSQL 16 (dev profile)
+    runs-on: ubuntu-latest
+    needs: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: recruitpro
+          POSTGRES_USER: recruitpro
+          POSTGRES_PASSWORD: recruitpro
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U recruitpro -d recruitpro"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_URL: jdbc:postgresql://localhost:5432/recruitpro
+      DB_USERNAME: recruitpro
+      DB_PASSWORD: recruitpro
+      JWT_SECRET: ci-only-jwt-secret-not-for-production-0123456789
+      APP_SEED_DEMO: "true"
+      BACKGROUND_JOBS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Package
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -DskipTests package
+      - name: Start the jar (Flyway on PostgreSQL, Hibernate validate, demo seed)
+        run: |
+          mkdir -p "$RUNNER_TEMP/uploads"
+          FILE_STORAGE_PATH="$RUNNER_TEMP/uploads" nohup java -jar target/recruitment-platform-*.jar > "$RUNNER_TEMP/backend.log" 2>&1 &
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/api/v1/health; then
+              echo; echo "Backend is up"; exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend did not become healthy"; cat "$RUNNER_TEMP/backend.log"; exit 1
+      - name: Sign in with a seeded demo account
+        run: |
+          curl -fsS -X POST http://localhost:8080/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"admin@acme.test","password":"ChangeMe-123!"}' > "$RUNNER_TEMP/login.json"
+          grep -q '"accessToken"' "$RUNNER_TEMP/login.json"
+          TOKEN=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['data']['accessToken'])" "$RUNNER_TEMP/login.json")
+          curl -fsS http://localhost:8080/api/v1/admin/dashboard -H "Authorization: Bearer $TOKEN" > /dev/null
+          curl -fsS http://localhost:8080/api/v1/jobs -H "Authorization: Bearer $TOKEN" > /dev/null
+      - name: Backend log
+        if: always()
+        run: cat "$RUNNER_TEMP/backend.log" || true
+
+  ai-service:
+    name: AI service (pytest + evaluation thresholds)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ai-service/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: python -m eval.run --check
+
+  migrations:
+    name: Flyway migrations on PostgreSQL 16
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pgserver psycopg2-binary tree-sitter tree-sitter-java
+      - run: python -B tools/check_migrations_pg.py
+      - run: python -B tools/check_entity_schema.py
+
+  java-static:
+    name: Java static check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install tree-sitter tree-sitter-java
+      - run: python -B tools/java_static_check.py backend/src
+
+  frontends:
+    name: Frontend build (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [frontend, hr-frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.app }}/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build

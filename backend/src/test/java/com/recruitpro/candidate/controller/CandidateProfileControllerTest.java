@@ -20,7 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class CandidateProfileControllerTest {
     private static final CandidateProfileResponse PROFILE = new CandidateProfileResponse(
-            42L, "candidate@example.test", "Asha", "Rao", null, null, null, null, null, null,
+            42L, "candidate@example.test", "Asha", "Rao", null, null, null, null,
             null, null, null, null, null, null, null, null, null, null, null);
 
     @AfterEach
@@ -41,7 +41,9 @@ class CandidateProfileControllerTest {
         mvc.perform(get("/api/v1/candidates/me/profile"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id", is(42)))
-                .andExpect(jsonPath("$.data.email", is("candidate@example.test")));
+                .andExpect(jsonPath("$.data.email", is("candidate@example.test")))
+                .andExpect(jsonPath("$.data.dateOfBirth").doesNotExist())
+                .andExpect(jsonPath("$.data.gender").doesNotExist());
         mvc.perform(get("/api/v1/candidates/me"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id", is(42)));

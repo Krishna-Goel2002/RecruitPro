@@ -18,9 +18,11 @@ import com.recruitpro.hr.entity.JobStatus;
 import com.recruitpro.hr.entity.JobType;
 import com.recruitpro.hr.repository.HRProfileRepository;
 import com.recruitpro.hr.repository.JobRepository;
-import com.recruitpro.hr.dto.ApplicationDecisionRequest;
-import com.recruitpro.hr.service.ApplicationReviewService;
+import com.recruitpro.hr.dto.DecisionRequest;
+import com.recruitpro.hr.service.ApplicationDecisionService;
 import com.recruitpro.common.exception.BadRequestException;
+import com.recruitpro.organization.entity.Organization;
+import com.recruitpro.support.TestDataFactory;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
@@ -70,7 +72,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.reset;
 
-@SpringBootTest(properties = "app.ai-service.poll-interval-ms=3600000")
+@SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class ApplicationReviewAuthorizationIntegrationTest {
@@ -86,14 +88,18 @@ class ApplicationReviewAuthorizationIntegrationTest {
     @Autowired com.recruitpro.candidate.repository.ResumeAnalysisRepository resumeAnalyses;
     @Autowired com.recruitpro.candidate.repository.ResumeAnalysisFactRepository resumeFacts;
     @Autowired com.recruitpro.hr.repository.JobMatchRunRepository matchRuns;
-    @Autowired ApplicationReviewService reviewService;
+    @Autowired ApplicationDecisionService decisionService;
     @Autowired ApplicationService applicationService;
     @SpyBean ApplicationDecisionHistoryRepository history;
     @PersistenceContext EntityManager entityManager;
+    @Autowired TestDataFactory fixtures;
 
     private String ownerEmail;
+    private String colleagueHrEmail;
     private String otherHrEmail;
     private String adminEmail;
+    private String recruiterEmail;
+    private Organization organization;
     private CandidateProfile candidate;
     private CandidateProfile secondCandidate;
     private Job job;
@@ -101,32 +107,30 @@ class ApplicationReviewAuthorizationIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        fixtures.cleanDatabase();
         String suffix = UUID.randomUUID().toString();
         ownerEmail = "review-owner-" + suffix + "@example.test";
-        otherHrEmail = "review-other-hr-" + suffix + "@example.test";
+        colleagueHrEmail = "review-colleague-hr-" + suffix + "@example.test";
+        otherHrEmail = "review-other-org-hr-" + suffix + "@example.test";
         adminEmail = "review-admin-" + suffix + "@example.test";
+        recruiterEmail = "review-recruiter-" + suffix + "@example.test";
         candidate = createCandidate("review-candidate-" + suffix + "@example.test");
         secondCandidate = createCandidate("review-candidate-two-" + suffix + "@example.test");
 
-        HRProfile owner = createHr(ownerEmail, Role.HR_MANAGER);
-        createHr(otherHrEmail, Role.HR_MANAGER);
-        createUser(adminEmail, Role.ADMIN);
+        organization = fixtures.organization("Review Org");
+        Organization otherOrganization = fixtures.organization("Other Review Org");
+        HRProfile owner = createHr(organization, ownerEmail, Role.HR_MANAGER);
+        createHr(organization, colleagueHrEmail, Role.HR_MANAGER);
+        createHr(otherOrganization, otherHrEmail, Role.HR_MANAGER);
+        fixtures.staff(organization, adminEmail, Role.ADMIN);
+        fixtures.staff(organization, recruiterEmail, Role.RECRUITER);
         job = createJob(owner);
         application = createApplication(candidate, job);
     }
 
     @AfterEach
     void tearDown() {
-        matchRuns.deleteAll();
-        history.deleteAll();
-        applications.deleteAll();
-        resumeFacts.deleteAll();
-        resumeAnalyses.deleteAll();
-        resumes.deleteAll();
-        candidates.deleteAll();
-        jobs.deleteAll();
-        hrProfiles.deleteAll();
-        users.deleteAll();
+        fixtures.cleanDatabase();
     }
 
     @Test
@@ -147,8 +151,8 @@ class ApplicationReviewAuthorizationIntegrationTest {
 
     @Test
     @Timeout(45)
-    void nonHrRolesIncludingRecruiterCannotDecideCommentOrReadHistory() throws Exception {
-        for (String role : List.of("CANDIDATE", "RECRUITER", "INTERVIEWER")) {
+    void candidatesAndInterviewersCannotReviewAndRecruitersCannotDecide() throws Exception {
+        for (String role : List.of("CANDIDATE", "INTERVIEWER")) {
             var principal = user(role.toLowerCase() + "-" + UUID.randomUUID() + "@example.test").roles(role);
             mvc.perform(post(REVIEW_ROUTE + "/shortlist", job.getId(), application.getId())
                             .with(principal).contentType(MediaType.APPLICATION_JSON).content("{}"))
@@ -162,28 +166,57 @@ class ApplicationReviewAuthorizationIntegrationTest {
             mvc.perform(get(REVIEW_ROUTE + "/history", job.getId(), application.getId()).with(principal))
                     .andExpect(status().isForbidden());
         }
+        var recruiter = user(recruiterEmail).roles("RECRUITER");
+        for (String decision : List.of("/shortlist", "/reject", "/reveal")) {
+            mvc.perform(post(REVIEW_ROUTE + decision, job.getId(), application.getId())
+                            .with(recruiter).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                    .andExpect(status().isForbidden());
+        }
+        mvc.perform(post(REVIEW_ROUTE + "/decisions", job.getId(), application.getId())
+                        .with(recruiter).contentType(MediaType.APPLICATION_JSON).content("{\"action\":\"SHORTLIST\"}"))
+                .andExpect(status().isForbidden());
+        assertEquals(ApplicationStatus.SUBMITTED, applications.findById(application.getId()).orElseThrow().getStatus());
+        assertEquals(0, history.findAllByApplicationIdOrderByCreatedAtAscIdAsc(application.getId()).size());
+
+        // Recruiters of the organisation comment and read the history (plan 5.4).
+        mvc.perform(put(REVIEW_ROUTE + "/review-comment", job.getId(), application.getId())
+                        .with(recruiter).contentType(MediaType.APPLICATION_JSON).content("{\"comment\":\"Recruiter note\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.actionType", is("COMMENT_UPDATED")));
+        mvc.perform(get(REVIEW_ROUTE + "/history", job.getId(), application.getId()).with(recruiter))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()", is(1)));
+        assertEquals(ApplicationStatus.SUBMITTED, applications.findById(application.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    @Timeout(45)
+    void hrManagerOfAnotherOrganisationSeesTheJobAsMissing() throws Exception {
+        var principal = user(otherHrEmail).roles("HR_MANAGER");
+        mvc.perform(post(REVIEW_ROUTE + "/shortlist", job.getId(), application.getId())
+                        .with(principal).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(post(REVIEW_ROUTE + "/reject", job.getId(), application.getId())
+                        .with(principal).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(put(REVIEW_ROUTE + "/review-comment", job.getId(), application.getId())
+                        .with(principal).contentType(MediaType.APPLICATION_JSON).content("{\"comment\":\"review\"}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(get(REVIEW_ROUTE + "/history", job.getId(), application.getId()).with(principal))
+                .andExpect(status().isNotFound());
+
         assertEquals(ApplicationStatus.SUBMITTED, applications.findById(application.getId()).orElseThrow().getStatus());
         assertEquals(0, history.findAllByApplicationIdOrderByCreatedAtAscIdAsc(application.getId()).size());
     }
 
     @Test
     @Timeout(45)
-    void nonOwnerHrCannotDecideCommentOrReadOwnerScopedHistory() throws Exception {
-        var principal = user(otherHrEmail).roles("HR_MANAGER");
+    void anyHrManagerOfTheOrganisationManagesTheJob() throws Exception {
+        var colleague = user(colleagueHrEmail).roles("HR_MANAGER");
         mvc.perform(post(REVIEW_ROUTE + "/shortlist", job.getId(), application.getId())
-                        .with(principal).contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(post(REVIEW_ROUTE + "/reject", job.getId(), application.getId())
-                        .with(principal).contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(put(REVIEW_ROUTE + "/review-comment", job.getId(), application.getId())
-                        .with(principal).contentType(MediaType.APPLICATION_JSON).content("{\"comment\":\"review\"}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(get(REVIEW_ROUTE + "/history", job.getId(), application.getId()).with(principal))
-                .andExpect(status().isForbidden());
-
-        assertEquals(ApplicationStatus.SUBMITTED, applications.findById(application.getId()).orElseThrow().getStatus());
-        assertEquals(0, history.findAllByApplicationIdOrderByCreatedAtAscIdAsc(application.getId()).size());
+                        .with(colleague).contentType(MediaType.APPLICATION_JSON).content("{\"comment\":\"Colleague decision\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.newStatus", is("SHORTLISTED")));
+        mvc.perform(get(REVIEW_ROUTE + "/history", job.getId(), application.getId()).with(colleague))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()", is(2)))
+                .andExpect(jsonPath("$.data[1].actionType", is("IDENTITY_REVEALED")));
     }
 
     @Test
@@ -199,7 +232,7 @@ class ApplicationReviewAuthorizationIntegrationTest {
                 .andExpect(status().isOk());
         mvc.perform(get(REVIEW_ROUTE + "/history", job.getId(), application.getId())
                         .with(user(ownerEmail).roles("HR_MANAGER")))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()", is(2)));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()", is(3)));
 
         Application adminApplication = createApplication(secondCandidate, job);
         mvc.perform(post(REVIEW_ROUTE + "/reject", job.getId(), adminApplication.getId())
@@ -234,9 +267,8 @@ class ApplicationReviewAuthorizationIntegrationTest {
                 throw new IllegalStateException("synthetic failure after audit insert flush");
             }).when(history).saveAndFlush(any(ApplicationDecisionHistory.class));
 
-            Assertions.assertThrows(IllegalStateException.class, () -> reviewService.decide(job.getId(),
-                    application.getId(), ApplicationStatus.SHORTLISTED,
-                    new com.recruitpro.hr.dto.ApplicationDecisionRequest("must roll back")));
+            Assertions.assertThrows(IllegalStateException.class, () -> decisionService.decide(job.getId(),
+                    application.getId(), new DecisionRequest(ApplicationDecisionAction.SHORTLIST, "must roll back")));
         } finally {
             reset(history);
             SecurityContextHolder.clearContext();
@@ -246,6 +278,8 @@ class ApplicationReviewAuthorizationIntegrationTest {
         Application afterFailure = applications.findById(application.getId()).orElseThrow();
         assertEquals(ApplicationStatus.SUBMITTED, afterFailure.getStatus());
         assertNull(afterFailure.getReviewComment());
+        assertNull(afterFailure.getIdentityRevealedAt());
+        assertNull(afterFailure.getStatusChangedAt());
         assertEquals(0, history.findAllByApplicationIdOrderByCreatedAtAscIdAsc(application.getId()).size());
     }
 
@@ -256,30 +290,31 @@ class ApplicationReviewAuthorizationIntegrationTest {
         ExecutorService workers = Executors.newFixedThreadPool(2);
         try {
             Future<Boolean> decision = workers.submit(concurrentRequest(ownerEmail, "HR_MANAGER", start,
-                    () -> reviewService.decide(job.getId(), application.getId(), ApplicationStatus.SHORTLISTED,
-                            new ApplicationDecisionRequest("synthetic HR decision"))));
+                    () -> decisionService.decide(job.getId(), application.getId(),
+                            new DecisionRequest(ApplicationDecisionAction.SHORTLIST, "synthetic HR decision"))));
             Future<Boolean> withdrawal = workers.submit(concurrentRequest(candidate.getUser().getEmail(), "CANDIDATE", start,
                     () -> applicationService.withdraw(application.getId())));
             start.await(10, TimeUnit.SECONDS);
 
             boolean decisionSucceeded = decision.get(20, TimeUnit.SECONDS);
             boolean withdrawalSucceeded = withdrawal.get(20, TimeUnit.SECONDS);
-            assertNotEquals(decisionSucceeded, withdrawalSucceeded,
-                    "the pessimistic application lock permits exactly one transition from SUBMITTED");
+            assertTrue(withdrawalSucceeded, "a candidate may withdraw a submitted or shortlisted application");
 
+            // The row lock serialises the two transitions: either SUBMITTED -> SHORTLISTED -> WITHDRAWN,
+            // or SUBMITTED -> WITHDRAWN and the shortlist is rejected; never a lost update.
             Application persisted = applications.findById(application.getId()).orElseThrow();
             List<ApplicationDecisionHistory> events = history.findAllByApplicationIdOrderByCreatedAtAscIdAsc(application.getId());
+            assertEquals(ApplicationStatus.WITHDRAWN, persisted.getStatus());
             if (decisionSucceeded) {
-                assertEquals(ApplicationStatus.SHORTLISTED, persisted.getStatus());
                 assertEquals("synthetic HR decision", persisted.getReviewComment());
-                assertEquals(1, events.size());
-                assertEquals(ApplicationDecisionAction.SHORTLIST, events.get(0).getActionType());
-                assertEquals(ApplicationStatus.SUBMITTED, events.get(0).getPreviousStatus());
-                assertEquals(ApplicationStatus.SHORTLISTED, events.get(0).getNewStatus());
+                assertEquals(List.of(ApplicationDecisionAction.SHORTLIST, ApplicationDecisionAction.IDENTITY_REVEALED,
+                        ApplicationDecisionAction.WITHDRAW), events.stream().map(ApplicationDecisionHistory::getActionType).toList());
+                assertEquals(ApplicationStatus.SHORTLISTED, events.get(2).getPreviousStatus());
             } else {
-                assertEquals(ApplicationStatus.WITHDRAWN, persisted.getStatus());
                 assertNull(persisted.getReviewComment());
-                assertEquals(0, events.size());
+                assertEquals(1, events.size());
+                assertEquals(ApplicationDecisionAction.WITHDRAW, events.get(0).getActionType());
+                assertEquals(ApplicationStatus.SUBMITTED, events.get(0).getPreviousStatus());
             }
         } finally {
             workers.shutdownNow();
@@ -313,9 +348,9 @@ class ApplicationReviewAuthorizationIntegrationTest {
         return candidates.save(profile);
     }
 
-    private HRProfile createHr(String email, Role role) {
+    private HRProfile createHr(Organization owningOrganization, String email, Role role) {
         HRProfile profile = new HRProfile();
-        profile.setUser(createUser(email, role));
+        profile.setUser(fixtures.staff(owningOrganization, email, role));
         return hrProfiles.save(profile);
     }
 
@@ -327,6 +362,7 @@ class ApplicationReviewAuthorizationIntegrationTest {
     private Job createJob(HRProfile owner) {
         Job created = new Job();
         created.setCreatedBy(owner);
+        created.setOrganizationId(organization.getId());
         created.setTitle("Synthetic Review Job");
         created.setDescription("Synthetic job description for authorization tests");
         created.setDepartment("Engineering");
@@ -419,9 +455,9 @@ class ApplicationReviewAuthorizationIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.totalElements", is(4)));
 
-        // 7. Recruiter can also list
+        // 7. Recruiter of the organisation can also list
         mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", job.getId())
-                        .with(user("recruiter-" + UUID.randomUUID() + "@example.test").roles("RECRUITER")))
+                        .with(user(recruiterEmail).roles("RECRUITER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.totalElements", is(4)));
     }
@@ -438,10 +474,10 @@ class ApplicationReviewAuthorizationIntegrationTest {
                         .with(user(candidate.getUser().getEmail()).roles("CANDIDATE")))
                 .andExpect(status().isForbidden());
 
-        // Non-owner HR -> 403
+        // HR of another organisation -> 404 (foreign jobs behave as missing)
         mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", job.getId())
                         .with(user(otherHrEmail).roles("HR_MANAGER")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -459,7 +495,10 @@ class ApplicationReviewAuthorizationIntegrationTest {
                         .with(ownerPrincipal).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
 
-        // 3. Reject on already SHORTLISTED -> 400
+        // 3. Reject a SHORTLISTED application -> OK (plan 3.4); rejecting again -> 400
+        mvc.perform(post(REVIEW_ROUTE + "/reject", job.getId(), application.getId())
+                        .with(ownerPrincipal).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
         mvc.perform(post(REVIEW_ROUTE + "/reject", job.getId(), application.getId())
                         .with(ownerPrincipal).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
@@ -476,13 +515,18 @@ class ApplicationReviewAuthorizationIntegrationTest {
                         .with(ownerPrincipal).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest());
 
-        // 5. Updating comment on SUBMITTED application before any decision is taken -> 400
+        // 5. Comments are notes and are allowed before any decision (plan 5.4)
         CandidateProfile candSubmitted = createCandidate("review-submitted-app-" + UUID.randomUUID() + "@example.test");
         Application submittedApp = createApplication(candSubmitted, job);
 
         mvc.perform(put(REVIEW_ROUTE + "/review-comment", job.getId(), submittedApp.getId())
                         .with(ownerPrincipal).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"comment\":\"Early comment\"}"))
+                .andExpect(status().isOk());
+
+        // 6. Undo and reopen need a reason
+        mvc.perform(post(REVIEW_ROUTE + "/decisions", job.getId(), application.getId())
+                        .with(ownerPrincipal).contentType(MediaType.APPLICATION_JSON).content("{\"action\":\"REOPEN\"}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -501,9 +545,9 @@ class ApplicationReviewAuthorizationIntegrationTest {
                         .param("size", "0").with(ownerPrincipal))
                 .andExpect(status().isBadRequest());
 
-        // Size > 50 -> 400
+        // Size > 100 -> 400
         mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", job.getId())
-                        .param("size", "51").with(ownerPrincipal))
+                        .param("size", "101").with(ownerPrincipal))
                 .andExpect(status().isBadRequest());
 
         // Comment > 2000 chars -> 400
@@ -523,8 +567,9 @@ class ApplicationReviewAuthorizationIntegrationTest {
         mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", job.getId()).with(ownerPrincipal))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.content[0].analysisStatus").doesNotExist())
-                .andExpect(jsonPath("$.data.content[0].observedEvidenceCoverage").doesNotExist())
-                .andExpect(jsonPath("$.data.content[0].matchingErrorCode", is("ANALYSIS_NOT_AVAILABLE")));
+                .andExpect(jsonPath("$.data.content[0].verifiedCoverage").doesNotExist())
+                .andExpect(jsonPath("$.data.content[0].matchStatus", is("NO_REQUIREMENTS")))
+                .andExpect(jsonPath("$.data.content[0].rankGroup", is("UNSCORED")));
 
         // HR makes independent human decision
         String commentText = "Human HR evaluation: Strong fit verified in technical interview";
@@ -537,10 +582,10 @@ class ApplicationReviewAuthorizationIntegrationTest {
                 .andExpect(jsonPath("$.data.actorName", is("Test User")))
                 .andExpect(jsonPath("$.data.comment", is(commentText)));
 
-        // Audit history reflects human actor and timestamp
+        // Audit history reflects human actor and timestamp (plus the automatic identity reveal, D4)
         mvc.perform(get(REVIEW_ROUTE + "/history", job.getId(), application.getId()).with(ownerPrincipal))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.length()", is(1)))
+                .andExpect(jsonPath("$.data.length()", is(2)))
                 .andExpect(jsonPath("$.data[0].actionType", is("SHORTLIST")))
                 .andExpect(jsonPath("$.data[0].actorName", is("Test User")))
                 .andExpect(jsonPath("$.data[0].comment", is(commentText)));

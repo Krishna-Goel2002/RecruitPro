@@ -11,9 +11,12 @@ import com.recruitpro.candidate.storage.ResumeStorage;
 import com.recruitpro.hr.entity.*;
 import com.recruitpro.hr.repository.HRProfileRepository;
 import com.recruitpro.hr.repository.JobRepository;
+import com.recruitpro.organization.entity.Organization;
+import com.recruitpro.support.TestDataFactory;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,22 +50,31 @@ class CandidatePortalIntegrationTest {
     @Autowired ResumeRepository resumes;
     @Autowired ApplicationRepository applications;
     @Autowired ResumeStorage resumeStorage;
+    @Autowired TestDataFactory fixtures;
+    Organization organization;
     String candidateEmail, otherEmail;
     CandidateProfile candidate, other;
     Job published, draft, closed;
 
     @BeforeEach
     void setUp() {
+        fixtures.cleanDatabase();
         String suffix = UUID.randomUUID().toString();
         candidateEmail = "candidate-" + suffix + "@example.test";
         otherEmail = "other-" + suffix + "@example.test";
         candidate = createCandidate(candidateEmail);
         other = createCandidate(otherEmail);
-        User hr = user("hr-" + suffix + "@example.test", Role.HR_MANAGER);
+        organization = fixtures.organization("Candidate Portal Org");
+        User hr = fixtures.staff(organization, "hr-" + suffix + "@example.test", Role.HR_MANAGER);
         HRProfile profile = new HRProfile(); profile.setUser(hr); hrProfiles.save(profile);
         published = createJob(profile, JobStatus.PUBLISHED, "Published " + suffix);
         draft = createJob(profile, JobStatus.DRAFT, "Draft " + suffix);
         closed = createJob(profile, JobStatus.CLOSED, "Closed " + suffix);
+    }
+
+    @AfterEach
+    void tearDown() {
+        fixtures.cleanDatabase();
     }
 
     @Test
@@ -70,7 +82,8 @@ class CandidatePortalIntegrationTest {
         String email = "new-" + UUID.randomUUID() + "@example.test";
         String body = "{\"firstName\":\"New\",\"lastName\":\"Candidate\",\"email\":\"" + email + "\",\"password\":\"StrongPassword123!\"}";
         mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON).content(body))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.user.role", is("CANDIDATE")));
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.user.role", is("CANDIDATE")))
+                .andExpect(jsonPath("$.data.user.organizationId").doesNotExist());
         mvc.perform(get("/api/v1/candidates/me").with(candidateAuth(email)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.email", is(email)));
         mvc.perform(put("/api/v1/candidates/me").with(candidateAuth(email)).contentType(MediaType.APPLICATION_JSON)
@@ -135,7 +148,9 @@ class CandidatePortalIntegrationTest {
         var auth = candidateAuth(candidateEmail);
         mvc.perform(get("/api/v1/jobs").with(auth).param("status", "DRAFT").param("search", published.getTitle()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.content.length()", is(1)))
-                .andExpect(jsonPath("$.data.content[0].status", is("PUBLISHED")));
+                .andExpect(jsonPath("$.data.content[0].title", is(published.getTitle())))
+                .andExpect(jsonPath("$.data.content[0].organizationName", is("Candidate Portal Org")))
+                .andExpect(jsonPath("$.data.content[0].createdByEmail").doesNotExist());
         mvc.perform(get("/api/v1/jobs/{id}", draft.getId()).with(auth)).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/jobs/{id}", closed.getId()).with(auth)).andExpect(status().isNotFound());
         mvc.perform(post("/api/v1/jobs/{id}/applications", published.getId()).with(auth)
@@ -218,7 +233,7 @@ class CandidatePortalIntegrationTest {
         return users.save(User.builder().email(email).passwordHash("test").firstName("Test").lastName("User").role(role).enabled(true).build());
     }
     private Job createJob(HRProfile profile, JobStatus status, String title) {
-        Job j = new Job(); j.setCreatedBy(profile); j.setTitle(title); j.setDescription("Description"); j.setDepartment("Engineering");
+        Job j = new Job(); j.setCreatedBy(profile); j.setOrganizationId(organization.getId()); j.setTitle(title); j.setDescription("Description"); j.setDepartment("Engineering");
         j.setLocation("Remote"); j.setJobType(JobType.FULL_TIME); j.setExperienceLevel(ExperienceLevel.MID);
         j.setMinimumSalary(new BigDecimal("50000")); j.setMaximumSalary(new BigDecimal("90000")); j.setVacancies(1);
         j.setStatus(status); if (status == JobStatus.PUBLISHED) j.setPublishedAt(LocalDateTime.now());

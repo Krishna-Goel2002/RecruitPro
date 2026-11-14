@@ -25,7 +25,6 @@ public class CandidateProfileService {
 
     public CandidateProfileResponse updateMine(CandidateProfileUpdateRequest request) {
         CandidateProfile p = currentProfile();
-        p.setDateOfBirth(request.dateOfBirth()); p.setGender(trim(request.gender()));
         p.setAddress(trim(request.address())); p.setCity(trim(request.city())); p.setState(trim(request.state()));
         p.setCountry(trim(request.country())); p.setZipCode(trim(request.zipCode()));
         p.setLinkedinUrl(trim(request.linkedinUrl())); p.setPortfolioUrl(trim(request.portfolioUrl()));

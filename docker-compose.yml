@@ -1,0 +1,97 @@
+# RecruitPro local stack: `docker compose up --build`
+#   Candidate portal  http://localhost:5173
+#   HR portal         http://localhost:5174
+#   Backend API       http://localhost:8080/api/v1  (Swagger UI: /swagger-ui.html)
+#   AI service        http://localhost:8000/health
+#   Mailpit (email)   http://localhost:8025
+# Development values only. Copy .env.example to .env to override secrets.
+name: recruitpro
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: recruitpro
+      POSTGRES_USER: recruitpro
+      POSTGRES_PASSWORD: recruitpro
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recruitpro -d recruitpro"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"   # web UI
+      - "1025:1025"   # SMTP
+
+  ai-service:
+    build: ./ai-service
+    environment:
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-dev-only-ai-service-token-change-me-0123456789}
+      LLM_PROVIDER: ${LLM_PROVIDER:-none}
+    ports:
+      - "8000:8000"
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      ai-service:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      DB_URL: jdbc:postgresql://postgres:5432/recruitpro
+      DB_USERNAME: recruitpro
+      DB_PASSWORD: recruitpro
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-0123456789abcdef}
+      AI_SERVICE_URL: http://ai-service:8000
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-dev-only-ai-service-token-change-me-0123456789}
+      MAIL_HOST: mailpit
+      MAIL_PORT: "1025"
+      MAIL_ENABLED: "true"
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:5174
+      CANDIDATE_PORTAL_URL: http://localhost:5173
+      HR_PORTAL_URL: http://localhost:5174
+      APP_SEED_DEMO: ${APP_SEED_DEMO:-true}
+      APP_SEED_PASSWORD: ${APP_SEED_PASSWORD:-ChangeMe-123!}
+      BOOTSTRAP_ORG_NAME: ${BOOTSTRAP_ORG_NAME:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      FILE_STORAGE_PATH: /data/uploads
+    ports:
+      - "8080:8080"
+    volumes:
+      - resume-uploads:/data/uploads
+
+  candidate-portal:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8080/api/v1
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+  hr-portal:
+    build:
+      context: ./hr-frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8080/api/v1
+    depends_on:
+      - backend
+    ports:
+      - "5174:80"
+
+volumes:
+  postgres-data:
+  resume-uploads:

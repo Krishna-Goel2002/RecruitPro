@@ -1,14 +1,16 @@
 package com.recruitpro.admin.service;
 
-import com.recruitpro.admin.audit.AdminAuditService;
 import com.recruitpro.admin.dto.AdminUserResponse;
-import com.recruitpro.candidate.entity.CandidateProfile;
-import com.recruitpro.candidate.repository.CandidateProfileRepository;
+import com.recruitpro.audit.service.AuditActions;
+import com.recruitpro.audit.service.AuditService;
+import com.recruitpro.auth.service.RefreshTokenService;
 import com.recruitpro.common.dto.PageResponse;
 import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
-import com.recruitpro.hr.entity.HRProfile;
-import com.recruitpro.hr.repository.HRProfileRepository;
+import com.recruitpro.common.util.LikePatterns;
+import com.recruitpro.hr.service.HrProfileService;
+import com.recruitpro.security.CurrentUser;
+import com.recruitpro.security.SecurityUtils;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
@@ -19,8 +21,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -28,23 +28,31 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Staff administration within the caller's organisation (D3). Users of other organisations behave as
+ * missing (404). The last enabled administrator cannot be disabled or demoted; the check locks the
+ * organisation's administrators first (L3).
+ */
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class AdminUserService {
     private final UserRepository userRepository;
-    private final HRProfileRepository hrProfileRepository;
-    private final CandidateProfileRepository candidateProfileRepository;
-    private final AdminAuditService auditService;
+    private final HrProfileService hrProfileService;
+    private final RefreshTokenService refreshTokenService;
+    private final AuditService auditService;
+    private final SecurityUtils securityUtils;
 
     @Transactional(readOnly = true)
     public PageResponse<AdminUserResponse> listUsers(int page, int size, String search, Role role, Boolean enabled) {
         if (page < 0 || size < 1 || size > 100) {
             throw new BadRequestException("page must be non-negative and size between 1 and 100");
         }
+        Long organizationId = securityUtils.requireOrganizationId();
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         Specification<User> spec = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
+            predicates.add(cb.equal(root.get("organizationId"), organizationId));
             if (role != null) {
                 predicates.add(cb.equal(root.get("role"), role));
             }
@@ -52,11 +60,11 @@ public class AdminUserService {
                 predicates.add(cb.equal(root.get("enabled"), enabled));
             }
             if (StringUtils.hasText(search)) {
-                String pattern = "%" + search.trim().toLowerCase() + "%";
+                String pattern = LikePatterns.containsLower(search);
                 predicates.add(cb.or(
-                        cb.like(cb.lower(root.get("email")), pattern),
-                        cb.like(cb.lower(root.get("firstName")), pattern),
-                        cb.like(cb.lower(root.get("lastName")), pattern)));
+                        cb.like(cb.lower(root.get("email")), pattern, LikePatterns.ESCAPE),
+                        cb.like(cb.lower(root.get("firstName")), pattern, LikePatterns.ESCAPE),
+                        cb.like(cb.lower(root.get("lastName")), pattern, LikePatterns.ESCAPE)));
             }
             return cb.and(predicates.toArray(new Predicate[0]));
         };
@@ -78,19 +86,15 @@ public class AdminUserService {
     }
 
     public AdminUserResponse updateUserStatus(Long userId, boolean enabled) {
-        User user = userRepository.findById(userId)
+        CurrentUser admin = securityUtils.requireOrganizationMember();
+        User user = userRepository.findByIdAndOrganizationId(userId, admin.organizationId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
 
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String currentAdminEmail = auth != null ? auth.getName() : null;
-
-        // Protection: cannot disable self or last active admin
         if (!enabled && user.getRole() == Role.ADMIN) {
-            if (currentAdminEmail != null && currentAdminEmail.equalsIgnoreCase(user.getEmail())) {
+            if (admin.userId().equals(user.getId())) {
                 throw new BadRequestException("Administrators cannot deactivate their own account");
             }
-            long activeAdmins = userRepository.countByRoleAndEnabled(Role.ADMIN, true);
-            if (activeAdmins <= 1) {
+            if (user.isEnabled() && userRepository.lockEnabledByOrganizationAndRole(admin.organizationId(), Role.ADMIN).size() <= 1) {
                 throw new BadRequestException("Cannot deactivate the last active administrator");
             }
         }
@@ -98,9 +102,12 @@ public class AdminUserService {
         boolean previous = user.isEnabled();
         user.setEnabled(enabled);
         User saved = userRepository.saveAndFlush(user);
+        if (previous && !enabled) {
+            refreshTokenService.revokeAllForUser(saved.getId(), RefreshTokenService.REASON_ACCOUNT_DISABLED);
+        }
 
         auditService.record(
-                "USER_STATUS_CHANGED",
+                AuditActions.USER_STATUS_CHANGED,
                 "USER",
                 String.valueOf(user.getId()),
                 String.format("User %s status changed from enabled=%b to enabled=%b", user.getEmail(), previous,
@@ -113,56 +120,36 @@ public class AdminUserService {
         if (newRole == null) {
             throw new BadRequestException("Role is required");
         }
-        User user = userRepository.findById(userId)
+        CurrentUser admin = securityUtils.requireOrganizationMember();
+        User user = userRepository.findByIdAndOrganizationId(userId, admin.organizationId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+        if (newRole == Role.CANDIDATE) {
+            throw new BadRequestException("Organisation members can only be given staff roles");
+        }
 
         Role previousRole = user.getRole();
         if (previousRole == newRole) {
             return AdminUserResponse.from(user);
         }
 
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String currentAdminEmail = auth != null ? auth.getName() : null;
-
-        // Protection: cannot demote self or last active admin
-        if (previousRole == Role.ADMIN && newRole != Role.ADMIN) {
-            if (currentAdminEmail != null && currentAdminEmail.equalsIgnoreCase(user.getEmail())) {
+        if (previousRole == Role.ADMIN) {
+            if (admin.userId().equals(user.getId())) {
                 throw new BadRequestException("Administrators cannot demote their own account");
             }
-            if (user.isEnabled()) {
-                long activeAdmins = userRepository.countByRoleAndEnabled(Role.ADMIN, true);
-                if (activeAdmins <= 1) {
-                    throw new BadRequestException("Cannot demote the last remaining administrator");
-                }
-            } else {
-                long totalAdmins = userRepository.countByRole(Role.ADMIN);
-                if (totalAdmins <= 1) {
-                    throw new BadRequestException("Cannot demote the last remaining administrator");
-                }
-            }
-        }
-
-        // Organizational profile consistency
-        if (newRole == Role.HR_MANAGER || newRole == Role.RECRUITER) {
-            if (hrProfileRepository.findByUserId(user.getId()).isEmpty()) {
-                HRProfile profile = new HRProfile();
-                profile.setUser(user);
-                profile.setDepartment("General");
-                hrProfileRepository.save(profile);
-            }
-        } else if (newRole == Role.CANDIDATE) {
-            if (candidateProfileRepository.findByUserId(user.getId()).isEmpty()) {
-                CandidateProfile profile = new CandidateProfile();
-                profile.setUser(user);
-                candidateProfileRepository.save(profile);
+            List<User> admins = user.isEnabled()
+                    ? userRepository.lockEnabledByOrganizationAndRole(admin.organizationId(), Role.ADMIN)
+                    : userRepository.lockAllByOrganizationAndRole(admin.organizationId(), Role.ADMIN);
+            if (admins.size() <= 1) {
+                throw new BadRequestException("Cannot demote the last remaining administrator");
             }
         }
 
         user.setRole(newRole);
         User saved = userRepository.saveAndFlush(user);
+        hrProfileService.ensureProfileFor(saved);
 
         auditService.record(
-                "USER_ROLE_CHANGED",
+                AuditActions.USER_ROLE_CHANGED,
                 "USER",
                 String.valueOf(user.getId()),
                 String.format("User %s role changed from %s to %s", user.getEmail(), previousRole, newRole));

@@ -1,3 +1,7 @@
+# ============================================
+# Development Environment Configuration
+# Profile: dev (PostgreSQL 16, e.g. the docker compose "postgres" service)
+# ============================================
 
 spring:
   config:
@@ -5,31 +9,34 @@ spring:
       on-profile: dev
 
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3307/recruitment_platform_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC}
-    username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/recruitpro}
+    username: ${DB_USERNAME:recruitpro}
+    password: ${DB_PASSWORD:recruitpro}
+    driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: RecruitProDevHikariPool
       maximum-pool-size: 10
-      minimum-idle: 5
+      minimum-idle: 2
       connection-timeout: 30000
 
   jpa:
     hibernate:
       ddl-auto: validate
-    show-sql: true
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
-        format_sql: true
+    show-sql: false
     open-in-view: false
 
 app:
   jwt:
+    # Required. Use a random value of at least 32 bytes (docker compose supplies a development value).
     secret: ${JWT_SECRET}
+  auth:
+    cookie-secure: ${AUTH_COOKIE_SECURE:false}
+    require-verified-email-to-apply: ${AUTH_REQUIRE_VERIFIED_EMAIL_TO_APPLY:false}
+  invitations:
+    expose-link: ${INVITATIONS_EXPOSE_LINK:true}
+  notifications:
+    log-links: ${NOTIFICATIONS_LOG_LINKS:true}
 
 logging:
   level:
     com.recruitpro: DEBUG
-    org.hibernate.SQL: DEBUG

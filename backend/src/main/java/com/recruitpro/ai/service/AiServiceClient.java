@@ -1,10 +1,14 @@
 package com.recruitpro.ai.service;
 
+import com.recruitpro.ai.dto.AiCompileRequest;
+import com.recruitpro.ai.dto.AiCompileResponse;
+import com.recruitpro.ai.dto.AiInterviewKitRequest;
+import com.recruitpro.ai.dto.AiInterviewKitResponse;
 import com.recruitpro.ai.dto.AiMatchRequest;
 import com.recruitpro.ai.dto.AiMatchResponse;
-import com.recruitpro.ai.dto.AiBatchMatchRequest;
-import com.recruitpro.ai.dto.AiBatchMatchResponse;
 import com.recruitpro.ai.dto.AiResumeParseResponse;
+import com.recruitpro.ai.dto.AiWorkSampleRequest;
+import com.recruitpro.ai.dto.AiWorkSampleResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -16,8 +20,16 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 
+/**
+ * Internal client of the AI service (plan 6.1). Every call carries {@code X-Internal-Service-Token}; a missing
+ * token raises {@link IllegalStateException} with {@link #NOT_CONFIGURED_MESSAGE}. Only background jobs and
+ * explicit HR actions (requirement compiling, work-sample and interview-kit drafting) call it; GET endpoints never do (H6, H8).
+ */
 @Component
 public class AiServiceClient {
+    /** Message of the IllegalStateException thrown when no service token is configured. */
+    public static final String NOT_CONFIGURED_MESSAGE = "AI service authentication is not configured";
+
     private final RestClient restClient;
     private final String serviceToken;
 
@@ -33,7 +45,7 @@ public class AiServiceClient {
     }
 
     public AiResumeParseResponse parse(String filename, String contentType, byte[] bytes) {
-        if (serviceToken.isBlank()) throw new IllegalStateException("AI service authentication is not configured");
+        requireToken();
         ByteArrayResource resource = new ByteArrayResource(bytes) {
             @Override public String getFilename() { return filename; }
         };
@@ -46,8 +58,9 @@ public class AiServiceClient {
                 .retrieve().body(AiResumeParseResponse.class);
     }
 
+    /** Evidence-ladder matching of one application (MATCH_APPLICATION background job). */
     public AiMatchResponse match(AiMatchRequest request) {
-        if (serviceToken.isBlank()) throw new IllegalStateException("AI service authentication is not configured");
+        requireToken();
         return restClient.post().uri("/api/v1/match")
                 .header("X-Internal-Service-Token", serviceToken)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -55,12 +68,37 @@ public class AiServiceClient {
                 .retrieve().body(AiMatchResponse.class);
     }
 
-    public AiBatchMatchResponse matchBatch(AiBatchMatchRequest request) {
-        if (serviceToken.isBlank()) throw new IllegalStateException("AI service authentication is not configured");
-        return restClient.post().uri("/api/v1/match/batch")
+    /** Drafts requirements and wording warnings from a job description; nothing is persisted. */
+    public AiCompileResponse compileRequirements(AiCompileRequest request) {
+        requireToken();
+        return restClient.post().uri("/api/v1/requirements/compile")
                 .header("X-Internal-Service-Token", serviceToken)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(request)
-                .retrieve().body(AiBatchMatchResponse.class);
+                .retrieve().body(AiCompileResponse.class);
+    }
+
+    /** Drafts a work sample with an anchored rubric (HR action; persisted by the caller as DRAFT). */
+    public AiWorkSampleResponse generateWorkSample(AiWorkSampleRequest request) {
+        requireToken();
+        return restClient.post().uri("/api/v1/work-samples/generate")
+                .header("X-Internal-Service-Token", serviceToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve().body(AiWorkSampleResponse.class);
+    }
+
+    /** Drafts an interview kit (HR action; persisted by the caller). */
+    public AiInterviewKitResponse generateInterviewKit(AiInterviewKitRequest request) {
+        requireToken();
+        return restClient.post().uri("/api/v1/interview-kits/generate")
+                .header("X-Internal-Service-Token", serviceToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve().body(AiInterviewKitResponse.class);
+    }
+
+    private void requireToken() {
+        if (serviceToken == null || serviceToken.isBlank()) throw new IllegalStateException(NOT_CONFIGURED_MESSAGE);
     }
 }

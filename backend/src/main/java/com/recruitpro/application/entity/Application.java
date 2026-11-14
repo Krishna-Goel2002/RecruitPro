@@ -30,4 +30,11 @@ public class Application extends BaseEntity {
     @Column(name = "cover_letter", columnDefinition = "TEXT") private String coverLetter;
     @Column(name = "review_comment", columnDefinition = "TEXT") private String reviewComment;
     @Column(name = "applied_at", nullable = false) private LocalDateTime appliedAt;
+
+    /** D4: when reviewers first saw the candidate's identity (auto-reveal on shortlist or explicit reveal). */
+    @Column(name = "identity_revealed_at") private LocalDateTime identityRevealedAt;
+    /** User id of the staff member who revealed the identity (plain id, like organisation ids). */
+    @Column(name = "identity_revealed_by") private Long identityRevealedById;
+    /** Time of the last status change; null while the application was never moved from SUBMITTED. */
+    @Column(name = "status_changed_at") private LocalDateTime statusChangedAt;
 }

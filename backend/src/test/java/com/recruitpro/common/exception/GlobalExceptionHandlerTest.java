@@ -4,9 +4,16 @@ import com.recruitpro.common.dto.ApiResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -102,5 +109,80 @@ class GlobalExceptionHandlerTest {
         assertNotNull(response.getBody());
         assertFalse(response.getBody().isSuccess());
         assertEquals("An unexpected error occurred. Please try again later.", response.getBody().getMessage());
+    }
+
+    // ---- M2 mappings ----
+
+    @Test
+    @DisplayName("Type mismatch of a path or query parameter maps to 400 naming the parameter")
+    void handleTypeMismatch() {
+        MethodArgumentTypeMismatchException ex = new MethodArgumentTypeMismatchException(
+                "abc", Long.class, "jobId", null, new NumberFormatException("abc"));
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler.handleTypeMismatch(ex);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertTrue(response.getBody().getMessage().contains("jobId"));
+    }
+
+    @Test
+    @DisplayName("Missing request parameter and multipart part map to 400")
+    void handleMissingParameterAndPart() {
+        ResponseEntity<ApiResponse<Void>> parameter = exceptionHandler.handleMissingParameter(
+                new MissingServletRequestParameterException("page", "int"));
+        assertEquals(HttpStatus.BAD_REQUEST, parameter.getStatusCode());
+        assertTrue(parameter.getBody().getMessage().contains("page"));
+
+        ResponseEntity<ApiResponse<Void>> part = exceptionHandler.handleMissingPart(new MissingServletRequestPartException("file"));
+        assertEquals(HttpStatus.BAD_REQUEST, part.getStatusCode());
+        assertTrue(part.getBody().getMessage().contains("file"));
+    }
+
+    @Test
+    @DisplayName("Unsupported content type maps to 415")
+    void handleUnsupportedMediaType() {
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler.handleMediaTypeNotSupported(
+                new HttpMediaTypeNotSupportedException("text/plain is not supported"));
+        assertEquals(HttpStatus.UNSUPPORTED_MEDIA_TYPE, response.getStatusCode());
+        assertFalse(response.getBody().isSuccess());
+    }
+
+    @Test
+    @DisplayName("Pessimistic and optimistic locking failures map to 409")
+    void handleLockingFailures() {
+        assertEquals(HttpStatus.CONFLICT, exceptionHandler.handleLockingFailure(
+                new PessimisticLockingFailureException("row locked")).getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, exceptionHandler.handleLockingFailure(
+                new ObjectOptimisticLockingFailureException(Object.class, 1L)).getStatusCode());
+    }
+
+    @Test
+    @DisplayName("ResponseStatusException keeps its status and reason")
+    void handleResponseStatus() {
+        ResponseEntity<ApiResponse<Void>> withReason = exceptionHandler.handleResponseStatus(
+                new ResponseStatusException(HttpStatus.GONE, "Invitation expired"));
+        assertEquals(HttpStatus.GONE, withReason.getStatusCode());
+        assertEquals("Invitation expired", withReason.getBody().getMessage());
+
+        ResponseEntity<ApiResponse<Void>> withoutReason = exceptionHandler.handleResponseStatus(
+                new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE));
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, withoutReason.getStatusCode());
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase(), withoutReason.getBody().getMessage());
+    }
+
+    @Test
+    @DisplayName("TooManyRequestsException maps to 429")
+    void handleTooManyRequests() {
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler.handleTooManyRequests(
+                new TooManyRequestsException("Too many requests"));
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, response.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("IllegalArgumentException returns a generic message, never the internal one")
+    void handleIllegalArgumentHidesInternalMessage() {
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler.handleIllegalArgument(
+                new IllegalArgumentException("No enum constant com.recruitpro.internal.Secret"));
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("Invalid request", response.getBody().getMessage());
     }
 }

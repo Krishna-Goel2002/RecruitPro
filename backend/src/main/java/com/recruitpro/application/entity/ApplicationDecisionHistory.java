@@ -35,4 +35,8 @@ public class ApplicationDecisionHistory extends BaseEntity {
 
     @Column(columnDefinition = "TEXT")
     private String comment;
+
+    /** D8: the match run that was current when the event was recorded (null when none existed). */
+    @Column(name = "match_run_id")
+    private Long matchRunId;
 }

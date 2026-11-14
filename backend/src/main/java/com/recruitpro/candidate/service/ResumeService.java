@@ -15,7 +15,6 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import java.io.*;
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.zip.ZipInputStream;
 import java.nio.file.NoSuchFileException;
@@ -54,7 +53,7 @@ public class ResumeService {
             Resume resume = new Resume();
             resume.setCandidate(candidate); resume.setStorageKey(key); resume.setOriginalFilename(filename);
             resume.setFileExtension(extension); resume.setContentType(mediaType(extension));
-            resume.setFileSize(bytes.length); resume.setUploadedAt(LocalDateTime.now());
+            resume.setFileSize(bytes.length); resume.setUploadedAt(com.recruitpro.common.time.UtcTime.now());
             Resume saved = resumeRepository.save(resume);
             intelligenceService.createFor(saved);
             registerRollbackCleanup(key);

@@ -13,6 +13,12 @@ import com.recruitpro.hr.entity.*;
 import com.recruitpro.hr.repository.HRProfileRepository;
 import com.recruitpro.hr.repository.JobRepository;
 import com.recruitpro.hr.repository.JobRequirementRepository;
+import com.recruitpro.jobs.entity.BackgroundJob;
+import com.recruitpro.jobs.entity.BackgroundJobStatus;
+import com.recruitpro.jobs.entity.BackgroundJobType;
+import com.recruitpro.jobs.repository.BackgroundJobRepository;
+import com.recruitpro.organization.entity.Organization;
+import com.recruitpro.support.TestDataFactory;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
@@ -31,6 +37,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.is;
@@ -40,7 +47,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties = "app.ai-service.poll-interval-ms=3600000")
+@SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class ResumeIntelligenceSecurityIntegrationTest {
@@ -55,10 +62,14 @@ class ResumeIntelligenceSecurityIntegrationTest {
     @Autowired JobRepository jobs;
     @Autowired JobRequirementRepository requirements;
     @Autowired ApplicationRepository applications;
+    @Autowired BackgroundJobRepository backgroundJobs;
+    @Autowired com.recruitpro.evidence.repository.CandidateClaimRepository claims;
+    @Autowired TestDataFactory fixtures;
 
     private String candidateEmail;
     private String otherCandidateEmail;
     private String managerEmail;
+    private String recruiterEmail;
     private CandidateProfile candidate;
     private CandidateProfile otherCandidate;
     private Job job;
@@ -72,9 +83,12 @@ class ResumeIntelligenceSecurityIntegrationTest {
         candidate = createCandidate(candidateEmail);
         otherCandidate = createCandidate(otherCandidateEmail);
         managerEmail = "phase6-manager-" + suffix + "@example.test";
-        User manager = createUser(managerEmail, Role.HR_MANAGER);
+        recruiterEmail = "phase6-recruiter-" + suffix + "@example.test";
+        Organization organization = fixtures.organization("Resume Intelligence Org");
+        User manager = fixtures.staff(organization, managerEmail, Role.HR_MANAGER);
+        fixtures.staff(organization, recruiterEmail, Role.RECRUITER);
         HRProfile hr = new HRProfile(); hr.setUser(manager); hrProfiles.save(hr);
-        job = new Job(); job.setCreatedBy(hr); job.setTitle("Phase 6 Test Job"); job.setDescription("Backend role");
+        job = new Job(); job.setCreatedBy(hr); job.setOrganizationId(organization.getId()); job.setTitle("Phase 6 Test Job"); job.setDescription("Backend role");
         job.setDepartment("Engineering"); job.setLocation("Remote"); job.setJobType(JobType.FULL_TIME);
         job.setExperienceLevel(ExperienceLevel.MID); job.setMinimumSalary(new BigDecimal("50000"));
         job.setMaximumSalary(new BigDecimal("90000")); job.setVacancies(1); job.setStatus(JobStatus.PUBLISHED);
@@ -89,6 +103,10 @@ class ResumeIntelligenceSecurityIntegrationTest {
         long resumeId = uploadResume(candidateEmail);
         ResumeAnalysis analysis = analyses.findByResumeId(resumeId).orElseThrow();
         assertEquals(ResumeAnalysisStatus.PENDING, analysis.getStatus());
+        // D7: the upload queued a PARSE_RESUME background job for the analysis in the same transaction.
+        List<BackgroundJob> parseJobs = backgroundJobs.findAllByJobTypeAndEntityIdOrderByIdAsc(BackgroundJobType.PARSE_RESUME, analysis.getId());
+        assertEquals(1, parseJobs.size());
+        assertEquals(BackgroundJobStatus.PENDING, parseJobs.get(0).getStatus());
 
         mvc.perform(get("/api/v1/candidates/me/resumes/{id}/analysis", resumeId).with(candidateAuth(candidateEmail)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status", is("PENDING")));
@@ -108,16 +126,24 @@ class ResumeIntelligenceSecurityIntegrationTest {
                         .with(candidateAuth(candidateEmail)).contentType(MediaType.APPLICATION_JSON).content("{\"value\":\"Java 17\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.value", is("Java 17")))
                 .andExpect(jsonPath("$.data.extractedValue", is("Java")))
+                .andExpect(jsonPath("$.data.tier", is("RESUME_STATED")))
+                .andExpect(jsonPath("$.data.claimedValue", is("Java 17")))
                 .andExpect(jsonPath("$.data.reviewStatus", is("CORRECTED")));
+        assertEquals(1, claims.findAllByCandidateIdAndSourceFactId(candidate.getId(), fact.getId()).size());
+        assertEquals("Java", facts.findById(fact.getId()).orElseThrow().getExtractedValue());
         mvc.perform(patch("/api/v1/candidates/me/resumes/{resumeId}/analysis/facts/{factId}", resumeId, fact.getId())
                         .with(candidateAuth(otherCandidateEmail)).contentType(MediaType.APPLICATION_JSON).content("{\"value\":\"Other\"}"))
                 .andExpect(status().isNotFound());
 
         analysis = analyses.findById(analysis.getId()).orElseThrow();
         analysis.setStatus(ResumeAnalysisStatus.FAILED); analysis.setErrorCode("AI_SERVICE_UNAVAILABLE"); analyses.save(analysis);
+        jdbcDeadLetter(analysis.getId());
         mvc.perform(patch("/api/v1/candidates/me/resumes/{id}/analysis/retry", resumeId).with(candidateAuth(candidateEmail)))
                 .andExpect(status().isOk());
         assertEquals(ResumeAnalysisStatus.PENDING, analyses.findById(analysis.getId()).orElseThrow().getStatus());
+        List<BackgroundJob> afterRetry = backgroundJobs.findAllByJobTypeAndEntityIdOrderByIdAsc(BackgroundJobType.PARSE_RESUME, analysis.getId());
+        assertEquals(2, afterRetry.size(), "a retry queues a new PARSE_RESUME job");
+        assertEquals(BackgroundJobStatus.PENDING, afterRetry.get(1).getStatus());
     }
 
     @Test
@@ -128,21 +154,23 @@ class ResumeIntelligenceSecurityIntegrationTest {
         application.setResume(resumes.findById(resumeId).orElseThrow()); application.setStatus(ApplicationStatus.SUBMITTED);
         application.setAppliedAt(LocalDateTime.now()); applications.save(application);
 
-        mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", job.getId()).with(user("recruiter@example.test").roles("RECRUITER")))
+        mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", job.getId()).with(user(recruiterEmail).roles("RECRUITER")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.content[0].applicationId", is(application.getId().intValue())))
                 .andExpect(jsonPath("$.data.content[0].analysisStatus", is("PENDING")))
-                .andExpect(jsonPath("$.data.content[0].observedEvidenceCoverage").doesNotExist())
-                .andExpect(jsonPath("$.data.content[0].requirements.length()", is(0)))
+                .andExpect(jsonPath("$.data.content[0].matchStatus", is("PENDING")))
+                .andExpect(jsonPath("$.data.content[0].rankGroup", is("UNSCORED")))
+                .andExpect(jsonPath("$.data.content[0].verifiedCoverage").doesNotExist())
+                .andExpect(jsonPath("$.data.content[0].displayName", is("Candidate #A-" + application.getId())))
                 .andExpect(result -> assertFalse(result.getResponse().getContentAsString().contains(candidateEmail)));
         mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", job.getId()).with(candidateAuth(candidateEmail)))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", 999999L).with(user(managerEmail).roles("HR_MANAGER")))
                 .andExpect(status().isNotFound());
         mvc.perform(patch("/api/v1/hr/jobs/{jobId}/applicants/{applicationId}/analysis/retry", job.getId(), application.getId())
-                        .with(user("recruiter@example.test").roles("RECRUITER")))
+                        .with(user(recruiterEmail).roles("RECRUITER")))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/hr/jobs/{jobId}/applicants/{applicationId}/shortlist", job.getId(), application.getId())
-                        .with(user("recruiter@example.test").roles("RECRUITER"))
+                        .with(user(recruiterEmail).roles("RECRUITER"))
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isForbidden());
 
@@ -184,14 +212,14 @@ class ResumeIntelligenceSecurityIntegrationTest {
     }
 
     private void cleanUp() {
-        applications.deleteAll();
-        facts.deleteAll();
-        analyses.deleteAll();
-        resumes.deleteAll();
-        requirements.deleteAll();
-        jobs.deleteAll();
-        hrProfiles.deleteAll();
-        candidates.deleteAll();
-        users.deleteAll();
+        fixtures.cleanDatabase();
+    }
+
+    /** Simulates the first PARSE_RESUME job having been dead-lettered before the candidate retries. */
+    private void jdbcDeadLetter(Long analysisId) {
+        for (BackgroundJob parseJob : backgroundJobs.findAllByJobTypeAndEntityIdOrderByIdAsc(BackgroundJobType.PARSE_RESUME, analysisId)) {
+            parseJob.setStatus(BackgroundJobStatus.DEAD);
+            backgroundJobs.save(parseJob);
+        }
     }
 }

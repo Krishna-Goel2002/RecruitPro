@@ -30,32 +30,7 @@ Key API routes confirmed from the current controllers:
 
 ## Safe local demo setup
 
-The supported isolated launcher is `test-data/scripts/Start-RecruitProRebuildTest.ps1`. It checks the exact rebuild-test database and its recorded Flyway V1–V10 history, uses dedicated resume storage, disables runtime Flyway, sets Hibernate to `validate`, and keeps `AI_RESUME_QUEUE_ENABLED=false`. It requires MySQL on `127.0.0.1:3307`, an interactive PowerShell session, a saved `recruitpro-test` MySQL login path for its read-only preflight, and a hidden root-password prompt for the backend connection.
-
-Never point the demo at `recruitment_platform_db` or `recruitment_platform_migration_test_20261027`. Do not run migrations to prepare the demo. If the launcher rejects redirected input, run it directly in an interactive PowerShell terminal; its prompt is an intentional safeguard.
-
-1. Start MySQL 8 with the existing `recruitment_platform_rebuild_test_20261027` database available on port 3307.
-2. From the repository root in an interactive PowerShell terminal, run:
-
-   ```powershell
-   .\test-data\scripts\Start-RecruitProRebuildTest.ps1
-   ```
-
-   Enter the MySQL password only at the hidden prompt and leave this foreground terminal running. Confirm the backend health response at `http://localhost:8080/api/v1/health` is HTTP 200 with status `UP` before opening the portals.
-
-3. In separate terminals, start each portal:
-
-   ```powershell
-   Set-Location frontend
-   pnpm dev
-   ```
-
-   ```powershell
-   Set-Location hr-frontend
-   pnpm dev
-   ```
-
-   The candidate portal uses Vite's default local port (normally 5173); the HR portal uses strict port 5174. Both call `http://localhost:8080/api/v1` by default. The backend's default development CORS list includes both local origins.
+> **Update (WP-BE-A, November 2026).** The MySQL rebuild-test launcher referenced by earlier versions of this guide is not part of the repository and is no longer needed. The supported demo is the Docker Compose stack described in the [README](../../README.md): `docker compose up --build` starts PostgreSQL 16, Mailpit, the AI service, the backend (dev profile, demo data) and both portals. For a manual setup, follow the README's "Manual setup" section. The verification results below describe the earlier MySQL-based build and are kept for history.
 
 ## Suggested end-to-end demo
 

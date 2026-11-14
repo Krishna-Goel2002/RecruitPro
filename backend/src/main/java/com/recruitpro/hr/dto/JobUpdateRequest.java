@@ -6,6 +6,10 @@ import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * PUT /api/v1/jobs/{id} (DRAFT, PUBLISHED and ON_HOLD jobs). A changed deadline must be in the future; an
+ * unchanged deadline is accepted even when it has passed (e.g. editing an on-hold job).
+ */
 public record JobUpdateRequest(
         @NotBlank @Size(max=255) String title,
         @NotBlank String description,
@@ -16,4 +20,4 @@ public record JobUpdateRequest(
         @DecimalMin("0.00") BigDecimal minimumSalary,
         @DecimalMin("0.00") BigDecimal maximumSalary,
         @NotNull @Positive Integer vacancies,
-        @Future LocalDateTime deadline) { }
+        LocalDateTime deadline) { }

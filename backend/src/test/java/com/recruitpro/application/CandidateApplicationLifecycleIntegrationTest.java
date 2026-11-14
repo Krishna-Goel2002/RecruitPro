@@ -22,6 +22,8 @@ import com.recruitpro.hr.entity.JobStatus;
 import com.recruitpro.hr.entity.JobType;
 import com.recruitpro.hr.repository.HRProfileRepository;
 import com.recruitpro.hr.repository.JobRepository;
+import com.recruitpro.organization.entity.Organization;
+import com.recruitpro.support.TestDataFactory;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
@@ -77,6 +79,7 @@ class CandidateApplicationLifecycleIntegrationTest {
     @Autowired private ResumeAnalysisRepository resumeAnalysisRepository;
     @Autowired private ApplicationRepository applicationRepository;
     @Autowired private ApplicationDecisionHistoryRepository decisionHistoryRepository;
+    @Autowired private TestDataFactory fixtures;
 
     private String candidateEmail;
     private String otherCandidateEmail;
@@ -89,6 +92,7 @@ class CandidateApplicationLifecycleIntegrationTest {
     private Job draftJob;
     private Job expiredJob;
     private HRProfile hrProfile;
+    private Organization organization;
 
     @BeforeEach
     void setUp() {
@@ -100,7 +104,8 @@ class CandidateApplicationLifecycleIntegrationTest {
         candidate = createCandidate(candidateEmail, "Candidate", "One");
         otherCandidate = createCandidate(otherCandidateEmail, "Candidate", "Two");
 
-        User hrUser = createUser("hr-" + suffix + "@example.test", Role.HR_MANAGER, "HR", "Manager");
+        organization = fixtures.organization("Lifecycle Org");
+        User hrUser = fixtures.staff(organization, "hr-" + suffix + "@example.test", Role.HR_MANAGER);
         hrProfile = new HRProfile();
         hrProfile.setUser(hrUser);
         hrProfile = hrProfileRepository.save(hrProfile);
@@ -122,14 +127,7 @@ class CandidateApplicationLifecycleIntegrationTest {
     }
 
     private void cleanupAll() {
-        decisionHistoryRepository.deleteAll();
-        applicationRepository.deleteAll();
-        resumeAnalysisRepository.deleteAll();
-        resumeRepository.deleteAll();
-        jobRepository.deleteAll();
-        hrProfileRepository.deleteAll();
-        candidateProfileRepository.deleteAll();
-        userRepository.deleteAll();
+        fixtures.cleanDatabase();
     }
 
     @Test
@@ -207,7 +205,7 @@ class CandidateApplicationLifecycleIntegrationTest {
                         .with(auth))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.success", is(false)))
-                .andExpect(jsonPath("$.message", containsString("Only submitted applications can be withdrawn")));
+                .andExpect(jsonPath("$.message", containsString("can be withdrawn")));
     }
 
     @Test
@@ -392,7 +390,7 @@ class CandidateApplicationLifecycleIntegrationTest {
     }
 
     @Test
-    @DisplayName("Reject invalid state transitions: direct PATCH and withdrawing non-SUBMITTED applications")
+    @DisplayName("Reject invalid state transitions: direct PATCH and withdrawing closed applications")
     void rejectInvalidStateTransitions() throws Exception {
         var auth = candidateAuth(candidateEmail);
 
@@ -414,28 +412,36 @@ class CandidateApplicationLifecycleIntegrationTest {
                         .content("{\"status\":\"WITHDRAWN\"}"))
                 .andExpect(status().isMethodNotAllowed());
 
-        // 2. Simulate HR shortlisting the application
+        // 2. A rejected application cannot be withdrawn
         Application app = applicationRepository.findById(appId).orElseThrow();
-        app.setStatus(ApplicationStatus.SHORTLISTED);
-        app.setReviewComment("Candidate has strong qualifications");
-        applicationRepository.saveAndFlush(app);
-
-        // Candidate attempts to withdraw a SHORTLISTED application -> 400 Bad Request
-        mvc.perform(patch("/api/v1/candidates/me/applications/{id}/withdraw", appId)
-                        .with(auth))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message", containsString("Only submitted applications can be withdrawn")));
-
-        // 3. Simulate HR rejecting the application
         app.setStatus(ApplicationStatus.REJECTED);
         app.setReviewComment("Position filled");
         applicationRepository.saveAndFlush(app);
-
-        // Candidate attempts to withdraw a REJECTED application -> 400 Bad Request
         mvc.perform(patch("/api/v1/candidates/me/applications/{id}/withdraw", appId)
                         .with(auth))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message", containsString("Only submitted applications can be withdrawn")));
+                .andExpect(jsonPath("$.message", containsString("Only submitted, shortlisted or interviewing applications can be withdrawn")));
+
+        // 3. Neither can a selected one (terminal hand-off)
+        app = applicationRepository.findById(appId).orElseThrow();
+        app.setStatus(ApplicationStatus.SELECTED);
+        applicationRepository.saveAndFlush(app);
+        mvc.perform(patch("/api/v1/candidates/me/applications/{id}/withdraw", appId)
+                        .with(auth))
+                .andExpect(status().isBadRequest());
+
+        // 4. A shortlisted application can be withdrawn (plan 3.4) and the withdrawal is recorded
+        app = applicationRepository.findById(appId).orElseThrow();
+        app.setStatus(ApplicationStatus.SHORTLISTED);
+        applicationRepository.saveAndFlush(app);
+        mvc.perform(patch("/api/v1/candidates/me/applications/{id}/withdraw", appId)
+                        .with(auth))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status", is("WITHDRAWN")))
+                .andExpect(jsonPath("$.data.statusChangedAt", notNullValue()));
+        assertTrue(decisionHistoryRepository.findAllByApplicationIdOrderByCreatedAtAscIdAsc(appId).stream()
+                .anyMatch(event -> event.getActionType() == ApplicationDecisionAction.WITHDRAW
+                        && event.getPreviousStatus() == ApplicationStatus.SHORTLISTED));
     }
 
     // ---- Helper Methods ----
@@ -480,6 +486,7 @@ class CandidateApplicationLifecycleIntegrationTest {
     private Job createJob(String title, JobStatus status, LocalDateTime deadline) {
         Job job = new Job();
         job.setCreatedBy(hrProfile);
+        job.setOrganizationId(organization.getId());
         job.setTitle(title);
         job.setDescription("Job description for " + title);
         job.setDepartment("Engineering");

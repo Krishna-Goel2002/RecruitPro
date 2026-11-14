@@ -1,5 +1,6 @@
 package com.recruitpro.security.userdetails;
 
+import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.user.entity.User;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -36,9 +37,10 @@ public class CustomUserDetails implements UserDetails {
         return true;
     }
 
+    /** Locked after repeated failed sign-ins until {@code users.locked_until} has passed. */
     @Override
     public boolean isAccountNonLocked() {
-        return true;
+        return user.getLockedUntil() == null || !user.getLockedUntil().isAfter(UtcTime.now());
     }
 
     @Override
@@ -48,6 +50,6 @@ public class CustomUserDetails implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        return user.isEnabled();
+        return user.isEnabled() && user.getDeletedAt() == null;
     }
 }

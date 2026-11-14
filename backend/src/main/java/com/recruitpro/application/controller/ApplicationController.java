@@ -1,6 +1,7 @@
 package com.recruitpro.application.controller;
 
 import com.recruitpro.application.dto.ApplicationCreateRequest;
+import com.recruitpro.application.dto.ApplicationDetailResponse;
 import com.recruitpro.application.dto.ApplicationResponse;
 import com.recruitpro.application.service.ApplicationService;
 import com.recruitpro.common.dto.ApiResponse;
@@ -18,7 +19,7 @@ public class ApplicationController {
     private final ApplicationService service;
 
     @PostMapping("/api/v1/jobs/{jobId}/applications")
-    @Operation(summary = "Apply to a published job with one of your uploaded resumes")
+    @Operation(summary = "Apply to a published job with one of your uploaded resumes and an optional cover letter")
     public ApiResponse<ApplicationResponse> apply(@PathVariable Long jobId, @Valid @RequestBody ApplicationCreateRequest request) {
         return ApiResponse.success(service.apply(jobId, request), "Application submitted");
     }
@@ -30,7 +31,7 @@ public class ApplicationController {
     }
 
     @GetMapping("/api/v1/candidates/me/applications/{applicationId}")
-    public ApiResponse<ApplicationResponse> get(@PathVariable Long applicationId) {
+    public ApiResponse<ApplicationDetailResponse> get(@PathVariable Long applicationId) {
         return ApiResponse.success(service.getMine(applicationId));
     }
 

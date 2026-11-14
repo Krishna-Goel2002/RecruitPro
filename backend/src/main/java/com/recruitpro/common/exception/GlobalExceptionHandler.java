@@ -4,19 +4,28 @@ import com.recruitpro.common.dto.ApiResponse;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.security.core.AuthenticationException;
-import org.springframework.security.access.AccessDeniedException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.BindingResult;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
-import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -24,12 +33,15 @@ import java.util.stream.Collectors;
 /**
  * Global exception handler for the entire application.
  *
- * <p>Catches all exceptions thrown by controllers and converts them
- * into standardized {@link ApiResponse} error responses with accurate HTTP status codes.</p>
+ * <p>Catches all exceptions thrown by controllers and converts them into standardized {@link ApiResponse}
+ * error responses with accurate HTTP status codes (M2). Internal exception messages are never returned for
+ * unexpected errors.</p>
  */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    static final String INVALID_REQUEST = "Invalid request";
 
     /**
      * Handle resource not found exceptions (HTTP 404).
@@ -50,7 +62,7 @@ public class GlobalExceptionHandler {
         log.warn("No handler found for {} {}", ex.getHttpMethod(), ex.getRequestURL());
         return ResponseEntity
                 .status(HttpStatus.NOT_FOUND)
-                .body(ApiResponse.error("The requested endpoint does not exist: " + ex.getRequestURL()));
+                .body(ApiResponse.error("The requested endpoint does not exist"));
     }
 
     /**
@@ -87,6 +99,17 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Concurrent modification of the same rows (HTTP 409); the client may retry.
+     */
+    @ExceptionHandler({PessimisticLockingFailureException.class, ObjectOptimisticLockingFailureException.class})
+    public ResponseEntity<ApiResponse<Void>> handleLockingFailure(RuntimeException ex) {
+        log.warn("Concurrent update conflict: {}", ex.getClass().getSimpleName());
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error("The resource was modified by another request. Please retry."));
+    }
+
+    /**
      * Handle DTO validation exceptions from @Valid annotations (HTTP 400).
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -103,6 +126,17 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.validationError("Validation failed", fieldErrors));
+    }
+
+    /**
+     * Method-level validation of controller parameters (HTTP 400).
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleHandlerMethodValidation(HandlerMethodValidationException ex) {
+        log.warn("Request parameter validation failed");
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("Validation failed"));
     }
 
     /**
@@ -124,6 +158,39 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * A path variable or request parameter could not be converted to its declared type (HTTP 400).
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        log.warn("Request parameter type mismatch for '{}'", ex.getName());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("Invalid value for parameter '" + ex.getName() + "'"));
+    }
+
+    /**
+     * A required request parameter is missing (HTTP 400).
+     */
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingParameter(MissingServletRequestParameterException ex) {
+        log.warn("Missing request parameter '{}'", ex.getParameterName());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("Required parameter '" + ex.getParameterName() + "' is missing"));
+    }
+
+    /**
+     * A required multipart part is missing (HTTP 400).
+     */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingPart(MissingServletRequestPartException ex) {
+        log.warn("Missing request part '{}'", ex.getRequestPartName());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("Required part '" + ex.getRequestPartName() + "' is missing"));
+    }
+
+    /**
      * Handle malformed JSON request bodies (HTTP 400).
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
@@ -132,6 +199,17 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error("Malformed JSON request body or invalid data types"));
+    }
+
+    /**
+     * Unsupported request content type (HTTP 415).
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException ex) {
+        log.warn("Unsupported request content type");
+        return ResponseEntity
+                .status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(ApiResponse.error("Unsupported content type"));
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
@@ -153,14 +231,40 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Handle illegal argument exceptions (HTTP 400).
+     * Handle illegal argument exceptions (HTTP 400). Internal messages are not exposed.
      */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException ex) {
         log.warn("Illegal argument rejected");
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(INVALID_REQUEST));
+    }
+
+    /**
+     * Rate limit exceeded (HTTP 429).
+     */
+    @ExceptionHandler(TooManyRequestsException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTooManyRequests(TooManyRequestsException ex) {
+        log.warn("Rate limit exceeded");
+        return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
                 .body(ApiResponse.error(ex.getMessage()));
+    }
+
+    /**
+     * Explicit status raised by framework or application code.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiResponse<Void>> handleResponseStatus(ResponseStatusException ex) {
+        HttpStatusCode status = ex.getStatusCode();
+        HttpStatus resolved = HttpStatus.resolve(status.value());
+        String reason = ex.getReason();
+        if (reason == null || reason.isBlank()) {
+            reason = resolved != null ? resolved.getReasonPhrase() : "Request failed";
+        }
+        log.warn("Request ended with status {}", status.value());
+        return ResponseEntity.status(status).body(ApiResponse.error(reason));
     }
 
     /**
@@ -215,7 +319,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGenericException(Exception ex) {
-        log.error("Unexpected internal server error: {}", ex.getClass().getSimpleName());
+        log.error("Unexpected internal server error: {}", ex.getClass().getSimpleName(), ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("An unexpected error occurred. Please try again later."));

@@ -2,6 +2,7 @@ package com.recruitpro.admin.dto;
 
 import java.util.Map;
 
+/** Organisation-scoped metrics plus real system health (M11). */
 public record AdminDashboardMetricsResponse(
         long totalUsers,
         long totalCandidates,
@@ -13,5 +14,6 @@ public record AdminDashboardMetricsResponse(
         long recentApplicationsCount,
         String backendHealth,
         String databaseHealth,
-        String aiServiceHealth
+        String aiServiceHealth,
+        SystemHealthResponse health
 ) { }

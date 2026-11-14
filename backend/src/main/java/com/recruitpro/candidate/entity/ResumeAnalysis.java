@@ -42,4 +42,12 @@ public class ResumeAnalysis extends BaseEntity {
 
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
+
+    /** Parser flags (JSON array of {code, detail}), e.g. HIDDEN_TEXT or PROMPT_INJECTION_SUSPECTED. */
+    @Column(name = "flags_json", columnDefinition = "TEXT")
+    private String flagsJson;
+
+    /** Parser timeline (JSON object: totalMonths, roles, skillMonths), sent to matching as is. */
+    @Column(name = "timeline_json", columnDefinition = "TEXT")
+    private String timelineJson;
 }

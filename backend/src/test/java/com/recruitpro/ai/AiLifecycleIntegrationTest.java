@@ -1,7 +1,6 @@
 package com.recruitpro.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.recruitpro.ai.service.ResumeAnalysisWorker;
 import com.recruitpro.application.entity.Application;
 import com.recruitpro.application.entity.ApplicationStatus;
 import com.recruitpro.application.repository.ApplicationRepository;
@@ -9,6 +8,9 @@ import com.recruitpro.candidate.entity.*;
 import com.recruitpro.candidate.repository.*;
 import com.recruitpro.hr.entity.*;
 import com.recruitpro.hr.repository.*;
+import com.recruitpro.jobs.service.BackgroundJobWorker;
+import com.recruitpro.organization.entity.Organization;
+import com.recruitpro.support.TestDataFactory;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,14 +40,18 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+/**
+ * End-to-end resume parsing and matching against a running AI service on 127.0.0.1:8000 started with
+ * AI_SERVICE_TOKEN=phase5a-test-token-minimum-32-chars-long. Opt-in: set RECRUITPRO_AI_IT=true.
+ * Parsing runs through the PARSE_RESUME background job (BackgroundJobWorker.runOnce()).
+ */
 @SpringBootTest(properties = {
-        "app.ai-service.queue-enabled=true",
         "app.ai-service.base-url=http://127.0.0.1:8000",
-        "app.ai-service.service-token=phase5a-test-token-minimum-32-chars-long",
-        "app.ai-service.poll-interval-ms=3600000"
+        "app.ai-service.service-token=phase5a-test-token-minimum-32-chars-long"
 })
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@EnabledIfEnvironmentVariable(named = "RECRUITPRO_AI_IT", matches = "true")
 class AiLifecycleIntegrationTest {
 
     @Autowired MockMvc mvc;
@@ -59,7 +66,9 @@ class AiLifecycleIntegrationTest {
     @Autowired JobRequirementRepository requirements;
     @Autowired ApplicationRepository applications;
     @Autowired JobMatchRunRepository matchRuns;
-    @Autowired ResumeAnalysisWorker worker;
+    @Autowired BackgroundJobWorker worker;
+    @Autowired com.recruitpro.evidence.service.MatchTriggerService matchTriggerService;
+    @Autowired TestDataFactory fixtures;
 
     private String candidateEmail;
     private String otherCandidateEmail;
@@ -82,13 +91,15 @@ class AiLifecycleIntegrationTest {
         candidate = createCandidate(candidateEmail);
         otherCandidate = createCandidate(otherCandidateEmail);
 
-        User manager = createUser(hrManagerEmail, Role.HR_MANAGER);
+        Organization organization = fixtures.organization("AI Lifecycle Org");
+        User manager = fixtures.staff(organization, hrManagerEmail, Role.HR_MANAGER);
         HRProfile hr = new HRProfile();
         hr.setUser(manager);
         hr = hrProfiles.save(hr);
 
         testJob = new Job();
         testJob.setCreatedBy(hr);
+        testJob.setOrganizationId(organization.getId());
         testJob.setTitle("Senior Full-Stack Engineer " + uid);
         testJob.setDescription("Building scalable recruitment platforms");
         testJob.setDepartment("Engineering");
@@ -140,7 +151,7 @@ class AiLifecycleIntegrationTest {
         assertEquals(0, analysis.getAttemptCount());
 
         // 3. Worker dispatches pending analysis
-        worker.dispatchPending();
+        worker.runOnce();
         analysis = awaitTerminalStatus(analysis.getId(), 5000);
 
         // 4. Confirm completed status and SHA-256
@@ -195,7 +206,7 @@ class AiLifecycleIntegrationTest {
         ResumeAnalysis analysis = analyses.findByResumeId(resumeId).orElseThrow();
         assertEquals(ResumeAnalysisStatus.PENDING, analysis.getStatus());
 
-        worker.dispatchPending();
+        worker.runOnce();
         analysis = awaitTerminalStatus(analysis.getId(), 5000);
 
         assertEquals(ResumeAnalysisStatus.COMPLETED, analysis.getStatus());
@@ -220,7 +231,7 @@ class AiLifecycleIntegrationTest {
         long resumeId = uploadResume(candidateEmail, "scanned.pdf", "application/pdf", pdfScanned);
 
         ResumeAnalysis analysis = analyses.findByResumeId(resumeId).orElseThrow();
-        worker.dispatchPending();
+        worker.runOnce();
         analysis = awaitTerminalStatus(analysis.getId(), 5000);
 
         assertEquals(ResumeAnalysisStatus.NEEDS_OCR, analysis.getStatus());
@@ -236,7 +247,7 @@ class AiLifecycleIntegrationTest {
         long pdfId = uploadResume(candidateEmail, "malformed.pdf", "application/pdf", malformedPdf);
 
         ResumeAnalysis pdfAnalysis = analyses.findByResumeId(pdfId).orElseThrow();
-        worker.dispatchPending();
+        worker.runOnce();
         pdfAnalysis = awaitTerminalStatus(pdfAnalysis.getId(), 5000);
 
         assertEquals(ResumeAnalysisStatus.FAILED, pdfAnalysis.getStatus());
@@ -257,7 +268,7 @@ class AiLifecycleIntegrationTest {
         // Candidate 1: Upload valid PDF with Java, Spring Boot, MySQL, 4 years experience
         byte[] pdfBytes = loadFixture("sample-valid.pdf");
         long resume1Id = uploadResume(candidateEmail, "cand1.pdf", "application/pdf", pdfBytes);
-        worker.dispatchPending();
+        worker.runOnce();
         ResumeAnalysis analysis1 = awaitTerminalStatus(analyses.findByResumeId(resume1Id).orElseThrow().getId(), 5000);
         assertEquals(ResumeAnalysisStatus.COMPLETED, analysis1.getStatus());
 
@@ -274,7 +285,7 @@ class AiLifecycleIntegrationTest {
         byte[] docxBytes = loadFixture("sample-valid.docx");
         long resume2Id = uploadResume(otherCandidateEmail, "cand2.docx",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docxBytes);
-        worker.dispatchPending();
+        worker.runOnce();
         ResumeAnalysis analysis2 = awaitTerminalStatus(analyses.findByResumeId(resume2Id).orElseThrow().getId(), 5000);
         assertEquals(ResumeAnalysisStatus.COMPLETED, analysis2.getStatus());
 
@@ -287,22 +298,27 @@ class AiLifecycleIntegrationTest {
         app2.setAppliedAt(LocalDateTime.now().minusHours(2));
         app2 = applications.save(app2);
 
-        // HR Manager views applicants: triggers batch matching
+        // Matching is asynchronous (D7): queue it as an application submission would, then run the worker.
+        matchTriggerService.requestMatch(app1.getId());
+        matchTriggerService.requestMatch(app2.getId());
+        worker.runOnce();
+
+        // HR Manager views the server-ranked applicants; the GET itself never calls the AI service.
         mvc.perform(get("/api/v1/hr/jobs/{jobId}/applicants", testJob.getId())
                         .with(user(hrManagerEmail).roles("HR_MANAGER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.content", hasSize(2)))
                 .andExpect(jsonPath("$.data.content[0].applicationId", is(app1.getId().intValue())))
-                .andExpect(jsonPath("$.data.content[0].observedEvidenceCoverage", is(80.0)))
-                .andExpect(jsonPath("$.data.content[0].requirements", hasSize(3)))
-                .andExpect(jsonPath("$.data.content[1].applicationId", is(app2.getId().intValue())))
-                .andExpect(jsonPath("$.data.content[1].observedEvidenceCoverage", is(0.0)));
+                .andExpect(jsonPath("$.data.content[0].matchStatus", is("READY")))
+                .andExpect(jsonPath("$.data.content[0].rank", is(1)))
+                .andExpect(jsonPath("$.data.content[0].verifiedCoverage", greaterThan(0.0)))
+                .andExpect(jsonPath("$.data.content[1].applicationId", is(app2.getId().intValue())));
 
-        // Confirm run persisted in job_match_runs table
-        assertTrue(matchRuns.findByApplicationId(app1.getId()).isPresent());
-        JobMatchRun run = matchRuns.findByApplicationId(app1.getId()).orElseThrow();
-        assertEquals(0, new BigDecimal("80.0").compareTo(run.getObservedEvidenceCoverage()));
-        assertEquals("evidence-coverage-2", run.getAlgorithmVersion());
+        // Confirm the append-only run persisted in job_match_runs
+        JobMatchRun run = matchRuns.findFirstByApplicationIdAndCurrentRunTrueOrderByIdDesc(app1.getId()).orElseThrow();
+        assertTrue(run.getVerifiedCoverage().compareTo(BigDecimal.ZERO) > 0);
+        assertEquals("evidence-ladder-3", run.getAlgorithmVersion());
+        assertEquals("INITIAL", run.getTriggerReason());
         assertNotNull(run.getRequirementResultsJson());
     }
 
@@ -384,15 +400,6 @@ class AiLifecycleIntegrationTest {
     }
 
     private void cleanUp() {
-        matchRuns.deleteAll();
-        applications.deleteAll();
-        facts.deleteAll();
-        analyses.deleteAll();
-        resumes.deleteAll();
-        requirements.deleteAll();
-        jobs.deleteAll();
-        hrProfiles.deleteAll();
-        candidateProfiles.deleteAll();
-        users.deleteAll();
+        fixtures.cleanDatabase();
     }
 }

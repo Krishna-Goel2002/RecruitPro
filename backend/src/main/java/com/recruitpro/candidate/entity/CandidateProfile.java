@@ -8,8 +8,11 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 
+/**
+ * Candidate profile. Date of birth and gender were removed (D14, V20): equal-opportunity answers are voluntary and
+ * stored apart ({@code eeo_responses}), never on the profile reviewers can see.
+ */
 @Entity
 @Table(name = "candidate_profiles")
 @Getter @Setter @NoArgsConstructor
@@ -18,8 +21,6 @@ public class CandidateProfile extends BaseEntity {
     @JoinColumn(name = "user_id", nullable = false, unique = true)
     private User user;
 
-    @Column(name = "date_of_birth") private LocalDate dateOfBirth;
-    @Column(length = 30) private String gender;
     @Column(columnDefinition = "TEXT") private String address;
     @Column(length = 100) private String city;
     @Column(length = 100) private String state;

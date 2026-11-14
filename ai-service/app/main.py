@@ -1,35 +1,49 @@
-"""
-AI-Powered Recruitment Platform — AI Service
+"""RecruitPro AI service: resume evidence extraction, requirement matching and hiring-kit generation.
 
-FastAPI application entry point.
-This service provides AI/NLP capabilities for the recruitment platform:
-- Resume parsing and information extraction
-- Job requirement analysis
-- Candidate-job matching and scoring
-- Candidate ranking
-- Human-readable explanations for AI recommendations
-
-This service is called by the Spring Boot backend via REST APIs.
-It does NOT independently make hiring decisions.
+Called only by the Spring Boot backend over the private network. Every ``/api/*`` route requires
+``X-Internal-Service-Token`` (checked before any body is read); ``GET /health`` is public. The
+service never makes hiring decisions; it reports evidence and its tier.
 """
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.v1.intelligence import router as intelligence_router
-
-app = FastAPI(
-    title="Recruitment AI Service",
-    description="AI/NLP service for resume analysis, candidate-job matching, and ranking",
-    version="0.1.0",
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-)
-
-app.include_router(intelligence_router, prefix="/api/v1", tags=["Resume intelligence"])
+from app.api.v1.authoring import router as authoring_router
+from app.api.v1.matching import router as matching_router
+from app.api.v1.resume import router as resume_router
+from app.core.auth import InternalTokenMiddleware
+from app.core.config import VERSION, load_settings, validate_settings
+from app.core.workers import parser_pool
+from app.llm.provider import get_provider
+from app.pipeline.ocr import ocr_installed
 
 
-@app.get("/health", tags=["Health"])
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "recruitment-ai-service", "version": "0.1.0"}
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    validate_settings(load_settings())  # fail fast, e.g. an LLM provider without LLM_MODEL
+    yield
+    parser_pool.shutdown()
+
+
+def create_app() -> FastAPI:
+    application = FastAPI(title="RecruitPro AI service", version=VERSION, docs_url=None, redoc_url=None,
+                          openapi_url=None, lifespan=lifespan)
+    for router in (resume_router, matching_router, authoring_router):
+        application.include_router(router, prefix="/api/v1")
+    application.add_middleware(InternalTokenMiddleware)
+
+    @application.get("/health")
+    def health() -> dict[str, object]:
+        settings = load_settings()
+        return {
+            "status": "ok",
+            "version": VERSION,
+            "llmProvider": settings.llm_provider if get_provider(settings) is not None else "none",
+            "ocrAvailable": settings.ocr_enabled and ocr_installed(),
+        }
+
+    return application
+
+
+app = create_app()

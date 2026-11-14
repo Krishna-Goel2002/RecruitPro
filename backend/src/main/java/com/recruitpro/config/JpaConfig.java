@@ -1,12 +1,24 @@
 package com.recruitpro.config;
 
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.auditing.DateTimeProvider;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.TemporalAccessor;
+import java.util.Optional;
+
 /**
- * JPA Configuration enabling automatic entity auditing (@CreatedDate, @LastModifiedDate).
+ * JPA Configuration enabling automatic entity auditing (@CreatedDate, @LastModifiedDate) in UTC (D15).
  */
 @Configuration
-@EnableJpaAuditing
+@EnableJpaAuditing(dateTimeProviderRef = "utcDateTimeProvider")
 public class JpaConfig {
+
+    @Bean
+    public DateTimeProvider utcDateTimeProvider() {
+        return () -> Optional.<TemporalAccessor>of(LocalDateTime.now(ZoneOffset.UTC));
+    }
 }

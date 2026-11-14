@@ -2,9 +2,11 @@
 
 ## AI-Powered End-to-End Recruitment & Hiring Management Platform
 
-**Version:** 1.0  
-**Phase:** 0 — Architecture & Foundation  
+**Version:** 1.1  
+**Phase:** 0 — Architecture & Foundation (updated November 2026 for PostgreSQL, organisations and the background queue)  
 **Date:** October 2026
+
+> **Update (WP-BE-A, November 2026).** The database is PostgreSQL 16 (port 5432), the backend runs on Java 21 / Spring Boot 3.5, staff users belong to organisations, access tokens last 15 minutes with refresh tokens in an httpOnly cookie, AI work runs through a database-backed background queue, and the audit trail is persisted in `audit_events`. The current plan is [docs/plan/IMPLEMENTATION_PLAN.md](../plan/IMPLEMENTATION_PLAN.md); backend platform details are in [docs/plan/WP-BE-A-NOTES.md](../plan/WP-BE-A-NOTES.md). Sections below were corrected where they had become false.
 
 ---
 
@@ -68,8 +70,8 @@ This system implements a **modular monolith** architecture with a **separate AI 
 ┌───────────────────────────────────────┐
 │          DATA LAYER                    │
 │  ┌─────────────────────────────────┐  │
-│  │          MySQL 8.x              │  │
-│  │   recruitment_platform_db       │  │
+│  │        PostgreSQL 16            │  │
+│  │          recruitpro             │  │
 │  └─────────────────────────────────┘  │
 └───────────────────────────────────────┘
 
@@ -121,13 +123,13 @@ This system implements a **modular monolith** architecture with a **separate AI 
 
 | Aspect | Detail |
 |--------|--------|
-| Language | Java 17 |
-| Framework | Spring Boot 3.x |
+| Language | Java 21 |
+| Framework | Spring Boot 3.5 |
 | Security | Spring Security + JWT |
 | ORM | Spring Data JPA + Hibernate |
 | Build | Maven |
 | API Docs | SpringDoc OpenAPI (Swagger UI) |
-| Database | MySQL 8.x |
+| Database | PostgreSQL 16 |
 | Port | 8080 (default) |
 
 **Module Packaging Convention:**
@@ -177,16 +179,16 @@ com.recruitpro
 
 **Key Constraint:** The AI service is called by the Spring Boot backend. It returns analysis results but NEVER modifies recruitment state (e.g., it cannot accept/reject candidates).
 
-### 2.4 Database — MySQL
+### 2.4 Database — PostgreSQL
 
 **Purpose:** Single relational database serving the Spring Boot backend.
 
 | Aspect | Detail |
 |--------|--------|
-| Engine | MySQL 8.x |
-| Schema | `recruitment_platform_db` |
-| Managed By | Spring Data JPA + Hibernate (DDL auto-generation in dev) |
-| Migrations | Flyway or Liquibase (to be added in Phase 1) |
+| Engine | PostgreSQL 16 (H2 in PostgreSQL mode for automated tests) |
+| Database | `recruitpro` (port 5432) |
+| Managed By | Spring Data JPA + Hibernate (`ddl-auto: validate`) |
+| Migrations | Flyway (`backend/src/main/resources/db/migration`) |
 
 ---
 
@@ -209,15 +211,16 @@ Headers:
 Backend  ──[HTTP REST + JSON]──►  AI Service
          ◄──[HTTP REST + JSON]──
          
-Communication is synchronous.
-Backend sends candidate/job data → AI returns analysis.
-Backend stores the result in MySQL.
+Resume parsing runs asynchronously: the upload queues a PARSE_RESUME background
+job, a worker calls the AI service and stores the result in PostgreSQL. Failed calls
+are retried with exponential backoff and end in a dead-letter state.
+(Applicant matching still calls the AI service from the applicant list until WP-BE-B.)
 ```
 
 ### 3.3 Backend ↔ Database
 
 ```
-Backend  ──[JDBC / JPA]──►  MySQL
+Backend  ──[JDBC / JPA]──►  PostgreSQL
          ◄──[JDBC / JPA]──
 ```
 
@@ -230,10 +233,11 @@ Backend  ──[JDBC / JPA]──►  MySQL
 ```
 1. Candidate registration validates the request, hashes the password with BCrypt, and always assigns CANDIDATE.
 2. Login checks the email/password pair and rejects disabled accounts.
-3. Backend returns a short-lived signed JWT access token and a random refresh token.
-4. The refresh token is stored only as a SHA-256 hash, expires after the configured lifetime, and is single-use.
-5. Refresh rotates the token; logout revokes it. Authenticated API calls use Authorization: Bearer <access_token>.
-6. Spring Security verifies issuer, signature and expiration, then loads the current user and role from the database.
+3. Backend returns a 15-minute signed JWT access token (claims uid, role, org) in the body and a random refresh token in the portal's cookie (HttpOnly, SameSite=Strict, Path=/api/v1/auth): `rp_refresh_candidate` or `rp_refresh_staff`, selected by the `X-RecruitPro-Portal: candidate|staff` header that both portals send (plain `rp_refresh` when the header is absent). The candidate portal accepts only CANDIDATE accounts and the staff portal every other role; the wrong portal gets 403 before a session is created.
+4. The refresh token is stored only as a SHA-256 hash, expires after 14 days, and is single-use within a token family.
+5. Refresh rotates the token; a rotated token presented again after a 30-second grace window revokes the whole family. Logout revokes the family. Authenticated API calls use Authorization: Bearer <access_token>.
+6. Spring Security verifies issuer, signature and expiration, then loads the current user, role and organisation from the database; unknown or disabled users stay unauthenticated.
+7. Five failed sign-ins lock an account for 15 minutes; auth routes are rate limited per IP.
 ```
 
 ### 4.2 Authorization Model
@@ -246,16 +250,18 @@ Backend  ──[JDBC / JPA]──►  MySQL
 | **INTERVIEWER** | View assigned interviews, submit feedback |
 | **CANDIDATE** | Register, apply for jobs, upload resume, view status |
 
-The Phase 2 implementation assigns one role per user (`users.role`). Public registration always creates `CANDIDATE`; privileged roles must be assigned through trusted provisioning and cannot be selected by a public caller. HR_MANAGER and RECRUITER are separate roles.
+The implementation assigns one role per user (`users.role`). Public registration always creates `CANDIDATE`; staff accounts belong to one organisation (`users.organization_id`) and are created by organisation sign-up, the bootstrap runner or invitations. HR_MANAGER and RECRUITER are separate roles. Every staff query is scoped to the caller's organisation; another organisation's records behave as missing (404).
 
 ### 4.3 Security Principles
 
 - Passwords hashed with BCrypt
 - JWT with configurable expiry
-- Access tokens default to 24 hours; refresh tokens default to 7 days. Set `JWT_SECRET` in each environment; production has no fallback signing key.
-- Refresh tokens are opaque, hashed at rest, rotated on use and revocable through logout.
+- Access tokens last 15 minutes; refresh tokens 14 days. Set `JWT_SECRET` (at least 32 bytes) in each environment; there is no fallback signing key.
+- Refresh tokens are opaque, hashed at rest, kept in an httpOnly cookie, rotated on use with reuse detection, and revoked by logout or a password change.
 - Role-based access control (RBAC) on all endpoints
-- CORS origins are configurable; production requires `CORS_ALLOWED_ORIGINS`.
+- CORS origins are configurable and credentials are allowed only for those origins; production requires `CORS_ALLOWED_ORIGINS`.
+- Actuator endpoints other than `/actuator/health` require ADMIN; Swagger is disabled in the `prod` profile.
+- Administrative and security events are persisted in `audit_events` (organisation, actor, client IP).
 - Input validation on all API endpoints
 - SQL injection prevention via parameterized queries (JPA)
 - XSS prevention via proper output encoding
@@ -330,7 +336,7 @@ Examples:
   POST   /api/v1/auth/login
   POST   /api/v1/auth/register
   POST   /api/v1/auth/refresh
-  POST   /api/v1/auth/logout   (requires the refresh token in the request body)
+  POST   /api/v1/auth/logout   (revokes the refresh-token family from the portal's refresh cookie)
   GET    /api/v1/jobs
   POST   /api/v1/jobs
   GET    /api/v1/jobs/{id}
@@ -370,7 +376,7 @@ Examples:
 }
 ```
 
-Authentication and authorization errors use the same shape with `success: false` and a safe `message`; validation details use the `errors` array. No separate `error` field is part of the API contract. Missing, invalid or expired access authentication returns 401; authenticated callers without the required role receive 403. Registration, login, refresh and logout (which authenticates using its refresh-token body) are public auth routes. Health and API documentation are public; other application and actuator endpoints are protected by default.
+Authentication and authorization errors use the same shape with `success: false` and a safe `message`; validation details use the `errors` array. No separate `error` field is part of the API contract. Missing, invalid or expired access authentication returns 401; authenticated callers without the required role receive 403; rate-limited calls receive 429. Registration, login, refresh, logout, email verification, password reset, invitation preview/acceptance and organisation sign-up are public routes. Health and API documentation are public; other application and actuator endpoints are protected by default.
 
 **Paginated:**
 ```json
@@ -416,8 +422,8 @@ Authentication and authorization errors use the same shape with `success: false`
 │  └──────────┘  └────┬─────┘  └───────────┘ │
 │                      │                       │
 │                ┌─────┴─────┐                │
-│                │   MySQL   │                │
-│                │   :3307   │                │
+│                │ PostgreSQL│                │
+│                │   :5432   │                │
 │                └───────────┘                │
 └─────────────────────────────────────────────┘
 ```
@@ -432,7 +438,7 @@ The HR module owns `HRProfile`, `Job`, and `JobRequirement`. An HR profile refer
 
 `POST /api/v1/jobs` creates a DRAFT. Legal transitions are DRAFT → PUBLISHED or CANCELLED; PUBLISHED → ON_HOLD or CLOSED; ON_HOLD → PUBLISHED or CLOSED. CLOSED and CANCELLED are terminal. The first successful publication records `publishedAt`. Publishing requires a title, description, department, location, job type, experience level, positive vacancies, valid non-negative salary bounds, and a future deadline when supplied. A requirement row is optional. A deadline is optional and, when present on create/update, must be in the future.
 
-ADMIN and HR_MANAGER can manage jobs across the organization. RECRUITER can read job lists and details. INTERVIEWER and CANDIDATE have no Phase 3 access. The creator profile is retained as audit ownership; no recruiter assignment or owner scoping is applied. HR users must have a provisioned HRProfile; job creation reports a business error if it is missing.
+ADMIN and HR_MANAGER can manage every job of their own organisation. RECRUITER can read job lists and details of the organisation. INTERVIEWER has no job access yet; CANDIDATE sees published jobs with an open deadline from every organisation. The creator profile is retained as audit ownership. ADMIN, HR_MANAGER and RECRUITER users get an HRProfile automatically (sign-up, invitation, role change, or first job creation).
 
 Jobs support `page` (default 0), `size` (default 20, maximum 100), `status`, `department` (case-insensitive exact), `location` (case-insensitive contains), `jobType`, and `search` (title contains). Sorting is allow-listed to `createdAt`, `title`, `department`, `location`, `status`, and `deadline`; default is `createdAt,DESC`. Only DRAFT jobs and their requirements may be edited or deleted. Published, on-hold, closed, and cancelled jobs remain as historical records.
 

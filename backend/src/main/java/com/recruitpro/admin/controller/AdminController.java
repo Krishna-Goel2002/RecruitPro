@@ -1,22 +1,30 @@
 package com.recruitpro.admin.controller;
 
-import com.recruitpro.admin.audit.AdminAuditService;
 import com.recruitpro.admin.dto.*;
 import com.recruitpro.admin.service.AdminDashboardService;
 import com.recruitpro.admin.service.AdminHrManagementService;
 import com.recruitpro.admin.service.AdminJobService;
 import com.recruitpro.admin.service.AdminUserService;
+import com.recruitpro.audit.dto.AuditEventResponse;
+import com.recruitpro.audit.service.AuditService;
 import com.recruitpro.common.dto.ApiResponse;
 import com.recruitpro.common.dto.PageResponse;
+import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.hr.entity.JobStatus;
 import com.recruitpro.user.entity.Role;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+/** Organisation administration (ADMIN of the caller's organisation; every query is organisation-scoped). */
 @RestController
 @RequestMapping("/api/v1/admin")
 @RequiredArgsConstructor
@@ -26,7 +34,7 @@ public class AdminController {
     private final AdminUserService userService;
     private final AdminHrManagementService hrService;
     private final AdminJobService jobService;
-    private final AdminAuditService auditService;
+    private final AuditService auditService;
 
     @GetMapping("/dashboard")
     public ApiResponse<AdminDashboardMetricsResponse> getDashboardMetrics() {
@@ -84,11 +92,28 @@ public class AdminController {
         return ApiResponse.success(jobService.overrideJobStatus(jobId, request.status(), request.reason()), "Job status updated by administrator");
     }
 
+    /** M10: persistent audit trail of the organisation, newest first, optionally filtered by action. */
     @GetMapping("/audit-logs")
-    public ApiResponse<PageResponse<AdminAuditRecord>> listAuditLogs(
+    public ApiResponse<PageResponse<AuditEventResponse>> listAuditLogs(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String action
     ) {
-        return ApiResponse.success(auditService.list(page, size));
+        return ApiResponse.success(auditService.listForCurrentOrganization(page, size, action));
+    }
+
+    /** CSV export of the organisation's audit trail ({@code from}/{@code to}: ISO-8601 dates or date-times). */
+    @GetMapping("/audit-export")
+    public ResponseEntity<byte[]> exportAuditLogs(
+            @RequestParam(required = false) String from,
+            @RequestParam(required = false) String to
+    ) {
+        byte[] csv = auditService.exportCsvForCurrentOrganization(from, to).getBytes(StandardCharsets.UTF_8);
+        String filename = "audit-" + UtcTime.now().toLocalDate() + ".csv";
+        return ResponseEntity.ok()
+                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(filename).build().toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .body(csv);
     }
 }

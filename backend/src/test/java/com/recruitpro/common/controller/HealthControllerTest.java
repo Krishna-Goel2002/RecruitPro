@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -46,5 +47,16 @@ class HealthControllerTest {
 
         mockMvc.perform(get("/actuator/health/db").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("L5: actuator endpoints other than health require the ADMIN role")
+    void actuatorEndpointsOtherThanHealthRequireAdmin() throws Exception {
+        mockMvc.perform(get("/actuator/info")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/actuator/metrics")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/actuator/metrics").with(user("hr@example.test").roles("HR_MANAGER")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/actuator/metrics").with(user("admin@example.test").roles("ADMIN")))
+                .andExpect(status().isOk());
     }
 }

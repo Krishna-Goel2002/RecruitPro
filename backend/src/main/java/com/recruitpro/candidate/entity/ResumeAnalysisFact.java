@@ -1,6 +1,7 @@
 package com.recruitpro.candidate.entity;
 
 import com.recruitpro.common.entity.BaseEntity;
+import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.user.entity.User;
 import jakarta.persistence.*;
 import org.hibernate.annotations.JdbcTypeCode;
@@ -55,4 +56,24 @@ public class ResumeAnalysisFact extends BaseEntity {
 
     @Column(name = "reviewed_at")
     private LocalDateTime reviewedAt;
+
+    /**
+     * Evidence tier of the extracted fact; always RESUME_STATED for parser output. Candidate corrections never
+     * change it: they become SELF_CLAIMED claims linked by {@code candidate_claims.source_fact_id} (C1).
+     */
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "evidence_tier", nullable = false, length = 30)
+    private EvidenceTier evidenceTier = EvidenceTier.RESUME_STATED;
+
+    /** Offsets of the evidence in the normalised document text (parser v2). */
+    @Column(name = "span_start")
+    private Integer spanStart;
+
+    @Column(name = "span_end")
+    private Integer spanEnd;
+
+    /** Parser attributes (JSON object), e.g. skillId, domain, title, employer, startDate, months, degreeLevel. */
+    @Column(name = "attributes_json", columnDefinition = "TEXT")
+    private String attributesJson;
 }
