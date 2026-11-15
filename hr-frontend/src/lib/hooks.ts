@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import brand from '../design/brand/active'
 
 /** Sets the document title for the current screen. */
 export function usePageTitle(title: string) {
   useEffect(() => {
-    document.title = title ? `${title} · RecruitPro HR` : 'RecruitPro HR'
+    document.title = title ? `${title} · ${brand.name}` : `${brand.name} ${brand.portalLabel.staff}`.trim()
   }, [title])
 }
 

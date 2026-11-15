@@ -1,0 +1,226 @@
+/*
+ * Design tokens (DESIGN_SYSTEM.md §3, §5, §8.2, Appendix A).
+ * The ONLY place in the system (besides brand presets) where hex values may appear.
+ * Brand tokens (--accent*, --tier-fill, --fg-on-accent, --font-display*) are injected by brand/vite-plugin-brand.ts
+ * as an unlayered <style id="brand-tokens"> in index.html, so they are not repeated here.
+ *
+ * Themes: `[data-theme="light|dark"]` on <html> (set by public/theme-init.js before first paint). The selectors are
+ * deliberately not limited to :root so a subtree can force a theme (the /__design gallery uses this for side-by-side
+ * specimens). A prefers-color-scheme block covers the case where theme-init.js did not run.
+ */
+
+/* ------------------------------------------------------------------------------------------------ light (default) */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* Neutral ramp: hue ≈ 220°, very low chroma. Hand-tuned; not an inversion of the dark ramp. */
+  --n-0: #FFFFFF; --n-25: #FAFBFC; --n-50: #F5F6F8; --n-100: #EDEFF2; --n-150: #E3E6EA; --n-200: #D3D8DE;
+  --n-300: #B4BBC4; --n-400: #848C98; --n-500: #646C78; --n-600: #4F5763; --n-700: #3B424C; --n-800: #272C33;
+  --n-900: #16191E; --n-950: #0D0F12;
+
+  /* Surfaces */
+  --bg-canvas: var(--n-50);
+  --bg-surface: var(--n-0);
+  --bg-sunken: var(--n-50);
+  --bg-raised: var(--n-0);
+  --bg-overlay: var(--n-0);
+  --bg-hover: var(--n-50);
+  --bg-active: var(--n-100);
+  --bg-selected: var(--accent-subtle);
+  --bg-sidebar: var(--n-0);
+  --bg-stripe: var(--n-25);
+
+  /* Text */
+  --fg-default: var(--n-900);
+  --fg-muted: var(--n-600);
+  --fg-subtle: var(--n-500);
+  --fg-disabled: var(--n-300);
+  --fg-emphasis: var(--n-950);
+
+  /* Lines */
+  --border-hairline: var(--n-150);
+  --border-default: var(--n-200);
+  --border-strong: var(--n-300);
+  --border-control: var(--n-400);
+
+  /* Interaction */
+  --focus: var(--accent);
+  --scrim: rgb(13 15 18 / .32);
+  --skeleton-sheen: rgb(255 255 255 / .6);
+  --tooltip-bg: var(--n-900);
+  --tooltip-fg: #E7E9EC;
+  --tooltip-border: var(--n-900);
+  --bg-overlay-hover: var(--n-100);
+  --selection-bg: var(--accent-subtle-border);
+  --scrollbar: var(--n-300);
+  --scrollbar-hover: var(--n-400);
+  --inner-highlight: rgb(255 255 255 / .14);
+
+  /* Status (fg / bg / border) — §3.5 */
+  --success-fg: #17663A; --success-bg: #E6F3EB; --success-border: #B9DCC6;
+  --warning-fg: #8A4B00; --warning-bg: #FBEFD9; --warning-border: #EBCB94;
+  --danger-fg: #B42318;  --danger-bg: #FCEBE9;  --danger-border: #F2C1BC;
+  --info-fg: #1F5AA6;    --info-bg: #E7EFFA;    --info-border: #BCD0EE;
+  --neutral-fg: #3B424C; --neutral-bg: #EDEFF2; --neutral-border: #D3D8DE;
+  --danger-solid: #B42318; --danger-solid-hover: #9A1D14; --on-danger: #FFFFFF;
+
+  /* Evidence tiers: empty rungs; the fill is the brand --tier-fill. */
+  --tier-empty: var(--n-200);
+  --tier-claimed: var(--n-500);
+
+  /* Elevation (§5) */
+  --shadow-xs: 0 1px 0 rgb(16 20 26 / .04);
+  --shadow-pop: 0 1px 2px rgb(16 20 26 / .06), 0 6px 16px -4px rgb(16 20 26 / .14);
+  --shadow-dialog: 0 2px 6px rgb(16 20 26 / .08), 0 24px 48px -12px rgb(16 20 26 / .28);
+  --shadow-raised-edge: 0 0 0 0 transparent;
+}
+
+/* ------------------------------------------------------------------------------------------------------- dark */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --d-0: #0D0F12; --d-25: #111317; --d-50: #14171B; --d-100: #1A1E23; --d-150: #21252B; --d-200: #24282E;
+  --d-300: #30353C; --d-400: #434951; --d-500: #6B737E; --d-600: #8C939D; --d-700: #AEB4BD; --d-800: #CDD2D8;
+  --d-900: #E7E9EC; --d-950: #F5F6F7;
+
+  --bg-canvas: var(--d-0);
+  --bg-surface: var(--d-50);
+  --bg-sunken: var(--d-25);
+  --bg-raised: var(--d-100);
+  --bg-overlay: var(--d-150);
+  --bg-hover: var(--d-100);
+  --bg-active: var(--d-150);
+  --bg-selected: var(--accent-subtle);
+  --bg-sidebar: var(--d-25);
+  --bg-stripe: var(--d-25);
+
+  --fg-default: var(--d-900);
+  --fg-muted: var(--d-700);
+  --fg-subtle: var(--d-600);
+  --fg-disabled: var(--d-500);
+  --fg-emphasis: var(--d-950);
+
+  --border-hairline: var(--d-200);
+  --border-default: var(--d-300);
+  --border-strong: var(--d-400);
+  --border-control: var(--d-500);
+
+  --focus: var(--accent);
+  --scrim: rgb(0 0 0 / .56);
+  --skeleton-sheen: rgb(255 255 255 / .05);
+  --tooltip-bg: var(--d-150);
+  --tooltip-fg: var(--d-900);
+  --tooltip-border: var(--d-300);
+  --bg-overlay-hover: var(--d-300);
+  --selection-bg: var(--accent-subtle-border);
+  --scrollbar: var(--d-300);
+  --scrollbar-hover: var(--d-400);
+  --inner-highlight: rgb(255 255 255 / .06);
+
+  --success-fg: #6FD39A; --success-bg: #11291B; --success-border: #1F4A31;
+  --warning-fg: #F0B45E; --warning-bg: #2E2210; --warning-border: #57401B;
+  --danger-fg: #FF8A80;  --danger-bg: #351715;  --danger-border: #5E2622;
+  --info-fg: #8DB6F0;    --info-bg: #132238;    --info-border: #23406A;
+  --neutral-fg: #CDD2D8; --neutral-bg: #21252B; --neutral-border: #30353C;
+  --danger-solid: #FF8A80; --danger-solid-hover: #FFA39B; --on-danger: #0D0F12;
+
+  --tier-empty: var(--d-400);
+  --tier-claimed: var(--d-600);
+
+  --shadow-xs: none;
+  --shadow-pop: 0 8px 24px -6px rgb(0 0 0 / .6), inset 0 1px 0 rgb(255 255 255 / .04);
+  --shadow-dialog: 0 24px 64px -12px rgb(0 0 0 / .7), inset 0 1px 0 rgb(255 255 255 / .05);
+  --shadow-raised-edge: 0 0 0 1px var(--border-default);
+}
+
+/* No-JS fallback: follow the OS when theme-init.js did not run. Same declarations as [data-theme='dark']. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --d-0: #0D0F12; --d-25: #111317; --d-50: #14171B; --d-100: #1A1E23; --d-150: #21252B; --d-200: #24282E;
+    --d-300: #30353C; --d-400: #434951; --d-500: #6B737E; --d-600: #8C939D; --d-700: #AEB4BD; --d-800: #CDD2D8;
+    --d-900: #E7E9EC; --d-950: #F5F6F7;
+    --bg-canvas: var(--d-0); --bg-surface: var(--d-50); --bg-sunken: var(--d-25); --bg-raised: var(--d-100);
+    --bg-overlay: var(--d-150); --bg-hover: var(--d-100); --bg-active: var(--d-150); --bg-selected: var(--accent-subtle);
+    --bg-sidebar: var(--d-25); --bg-stripe: var(--d-25);
+    --fg-default: var(--d-900); --fg-muted: var(--d-700); --fg-subtle: var(--d-600); --fg-disabled: var(--d-500);
+    --fg-emphasis: var(--d-950);
+    --border-hairline: var(--d-200); --border-default: var(--d-300); --border-strong: var(--d-400);
+    --border-control: var(--d-500);
+    --focus: var(--accent); --scrim: rgb(0 0 0 / .56); --skeleton-sheen: rgb(255 255 255 / .05);
+    --tooltip-bg: var(--d-150); --tooltip-fg: var(--d-900); --tooltip-border: var(--d-300); --bg-overlay-hover: var(--d-300);
+    --selection-bg: var(--accent-subtle-border);
+    --scrollbar: var(--d-300); --scrollbar-hover: var(--d-400); --inner-highlight: rgb(255 255 255 / .06);
+    --success-fg: #6FD39A; --success-bg: #11291B; --success-border: #1F4A31;
+    --warning-fg: #F0B45E; --warning-bg: #2E2210; --warning-border: #57401B;
+    --danger-fg: #FF8A80;  --danger-bg: #351715;  --danger-border: #5E2622;
+    --info-fg: #8DB6F0;    --info-bg: #132238;    --info-border: #23406A;
+    --neutral-fg: #CDD2D8; --neutral-bg: #21252B; --neutral-border: #30353C;
+    --danger-solid: #FF8A80; --danger-solid-hover: #FFA39B; --on-danger: #0D0F12;
+    --tier-empty: var(--d-400); --tier-claimed: var(--d-600);
+    --shadow-xs: none;
+    --shadow-pop: 0 8px 24px -6px rgb(0 0 0 / .6), inset 0 1px 0 rgb(255 255 255 / .04);
+    --shadow-dialog: 0 24px 64px -12px rgb(0 0 0 / .7), inset 0 1px 0 rgb(255 255 255 / .05);
+    --shadow-raised-edge: 0 0 0 1px var(--border-default);
+  }
+}
+
+/* --------------------------------------------------------------------------------------- theme-independent tokens */
+:root {
+  /* Type */
+  --font-fallback: ui-sans-serif, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-sans: 'IBM Plex Sans', var(--font-fallback);
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
+  --font-heading: var(--font-display, var(--font-sans));
+
+  --text-display: 32px; --lh-display: 40px;
+  --text-h1: 24px;      --lh-h1: 32px;
+  --text-h2: 18px;      --lh-h2: 26px;
+  --text-h3: 15px;      --lh-h3: 22px;
+  --text-body-lg: 15px; --lh-body-lg: 24px;
+  --text-body: 14px;    --lh-body: 20px;
+  --text-sm: 13px;      --lh-sm: 18px;
+  --text-caption: 12px; --lh-caption: 16px;
+  --text-overline: 11px; --lh-overline: 16px;
+
+  /* Space (4 px base) */
+  --s-0: 0; --s-1: 2px; --s-2: 4px; --s-3: 6px; --s-4: 8px; --s-5: 12px; --s-6: 16px; --s-7: 20px; --s-8: 24px;
+  --s-9: 32px; --s-10: 40px; --s-11: 48px; --s-12: 64px;
+
+  /* Radii: nothing above 8 px except full-round */
+  --r-xs: 2px; --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-full: 999px;
+
+  /* Sizes */
+  --h-sm: 28px; --h-md: 32px; --h-lg: 40px; --hit-coarse: 44px;
+  --w-read: 680px; --w-form: 640px; --w-page: 1200px; --w-wide: 1600px;
+  --sidebar: 240px; --rail: 64px; --topbar: 52px; --drawer-nav: 280px;
+  --page-pad: 16px;
+
+  /* Layers */
+  --z-sticky: 10; --z-topbar: 20; --z-sidebar: 25; --z-popover: 40; --z-toast: 60; --z-tooltip: 70;
+
+  /* Motion (§8.2) */
+  --dur-instant: 80ms; --dur-fast: 140ms; --dur-base: 200ms; --dur-slow: 280ms; --dur-slower: 420ms;
+  --dur-count: 700ms; --dur-shimmer: 1400ms; --stagger-step: 24ms;
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+  --ease-decelerate: cubic-bezier(.05, .7, .1, 1);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --ease-settle: cubic-bezier(.34, 1.36, .64, 1);
+  --ease-linear: linear;
+  --travel: 4px;
+}
+
+@media (min-width: 900px) {
+  :root { --page-pad: 24px; }
+}
+
+@media (min-width: 1200px) {
+  :root { --page-pad: 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-base: 120ms; --dur-slow: 120ms; --dur-slower: 0ms; --dur-count: 0ms; --stagger-step: 0ms; --travel: 0px;
+  }
+}

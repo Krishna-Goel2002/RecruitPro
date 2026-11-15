@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import brand from '../design/brand/active'
 
 /** Returns `value` after it has stopped changing for `delayMs`. */
 export function useDebouncedValue<T>(value: T, delayMs: number): T {
@@ -14,7 +15,7 @@ export function useDebouncedValue<T>(value: T, delayMs: number): T {
 export function useDocumentTitle(title: string): void {
   useEffect(() => {
     const previous = document.title
-    document.title = title ? `${title} · RecruitPro` : 'RecruitPro Candidate Portal'
+    document.title = title ? `${title} · ${brand.name}` : brand.name
     return () => {
       document.title = previous
     }

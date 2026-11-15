@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { HomeRedirect, PublicOnly, RequireAuth } from './auth/guards'
 import { AppLayout } from './components/Layout'
@@ -26,6 +27,9 @@ import { JobFormPage } from './pages/jobs/JobFormPage'
 import { JobsListPage } from './pages/jobs/JobsListPage'
 import { NotFoundPage } from './pages/StatusPages'
 
+// Living style guide (hidden route, not linked from navigation). Lazy, so it never weighs on the app bundle.
+const DesignGallery = lazy(() => import('./design/gallery/DesignGallery'))
+
 /**
  * Routes and role guards. ADMIN: everything. HR_MANAGER: jobs + interviews. RECRUITER: jobs (read, comment, verify
  * claims, score work samples) + interviews. INTERVIEWER: interviews only. Every staff role: notifications inbox and
@@ -34,6 +38,7 @@ import { NotFoundPage } from './pages/StatusPages'
 export default function App() {
   return (
     <Routes>
+      <Route path="/__design" element={<Suspense fallback={null}><DesignGallery portal="staff" /></Suspense>} />
       <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
       <Route path="/signup" element={<PublicOnly><SignupPage /></PublicOnly>} />
       <Route path="/forgot-password" element={<PublicOnly><ForgotPasswordPage /></PublicOnly>} />

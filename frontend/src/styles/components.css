@@ -23,9 +23,9 @@
 }
 
 .alert.success {
-  color: #1f5f45;
-  background: #eaf5ee;
-  border-color: #cfe6d8;
+  color: var(--success-fg);
+  background: var(--success-bg);
+  border-color: var(--success-border);
 }
 
 .alert.info {
@@ -93,8 +93,8 @@
 
 .notice-success,
 .notice-info {
-  background: #10392e;
-  color: #fff;
+  background: var(--success-fg);
+  color: var(--bg-surface);
 }
 
 .notice-error {
@@ -167,7 +167,7 @@
   display: inline-block;
   width: 16px;
   height: 16px;
-  border: 2px solid #d9e5df;
+  border: 2px solid var(--accent-subtle-border);
   border-top-color: var(--brand);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -202,8 +202,8 @@
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: #eef5f1;
-  color: #3f7a62;
+  background: var(--bg-active);
+  color: var(--accent-text);
   display: grid;
   place-items: center;
   margin-bottom: 12px;
@@ -256,15 +256,15 @@
   display: inline-block;
   font-size: 11px;
   font-weight: 700;
-  background: #eef3f3;
-  color: #45605b;
+  background: var(--bg-active);
+  color: var(--fg-muted);
   border-radius: 20px;
   padding: 4px 9px;
 }
 
 .tag.green {
-  background: #e6f2ec;
-  color: #1f6249;
+  background: var(--accent-subtle);
+  color: var(--accent-text);
 }
 
 .tag.amber {
@@ -298,8 +298,8 @@
 }
 
 .status-selected {
-  color: #1f6249;
-  background: #e3f2ea;
+  color: var(--success-fg);
+  background: var(--success-bg);
 }
 
 .status-rejected {
@@ -309,7 +309,7 @@
 
 .status-withdrawn {
   color: var(--muted);
-  background: #eef0f2;
+  background: var(--bg-active);
 }
 
 /* Evidence ladder: tier-0 (claim) amber, tier-1 neutral green, higher tiers progressively stronger green. */
@@ -324,26 +324,26 @@
 }
 
 .tier-1 {
-  color: #2f5e51;
-  background: #eef5f2;
-  border-color: #d6e7df;
+  color: var(--accent-text);
+  background: var(--bg-active);
+  border-color: var(--accent-subtle-border);
 }
 
 .tier-2 {
-  color: #1d5e48;
-  background: #e2f1e9;
-  border-color: #c4e2d2;
+  color: var(--accent-text);
+  background: var(--accent-subtle);
+  border-color: var(--border-strong);
 }
 
 .tier-3,
 .tier-4 {
-  color: #fff;
+  color: var(--fg-on-accent);
   background: var(--brand);
   border-color: var(--brand);
 }
 
 .verification-verified {
-  color: #fff;
+  color: var(--fg-on-accent);
   background: var(--brand);
 }
 
@@ -355,22 +355,22 @@
 
 .verification-not_verified {
   color: var(--muted);
-  background: #eef0f2;
+  background: var(--bg-active);
 }
 
 .badge-must {
-  color: #7a2f22;
-  background: #fbe9e5;
+  color: var(--danger-fg);
+  background: var(--danger-bg);
 }
 
 .badge-nice {
   color: var(--muted);
-  background: #f0f3f4;
+  background: var(--bg-active);
 }
 
 .ws-status {
   color: var(--ink-2);
-  background: #eef2f3;
+  background: var(--bg-active);
 }
 
 .ws-assigned,
@@ -387,14 +387,14 @@
 .ws-submitted,
 .ws-scored,
 .ws-completed {
-  color: #1f6249;
-  background: #e3f2ea;
+  color: var(--success-fg);
+  background: var(--success-bg);
 }
 
 .ws-expired,
 .ws-cancelled {
   color: var(--muted);
-  background: #eef0f2;
+  background: var(--bg-active);
 }
 
 .fact-type-badge {
@@ -405,13 +405,13 @@
   letter-spacing: 0.4px;
   padding: 3px 7px;
   border-radius: 5px;
-  background: #eef2f4;
-  color: #3f4f5c;
+  background: var(--bg-active);
+  color: var(--fg-muted);
 }
 
 .tab-count {
   display: inline-block;
-  background: #eef2f4;
+  background: var(--bg-active);
   color: var(--ink-2);
   padding: 0 7px;
   border-radius: 10px;
@@ -423,7 +423,7 @@
 .stat-pill {
   border-radius: 20px;
   background: var(--surface);
-  border: 1px solid #e6ebee;
+  border: 1px solid var(--border-default);
   padding: 6px 12px;
   color: var(--ink-2);
   font-size: 12px;
@@ -453,7 +453,7 @@
 }
 
 .dialog::backdrop {
-  background: rgb(21 37 31 / 55%);
+  background: var(--scrim);
 }
 
 .dialog-panel {
@@ -464,7 +464,7 @@
   background: var(--surface);
   border-radius: 16px 16px 0 0;
   padding: 20px 16px 22px;
-  box-shadow: var(--shadow-pop);
+  box-shadow: var(--legacy-shadow-pop);
 }
 
 .dialog-header {
@@ -498,8 +498,8 @@
   height: 36px;
   border: 0;
   border-radius: 50%;
-  background: #eff3f1;
-  color: #3e4f47;
+  background: var(--bg-active);
+  color: var(--fg-default);
   font-size: 22px;
   line-height: 1;
 }
@@ -663,7 +663,7 @@
 
 .choice.selected {
   border-color: var(--brand);
-  background: #f4faf7;
+  background: var(--bg-sunken);
 }
 
 .choice span {

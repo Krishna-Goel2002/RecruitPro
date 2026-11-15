@@ -39,6 +39,17 @@ On Windows or macOS, point it at an installed browser: `CHROME_PATH="C:\Program 
 
 Files are named `<screen>--<theme>--<width>.png`. `out/<portal>/report.json` lists, per capture: page errors, `blank` (nothing rendered in `#root`), `overflowX` and the first elements that stick out of the viewport (elements inside a scroll container are ignored), and axe violations. **The process exits 1** if any capture crashed, overflowed, or has a serious/critical axe violation — use it as the acceptance gate for each redesigned screen.
 
+## Design-system screen
+
+Both fixture files have a `design-system` screen (`/__design`, anonymous): the living style guide from `src/design/gallery`. Capture it whenever `src/design` changes:
+
+```bash
+node snap.mjs --portal candidate --dist ../../frontend/dist --theme both --axe --only design-system
+node snap.mjs --portal hr --dist ../../hr-frontend/dist --theme both --axe --only design-system
+```
+
+Known limitation: with `@sparticuz/chromium`, full-page captures taller than about 8,192 px repeat the top of the page after that point (the 390 px gallery is about 13,000 px tall). Everything above that line is accurate; for the rest, inspect sections with element screenshots or `--viewport`.
+
 ## How the mocking works
 
 The bundle calls `VITE_API_BASE_URL` (default `http://localhost:8080/api/v1`). Puppeteer intercepts any request whose path contains `/api/v1/`, answers CORS preflights, and replies with the backend envelope `{ success, message, data }`. Session restore works because `POST /auth/refresh` returns a session from the fixture; screens marked `anonymous: true` get a 401 refresh instead. Every other request to a third-party origin is aborted (the production CSP forbids them anyway). Unanswered API calls are printed at the end — add a route for each.

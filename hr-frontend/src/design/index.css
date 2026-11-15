@@ -1,0 +1,15 @@
+/*
+ * Design system entry point. Imported once, first, in main.tsx.
+ * Layer order is declared here so every later stylesheet (legacy page CSS included) slots into a known position:
+ * later layers win regardless of selector specificity. `legacy` holds the old styles/*.css while pages migrate;
+ * it sits after `base` (old pages keep their own element styling) and before `components` (new .ui-* always win).
+ */
+@layer reset, tokens, base, legacy, components, patterns, pages, utilities;
+
+@import './reset.css' layer(reset);
+@import './tokens.css' layer(tokens);
+@import './base.css' layer(base);
+@import './components.css' layer(components);
+@import './motion.css' layer(components);
+@import './patterns.css' layer(patterns);
+@import './utilities.css' layer(utilities);

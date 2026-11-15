@@ -183,6 +183,8 @@ const clickText = (text) => async (p) => {
 }
 
 export const screens = [
+  // Living style guide (src/design/gallery): every design-system component in the current theme.
+  { name: 'design-system', path: '/__design', anonymous: true, settle: 900 },
   { name: 'login', path: '/login', anonymous: true },
   { name: 'register', path: '/register', anonymous: true },
   { name: 'jobs', path: '/jobs' },

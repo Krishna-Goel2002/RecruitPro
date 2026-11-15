@@ -1,0 +1,83 @@
+/*
+ * Motion (DESIGN_SYSTEM §8): keyframes, list stagger, route entrance, and the reduced-motion overrides (§8.6).
+ * Enter with decelerate/standard, exit with the exit curve at ~70 % of the enter duration; transform + opacity only;
+ * travel 4–8 px (drawers excepted).
+ */
+
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+@keyframes ui-fade-in { from { opacity: 0; } }
+@keyframes ui-fade-out { to { opacity: 0; } }
+@keyframes ui-appear { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ui-enter { from { opacity: 0; transform: translateY(var(--travel)); } }
+@keyframes ui-route-in { from { opacity: 0; transform: translateY(var(--travel)); } }
+@keyframes ui-dialog-in { from { opacity: 0; transform: translateY(4px) scale(.98); } }
+@keyframes ui-dialog-out { to { opacity: 0; transform: scale(.98); } }
+@keyframes ui-drawer-in { from { transform: translateX(100%); } }
+@keyframes ui-drawer-out { to { transform: translateX(100%); } }
+@keyframes ui-sheet-in { from { transform: translateY(100%); } }
+@keyframes ui-sheet-out { to { transform: translateY(100%); } }
+@keyframes ui-nav-in { from { transform: translateX(-100%); } }
+@keyframes ui-toast-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes ui-toast-out { to { opacity: 0; transform: translateX(8px); } }
+@keyframes ui-tooltip-in { from { opacity: 0; transform: translateY(2px); } }
+@keyframes ui-tooltip-in-below { from { opacity: 0; transform: translateY(-2px); } }
+@keyframes ui-pop-in { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes ui-rung-in { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes ui-draw { from { stroke-dashoffset: 64; } to { stroke-dashoffset: 0; } }
+@keyframes ui-shimmer { to { transform: translateX(100%); } }
+@keyframes ui-progress { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes ui-pulse { 50% { opacity: .7; } }
+@keyframes ui-highlight { from { background-color: var(--accent-subtle); } }
+
+/* M2: list stagger (motion.ts stagger() sets --i and .is-entering). */
+.is-entering {
+  animation: ui-enter var(--dur-base) var(--ease-standard) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger-step));
+}
+
+/* M1: route entrance (AppShell keys .p-content by pathname). */
+.p-content { animation: ui-route-in var(--dur-base) var(--ease-standard); }
+
+/* M6: verdict icon draws in after a check completes. */
+.ui-verdict.is-revealing svg > * { stroke-dasharray: 64; animation: ui-draw 240ms var(--ease-decelerate) both; }
+.ui-verdict.is-revealing .ui-verdict-label { animation: ui-fade-in var(--dur-fast) var(--ease-standard) 60ms both; }
+
+/* M7: a row that changed group gets a 1.2 s accent-subtle fade-out (add .is-moved to the <tr>). */
+tr.is-moved > * { animation: ui-highlight 1200ms var(--ease-standard); }
+
+/* M16: timer in its final minute. */
+.is-urgent { animation: ui-pulse 1s steps(2, jump-none) infinite; }
+
+/* ------------------------------------------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .p-content,
+  .is-entering,
+  .ui-tabpanel,
+  .ui-toast,
+  .ui-tooltip,
+  .ui-menu,
+  .ui-popover,
+  .ui-dialog[open],
+  .ui-drawer[open],
+  .p-nav-drawer[open] { animation: ui-fade-in 120ms linear both; }
+  .ui-dialog[data-closing],
+  .ui-drawer[data-closing],
+  .ui-toast[data-leaving] { animation: ui-fade-out 120ms linear forwards; }
+  .ui-drawer-body { animation: none; }
+  .ui-rung[data-new],
+  .ui-ladder-label[data-swap],
+  .ui-verdict.is-revealing svg > *,
+  .ui-verdict.is-revealing .ui-verdict-label,
+  .is-urgent { animation: none; }
+  tr.is-moved > * { animation: ui-highlight 1200ms steps(1, end); }
+  .ui-skeleton::after { display: none; }
+  .ui-coverage-fill,
+  .ui-coverage-hatch,
+  .ui-meter-fill,
+  .ui-tabs-indicator,
+  .ui-seg-thumb,
+  .ui-switch-thumb,
+  .ui-check-tick { transition: none; }
+  .ui-btn:active:not(:disabled),
+  .ui-icon-btn:active:not(:disabled) { transform: none; }
+}

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ApiError } from './api/client'
@@ -5,6 +6,7 @@ import { AuthProvider } from './auth/AuthProvider'
 import { PublicOnly, RequireAuth } from './auth/guards'
 import { Layout } from './components/Layout'
 import { NoticeProvider } from './components/Notices'
+import { ToastProvider } from './design/components'
 import { ApplicationDetailPage } from './pages/ApplicationDetailPage'
 import { ApplicationsPage } from './pages/ApplicationsPage'
 import { AuthLayout } from './pages/auth/AuthLayout'
@@ -27,6 +29,9 @@ import { VerificationPage } from './pages/VerificationPage'
 import { WorkSampleResponsePage } from './pages/WorkSampleResponsePage'
 import { WorkSamplesPage } from './pages/WorkSamplesPage'
 
+// Living style guide (hidden route, not linked from navigation). Lazy, so it never weighs on the app bundle.
+const DesignGallery = lazy(() => import('./design/gallery/DesignGallery'))
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -44,9 +49,19 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <ToastProvider>
         <NoticeProvider>
           <AuthProvider>
             <Routes>
+              <Route
+                path="/__design"
+                element={
+                  <Suspense fallback={null}>
+                    <DesignGallery portal="candidate" />
+                  </Suspense>
+                }
+              />
+
               <Route element={<AuthLayout />}>
                 <Route element={<PublicOnly />}>
                   <Route path="/login" element={<LoginPage />} />
@@ -82,6 +97,7 @@ export default function App() {
             </Routes>
           </AuthProvider>
         </NoticeProvider>
+        </ToastProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )
