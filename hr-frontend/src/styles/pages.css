@@ -1914,3 +1914,14 @@
   gap: 10px;
   overflow-wrap: anywhere;
 }
+
+/* Demo fix (17 Nov): grid children default to min-width:auto, so the evidence table pushed the main column under the
+   aside at 1440 px. Let panels shrink and scroll the wide table inside its panel instead. */
+.applicant-main > * {
+  min-width: 0;
+}
+
+.applicant-main .job-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
