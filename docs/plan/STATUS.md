@@ -1,7 +1,6 @@
 # Plan v2 status, 16 Nov 2026
 
-Branch `Kshitij`, commit `50e7b39` (demo patches and the review fixes of 16 Nov evening are committed) (nothing
-committed). Plan: [IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md). How to run and click through everything:
+Branch `Kshitij`, commit `50e7b39` (demo patches and the review fixes of 16 Nov evening are committed). Plan: [IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md). How to run and click through everything:
 [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md). Detailed explanations: [docs/handbook/](../handbook/).
 The older WP-INT status (audit findings C1–L13) follows further down and is still valid except where this section says
 otherwise.
