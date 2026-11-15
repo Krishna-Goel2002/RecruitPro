@@ -6,6 +6,11 @@
 * Badges on ``https://demo-badges.example``: an OB 2.0 hosted assertion and an OB 3.0 VC-JWT (issuer
   ``did:web:demo-badges.example``) signed with a key derived from a public, fixed seed (demo only; it proves nothing
   about any real issuer).
+* Employer domains for references: ``demo-analytics.example`` ("Demo Analytics", registered 2016, MX, home page
+  with a JSON-LD Organization) is trusted; ``demo-newco.example`` ("Demo Newco") was registered 40 days before the
+  check, so a confirmation from it is at most partly verified (``EMPLOYER_DOMAIN_NEW``). RDAP is served offline: the
+  IANA bootstrap URL maps ``.example`` to ``https://demo-rdap.example/`` (also dates ``demo-badges.example`` and
+  ``demo-portfolio.example``, so the demo badge issuer is established). MX for any ``demo-`` host is ``mail.<host>``.
 * DNS TXT for any ``demo-`` host returns ``recruitpro-verification=<the requested code>``; profile bios and the
   well-known file echo the requested code too, so every demo ownership check succeeds.
 
@@ -15,12 +20,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from app.demo.fakes import (FakeAccount, FakeCommit, FakePage, FakeRepo, fixed_resolver, github_handler,
                             gitlab_handler, web_handler)
+from app.fetch.cache import TtlCache
 from app.network import Network
+from app.trust import BOOTSTRAP_URL
 
 DEMO_ADDRESS = "100.0.0.1"  # never contacted: demo transports are MockTransports
 DEMO_SITE = "https://demo-portfolio.example"
@@ -30,6 +38,12 @@ DEMO_HOLDER_EMAIL = "asha.demo@example.com"
 DEMO_HOLDER_NAME = "Asha Synthetica"
 DEMO_SALT = "demo-salt-01"
 LABEL = "Synthetic demo account (RecruitPro demo fixture, not a real person)."
+DEMO_EMPLOYER_DOMAIN = "demo-analytics.example"
+DEMO_EMPLOYER_NAME = "Demo Analytics"
+DEMO_NEW_EMPLOYER_DOMAIN = "demo-newco.example"
+DEMO_NEW_EMPLOYER_NAME = "Demo Newco"
+DEMO_RDAP = "https://demo-rdap.example"
+NEW_DOMAIN_AGE_DAYS = 40
 
 
 def _commits(login: str, name: str, dates: list[str]) -> list[FakeCommit]:
@@ -180,13 +194,46 @@ def demo_badge_pages() -> dict[str, FakePage]:
     }
 
 
+def _rdap_domain(name: str, registered: str) -> FakePage:
+    return FakePage(json.dumps({"objectClassName": "domain", "ldhName": name, "status": ["active"],
+                                "events": [{"eventAction": "registration", "eventDate": registered},
+                                           {"eventAction": "last changed", "eventDate": registered}],
+                                "remarks": [{"description": ["Synthetic demo RDAP record (RecruitPro demo fixture)."]}]}),
+                    "application/rdap+json")
+
+
+def _employer_home(name: str, since: str) -> str:
+    organisation = json.dumps({"@context": "https://schema.org", "@type": "Organization", "name": name,
+                               "foundingDate": since})
+    return (f"<!doctype html><html><head><title>{name} (synthetic demo)</title>"
+            f'<script type="application/ld+json">{organisation}</script></head><body><main><h1>{name}</h1>'
+            f"<p>Synthetic demo company site for RecruitPro reference checks. Not a real company.</p>"
+            f"</main></body></html>")
+
+
+def demo_domain_pages(now: datetime | None = None) -> dict[str, FakePage]:
+    """RDAP bootstrap, RDAP records and employer home pages (``demo-newco.example`` is always 40 days old)."""
+    moment = now or datetime.now(timezone.utc)
+    young = (moment - timedelta(days=NEW_DOMAIN_AGE_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        BOOTSTRAP_URL: FakePage(json.dumps({"version": "1.0", "description": "Synthetic demo RDAP bootstrap",
+                                            "services": [[["example"], [DEMO_RDAP + "/"]]]}), "application/json"),
+        f"{DEMO_RDAP}/domain/{DEMO_EMPLOYER_DOMAIN}": _rdap_domain(DEMO_EMPLOYER_DOMAIN, "2016-03-01T00:00:00Z"),
+        f"{DEMO_RDAP}/domain/{DEMO_NEW_EMPLOYER_DOMAIN}": _rdap_domain(DEMO_NEW_EMPLOYER_DOMAIN, young),
+        f"{DEMO_RDAP}/domain/demo-badges.example": _rdap_domain("demo-badges.example", "2019-06-01T00:00:00Z"),
+        f"{DEMO_RDAP}/domain/demo-portfolio.example": _rdap_domain("demo-portfolio.example", "2020-01-15T00:00:00Z"),
+        f"https://{DEMO_EMPLOYER_DOMAIN}/": FakePage(_employer_home(DEMO_EMPLOYER_NAME, "2016")),
+        f"https://{DEMO_NEW_EMPLOYER_DOMAIN}/": FakePage(_employer_home(DEMO_NEW_EMPLOYER_NAME, "2026")),
+    }
+
+
 def demo_network(code: str | None = None) -> Network:
     """A fully offline Network: demo- hosts resolve to a placeholder address served by MockTransports."""
     accounts = demo_accounts(code or "")
-    pages = demo_pages()
+    pages = {**demo_pages(), **demo_domain_pages()}
 
     def resolve(host: str) -> list[str]:
-        if host.startswith("demo-"):
+        if host.startswith("demo-") or host == "data.iana.org":
             return [DEMO_ADDRESS]
         return fixed_resolver({})(host)
 
@@ -198,5 +245,9 @@ def demo_network(code: str | None = None) -> Network:
     def txt(host: str) -> list[str]:
         return [f"recruitpro-verification={code}"] if host.startswith("demo-") and code else []
 
+    def mx(host: str) -> list[str]:
+        return [f"mail.{host}"] if host.startswith("demo-") else []
+
     return Network(resolver=resolve, transport_factory=lambda: httpx.MockTransport(web_handler(pages, code=code)),
-                   api_transport=httpx.MockTransport(api_handler), txt_resolver=txt, demo=True)
+                   api_transport=httpx.MockTransport(api_handler), txt_resolver=txt, mx_resolver=mx,
+                   rdap_cache=TtlCache(), demo=True)

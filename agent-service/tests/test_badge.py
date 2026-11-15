@@ -124,7 +124,7 @@ def test_ob2_hosted(client, fake_net):
     fake_net.pages.update(pages)
     data = _post(client, url=url)
     assert _verdict(data) == "VERIFIED"
-    assert {item["key"] for item in data["evidence"]} == {"badge-1", "badge-class", "issuer"}
+    assert {item["key"] for item in data["evidence"]} == {"badge-1", "badge-class", "issuer", "issuer-domain"}
     assert _verdict(_post(client, url=url, holderEmail="else@example.org")) == "CONTRADICTED"
     assert _verdict(_post(client, url=url, holderEmail=None)) == "PARTLY_VERIFIED"
     # a pasted copy is checked against the hosted original

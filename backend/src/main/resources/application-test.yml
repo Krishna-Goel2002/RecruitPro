@@ -65,6 +65,9 @@ app:
     storage-dir: ./target/test-uploads/verification
     reference-expiry:
       enabled: false
+  # WP-OPS: the retention purge never runs on a schedule in tests (RetentionPurgeIntegrationTest calls it directly).
+  retention:
+    enabled: false
 
 logging:
   level:

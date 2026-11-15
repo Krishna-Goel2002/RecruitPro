@@ -18,7 +18,7 @@ class TestCoverageAndContract:
         facts = [fact("fact:1", "SKILL", "Java"), fact("fact:2", "SKILL", "Spring Boot"), fact("fact:3", "EMAIL", "a@example.test")]
         first, second = run(reqs, facts), run(reqs, facts)
         assert first == second
-        assert first.algorithmVersion == ALGORITHM_VERSION == "evidence-ladder-3"
+        assert first.algorithmVersion == ALGORITHM_VERSION == "evidence-ladder-4"
         assert first.verifiedCoverage == first.score == first.claimedCoverage == 66.7
         assert [r.status for r in first.requirements] == ["MATCHED", "NOT_OBSERVED"]
         assert first.requirements[0].factIds == ["fact:1", "fact:2"]
@@ -50,7 +50,7 @@ class TestCoverageAndContract:
             BatchCandidate(applicationId=8, facts=[fact("fact:2", "SKILL", "Go")]),
         ]), today=TODAY)
         assert [(c.applicationId, c.verifiedCoverage) for c in response.candidates] == [(7, 100.0), (8, 0.0)]
-        assert response.candidates[0].algorithmVersion == "evidence-ladder-3"
+        assert response.candidates[0].algorithmVersion == "evidence-ladder-4"
 
 
 class TestEvidenceLadder:
@@ -205,3 +205,87 @@ class TestEducationAndCertifications:
         assert one("CERTIFICATION", "PMP", pmp).status == "MATCHED"
         assert one("CERTIFICATION", "PMP or PRINCE2", [fact("fact:1", "CERTIFICATION", "PRINCE2 Practitioner")]).status == "MATCHED"
         assert one("CERTIFICATION", "CISSP", pmp).status == "NOT_OBSERVED"
+
+
+class TestProficiency:
+    """evidence-ladder-4: ADVANCED/EXPERT need evidence of depth; missing depth is UNCLEAR, never NOT_OBSERVED."""
+
+    @staticmethod
+    def role(ident, title, start, months, text, tier="RESUME_STATED"):
+        return fact(ident, "EXPERIENCE", f"{title}, Acme", evidence=f"{title}, Acme · {text}", section="experience", tier=tier,
+                    attributes={"title": title, "startDate": start, "months": months})
+
+    @staticmethod
+    def check(description, facts, proficiency, *, timeline=None, alternatives=None):
+        return run([requirement(1, "SKILL", description, proficiency=proficiency, alternatives=alternatives, knockout=True)],
+                   facts, timeline)
+
+    def test_basic_and_intermediate_are_unchanged(self):
+        facts = [fact("fact:1", "SKILL", "Python")]
+        for level in (None, "BASIC", "INTERMEDIATE", "unknown"):
+            result = self.check("Python", facts, level)
+            assert (result.requirements[0].status, result.verifiedCoverage) == ("MATCHED", 100.0)
+
+    def test_advanced_without_depth_is_unclear_and_says_what_is_missing(self):
+        result = self.check("Python", [fact("fact:1", "SKILL", "Python"), self.role("fact:2", "Engineer", "2024-01", 18, "Built Python services")],
+                            "ADVANCED")
+        item = result.requirements[0]
+        assert (item.status, item.tier) == ("UNCLEAR", "RESUME_STATED")
+        assert "ADVANCED proficiency" in item.explanation and "1.5 years in the resume timeline, 3 years needed" in item.explanation
+        assert "CORROBORATED or higher" in item.explanation and "'senior'" in item.explanation
+        assert "Probe depth in Python at ADVANCED level" in item.verificationHint
+        assert result.verifiedCoverage == result.claimedCoverage == 0.0 and result.unverifiedKnockouts == [1]
+
+    def test_advanced_satisfied_by_years_tier_or_level_word(self):
+        years = self.check("Python", [fact("fact:1", "SKILL", "Python"), self.role("fact:2", "Engineer", "2021-01", 40, "Python APIs")], "ADVANCED")
+        assert years.requirements[0].status == "MATCHED" and "3.3 years in the resume timeline" in years.requirements[0].explanation
+        corroborated = self.check("Python", [fact("vf:3", "SKILL", "Python", tier="CORROBORATED")], "ADVANCED")
+        assert (corroborated.requirements[0].status, corroborated.requirements[0].tier) == ("MATCHED", "CORROBORATED")
+        word = self.check("Python", [fact("fact:1", "SKILL", "Python", evidence="Advanced: Python, SQL")], "ADVANCED")
+        assert word.requirements[0].status == "MATCHED" and "'advanced'" in word.requirements[0].explanation
+        senior = self.check("Java", [fact("fact:1", "SKILL", "Java"), self.role("fact:2", "Senior Java Developer", "2025-01", 12, "Java services")],
+                            "ADVANCED")
+        assert senior.requirements[0].status == "MATCHED" and "'senior'" in senior.requirements[0].explanation
+
+    def test_skill_names_are_not_level_words(self):
+        lead_gen = self.check("Lead Generation", [fact("fact:1", "SKILL", "Lead Generation")], "ADVANCED")
+        assert lead_gen.requirements[0].status == "UNCLEAR"
+        excel = self.check("Excel", [fact("fact:1", "SKILL", "Advanced Excel")], "ADVANCED")
+        assert excel.requirements[0].status == "MATCHED"
+
+    def test_expert_needs_five_years_demonstrated_or_the_word_expert(self):
+        four = [fact("fact:1", "SKILL", "Python"), self.role("fact:2", "Senior Engineer", "2021-01", 48, "Python platform")]
+        item = self.check("Python", four, "EXPERT").requirements[0]
+        assert item.status == "UNCLEAR" and "4 years in the resume timeline, 5 years needed" in item.explanation
+        assert "DEMONSTRATED or higher" in item.explanation  # 'senior' is not enough for EXPERT
+        assert self.check("Python", four, "ADVANCED").requirements[0].status == "MATCHED"
+        six = [fact("fact:1", "SKILL", "Python"), self.role("fact:2", "Engineer", "2019-01", 72, "Python platform")]
+        assert self.check("Python", six, "EXPERT").requirements[0].status == "MATCHED"
+        assert self.check("Python", [fact("fact:1", "SKILL", "Python", evidence="Expert in Python")], "EXPERT").requirements[0].status == "MATCHED"
+        assert self.check("Python", [fact("vf:1", "SKILL", "Python", tier="CORROBORATED")], "EXPERT").requirements[0].status == "UNCLEAR"
+        linked = self.check("Python", [fact("ws:4:r1", "SKILL", "Rubric: Python", tier="DEMONSTRATED")], "EXPERT").requirements[0]
+        assert (linked.status, linked.tier) == ("MATCHED", "DEMONSTRATED")
+
+    def test_every_named_skill_needs_depth_and_proficiency_never_hides_evidence(self):
+        facts = [fact("fact:1", "SKILL", "Java"), fact("fact:2", "SKILL", "Kafka"),
+                 self.role("fact:3", "Engineer", "2020-01", 48, "Java services"), self.role("fact:4", "Engineer", "2024-06", 12, "Kafka streams")]
+        item = self.check("Java and Kafka", facts, "ADVANCED").requirements[0]
+        assert item.status == "UNCLEAR" and "Kafka (1 year in the resume timeline" in item.explanation
+        assert "Java (" not in item.explanation.split("depth was not established:")[1]
+        absent = self.check("Rust", facts, "EXPERT").requirements[0]
+        assert absent.status == "NOT_OBSERVED" and "proficiency" not in absent.explanation
+        partial = self.check("GraphQL and Kafka", facts, "EXPERT").requirements[0]
+        assert partial.status in {"UNCLEAR", "NOT_OBSERVED"}
+        for level in ("ADVANCED", "EXPERT"):
+            assert self.check("Java", [fact("fact:1", "SKILL", "Java")], level).requirements[0].status != "NOT_OBSERVED"
+
+    def test_self_claimed_depth_stays_a_claim(self):
+        claim = [fact("claim:1", "SKILL", "Python", evidence="Expert Python developer", tier="SELF_CLAIMED")]
+        result = self.check("Python", claim, "EXPERT")
+        assert (result.requirements[0].status, result.requirements[0].tier) == ("MATCHED", "SELF_CLAIMED")
+        assert result.verifiedCoverage == 0.0 and result.claimedCoverage == 100.0
+
+    def test_other_requirement_types_ignore_proficiency(self):
+        degree = [fact("fact:1", "EDUCATION", "B.Tech in Computer Science", section="education", attributes={"degreeLevel": "BACHELOR"})]
+        result = run([requirement(1, "EDUCATION", "Bachelor's degree in Computer Science", proficiency="EXPERT")], degree)
+        assert result.requirements[0].status == "MATCHED"

@@ -16,7 +16,7 @@ is ever sent.
 |---|---|---|
 | GET | `/health` | Public. `{status, version, llmProvider, ocrAvailable}` |
 | POST | `/api/v1/resume/parse` | Multipart `file` (PDF, DOCX, DOC) -> `ParseResponse` (facts, flags, timeline) |
-| POST | `/api/v1/match` | `{requirements, facts, timeline}` -> `MatchResponse` (`evidence-ladder-3`) |
+| POST | `/api/v1/match` | `{requirements, facts, timeline}` -> `MatchResponse` (`evidence-ladder-4`) |
 | POST | `/api/v1/match/batch` | `{requirements, candidates:[{applicationId, facts, timeline}]}` (max 50) |
 | POST | `/api/v1/requirements/compile` | `{title, description, experienceLevel?}` -> requirements + wording warnings |
 | POST | `/api/v1/work-samples/generate` | `{jobTitle, jobDescription?, requirements}` -> task, time limit, anchored rubric |
@@ -69,7 +69,7 @@ with a time limit, so a hostile PDF can neither block the event loop nor hang a 
 7. *Education* - degree levels (DIPLOMA < BACHELOR < MASTER < DOCTORATE) and field families
    (computer science ~ CSE ~ IT ~ software engineering, commerce ~ accounting ~ finance, ...).
 
-**Matching v3 - `evidence-ladder-3`** (`app/matching/engine.py`). Facts carry an origin-tagged id
+**Matching v4 - `evidence-ladder-4`** (`app/matching/engine.py`). Facts carry an origin-tagged id
 (`fact:12` resume, `claim:3` candidate, `ws:4:r9` work sample, `iv:7:r9` interview) and a tier
 (`SELF_CLAIMED` < `RESUME_STATED` < `CORROBORATED` < `DEMONSTRATED` < `INTERVIEW_VERIFIED`). Per requirement:
 alternatives (explicit, or "X or Y" / "X/Y" / "such as X, Y" in the text) are any-of; a child skill
@@ -82,6 +82,17 @@ requirement is still matched (the weakest link of a conjunction). Must-haves wei
 counts the candidate's own claims; `knockoutsVerified`/`unverifiedKnockouts` gate ranking but never
 reject. Every requirement that is not verified gets a `verificationHint`. The lexical fallback only
 compares facts of the requirement's own type and cites the fact whose value holds the terms.
+
+*Requirement proficiency (new in v4, SKILL requirements only).* BASIC and INTERMEDIATE change nothing.
+ADVANCED keeps a MATCHED result only with evidence of depth for every named skill: >= 3 years of relevant
+timeline roles, or a match at tier `CORROBORATED` or higher, or an explicit level word (`advanced`,
+`expert`, `senior`, `lead`) in the cited evidence or a relevant role title. EXPERT needs >= 5 years, tier
+`DEMONSTRATED` or higher, or the word `expert`. Skill names are not level words ("Lead Generation",
+"Advanced Cardiac Life Support"), while a qualifier in front of the skill name counts ("Advanced Excel").
+Without depth the result becomes UNCLEAR, the explanation says what was missing (years found vs needed,
+tier, level words) and the hint asks the interviewer to probe depth. Proficiency never produces
+NOT_OBSERVED and never changes EXPERIENCE, EDUCATION, CERTIFICATION or OTHER requirements. This is a
+conservative heuristic: years of use and a job title are proxies for depth, not proof of it.
 
 **Compiler and generators** (`app/compile/`, `app/generate/`). Rules baseline: must/nice from headings
 and cue words, `minimumYears`, alternatives, types, knockouts on must/required wording, and warnings for
@@ -103,8 +114,8 @@ requirements first.
 | `PARSE_WORKERS` | `2` | Parser process-pool size |
 | `PARSE_TIMEOUT_SECONDS` | `60` | Per document; returns `FAILED/PARSE_TIMEOUT` and recycles the pool |
 | `MAX_UPLOAD_BYTES` | `10485760` | Largest accepted file |
-| `OCR_ENABLED` | `false` | Use rapidocr when `requirements-ocr.txt` is installed |
-| `SOFFICE_PATH` | auto-detect | LibreOffice for `.doc`; empty disables conversion |
+| `OCR_ENABLED` | `false` | Use RapidOCR when `requirements-ocr.txt` is installed (the Docker image installs it) |
+| `SOFFICE_PATH` | auto-detect (`/usr/bin/soffice` in the Docker image) | LibreOffice for `.doc`; empty disables conversion |
 | `TAXONOMY_EXTRA_PATH` | - | Extra skills file (e.g. an ESCO import) |
 
 ### Offline vs LLM mode
@@ -131,6 +142,32 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 Bind to localhost in development and to a private network in deployment; interactive API docs are
 disabled and there is no CORS.
 
+## Docker image
+
+`Dockerfile` (base `python:3.11-slim-bookworm`, non-root user, `HEALTHCHECK` on `/health`) installs, by
+default, two optional document tools:
+
+| Build arg | Default | Installs | Used for |
+|---|---|---|---|
+| `WITH_LIBREOFFICE` | `true` | `libreoffice-writer-nogui` (headless Writer, no recommends) | `.doc` -> `.docx` conversion, which keeps hidden-text detection; `SOFFICE_PATH=/usr/bin/soffice` |
+| `WITH_OCR` | `true` | `requirements-ocr.txt` (RapidOCR on onnxruntime, OpenCV) plus `libgl1`, `libglib2.0-0` | Scanned PDFs and image-only DOCX, **only when `OCR_ENABLED=true`** (compose default `false`) |
+
+The OCR engine is RapidOCR, not Tesseract: it is what `app/pipeline/ocr.py` calls, and it ships its models
+inside the wheel, so no Tesseract packages are installed.
+
+**Image size.** Without the extras the image is roughly 250-300 MB. LibreOffice Writer adds roughly
+300-400 MB and the OCR extra roughly 250-350 MB (onnxruntime, OpenCV, NumPy, Shapely, models), so the
+default image is around 0.8-1.1 GB (estimates; the image has not been built in this environment). For a
+small image build with `--build-arg WITH_LIBREOFFICE=false --build-arg WITH_OCR=false`; `.doc` then uses
+the `olefile` reader and scans return `NEEDS_OCR`, as before. LibreOffice parses untrusted documents: it
+runs as the non-root user, with a 60 s timeout and a throw-away profile, inside a container without
+network egress (see the compose networks). Set `SOFFICE_PATH=` (empty) to turn conversion off.
+
+**Health in compose.** The service sits only on the internal compose network and publishes no host port.
+Check it with `docker compose ps` (the `HEALTHCHECK` result), the admin dashboard, or
+`docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"`.
+`ocrAvailable` in the answer is true only when `OCR_ENABLED=true` and RapidOCR is installed.
+
 ## Tests and evaluation
 
 ```bash
@@ -147,7 +184,12 @@ name/gender counterfactual twin, rendered to real DOCX, single-column PDF and tw
 skill-extraction precision/recall/F1, date accuracy, flag accuracy, requirement agreement (Cohen's
 kappa over MATCHED/UNCLEAR/NOT_OBSERVED), ranking NDCG@10, the name-swap flip rate and the adverse-impact
 ratio. `--check` thresholds: skill F1 >= 0.85, kappa >= 0.70, NDCG@10 >= 0.80, flip rate = 0,
-adverse-impact ratio >= 0.80, date accuracy >= 0.90. A smaller seeded run is part of `pytest`.
+adverse-impact ratio >= 0.80, date accuracy >= 0.90, plus requirement proficiency: all 18 hand-labelled
+cases in `eval/proficiency.py` agree with their gold status, and re-matching every synthetic SKILL
+requirement as ADVANCED and EXPERT never changes anything except MATCHED -> UNCLEAR
+(`proficiency_invariant_violations` = 0). `proficiency_downgrade_share` is informational: the share of
+MATCHED SKILL requirements that ADVANCED/EXPERT turn into UNCLEAR on the synthetic set (about 74 % and 95 %,
+because the synthetic resumes have short per-skill histories). A smaller seeded run is part of `pytest`.
 
 > **Synthetic metrics overstate real accuracy.** The gold set was generated from templates written
 > alongside the parser, so it shares the parser's assumptions about layout, wording and vocabulary;

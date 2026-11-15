@@ -17,7 +17,7 @@ Every result names its evidence. Each evidence item carries a URL (or file), ret
 | `POST /api/v1/verify/web` | same-site crawl through the SSRF guard |
 | `POST /api/v1/verify/document` | multipart `file` (PDF, DOCX, PPTX <= 15 MB) + `request` JSON |
 | `POST /api/v1/verify/badge` | Open Badges 2.0 hosted assertions, OB 3.0 VC-JWT (EdDSA, ES256, RS256) |
-| `POST /api/v1/verify/reference` | deterministic referee-answer rules |
+| `POST /api/v1/verify/reference` | deterministic referee-answer rules plus the employer-domain trust check |
 
 All `/api/*` routes need `X-Internal-Service-Token: $AGENT_SERVICE_TOKEN`. Response shapes are in `app/models.py`
 (camelCase JSON). Errors: 422 `{"detail": {"code", "message"}}` when a source cannot be read at all (`URL_BLOCKED`,
@@ -39,9 +39,12 @@ All `/api/*` routes need `X-Internal-Service-Token: $AGENT_SERVICE_TOKEN`. Respo
 - **Document**: never `VERIFIED`; `PARTLY_VERIFIED` when stated; notes `AUTHOR_MISMATCH`, `METADATA_AFTER_CLAIM`.
 - **Badge**: signature / hosted check, revocation, expiry, recipient and achievement match. Wrong recipient, bad
   signature, revoked or foreign-origin hosted assertion -> `CONTRADICTED`; Data Integrity proofs and unresolvable keys
-  -> `NOT_CHECKABLE`; a self-certifying `did:key` issuer -> at most `PARTLY_VERIFIED`.
-- **Reference**: CONFIRM from MANAGER/PEER/CLIENT on the employer's (non-free-mail) domain -> `VERIFIED`; see
-  `app/verifiers/reference.py`.
+  -> `NOT_CHECKABLE`; a self-certifying `did:key` issuer -> at most `PARTLY_VERIFIED`. The issuer's domain must be
+  trusted (`app/trust.py`: built-in list `app/data/trusted_issuers.json`, or RDAP registration >= 365 days and not a
+  domain the candidate proved), else at most `PARTLY_VERIFIED` with `ISSUER_UNTRUSTED`.
+- **Reference**: CONFIRM from MANAGER/PEER/CLIENT on the employer's (non-free-mail) domain -> `VERIFIED` only when the
+  employer domain is trusted (RDAP age >= 365 days, MX records, home page names the employer; `app/trust.py`), else
+  at most `PARTLY_VERIFIED` with `EMPLOYER_DOMAIN_UNPROVEN` (+ `EMPLOYER_DOMAIN_NEW`); see `app/verifiers/reference.py`.
 - **Shared layer** (`app/verdicts.py`): ownership cap (unproven ownership => at most `PARTLY_VERIFIED`), probe questions,
   de-identification (`app/deidentify.py`), injection notes (`INSTRUCTION_TEXT`, `app/injection.py`), optional LLM
   summary through the citation validator (`app/citations.py`).

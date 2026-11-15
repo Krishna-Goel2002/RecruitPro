@@ -1,5 +1,6 @@
 package com.recruitpro.support;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.evidence.entity.CandidateClaim;
 import com.recruitpro.evidence.entity.ClaimType;
@@ -109,7 +110,25 @@ public class VerificationFixtures {
                                                    boolean ownershipProven, String... keys) {
         return new AgentModels.Verdict(claimId, type, value, verdict, ownershipProven,
                 List.of(new AgentModels.Reason("Repository A shows it.", List.of(keys), null)),
-                List.of(), "PARTLY_VERIFIED".equals(verdict) ? "Tell us about it." : null);
+                List.of(), "PARTLY_VERIFIED".equals(verdict) ? "Tell us about it." : null, null);
+    }
+
+    /** The same agent verdict carrying a domain-trust object (V26). */
+    public static AgentModels.Verdict withDomainTrust(AgentModels.Verdict verdict, JsonNode domainTrust) {
+        return new AgentModels.Verdict(verdict.claimId(), verdict.claimType(), verdict.claimValue(), verdict.verdict(),
+                verdict.ownershipProven(), verdict.reasons(), verdict.integrityNotes(), verdict.probeQuestion(), domainTrust);
+    }
+
+    /**
+     * Domain-trust JSON as the agent returns it: {@code check} EMPLOYER_DOMAIN or BADGE_ISSUER, {@code status}
+     * TRUSTED/WEAK/UNTRUSTED, {@code cappedFrom} VERIFIED when this check alone lowered the verdict.
+     */
+    public static String domainTrustJson(String check, String domain, String status, String cappedFrom) {
+        return "{\"check\":\"" + check + "\",\"domain\":\"" + domain + "\",\"status\":\"" + status + "\","
+                + "\"trustedBy\":" + ("TRUSTED".equals(status) ? "\"AGENT\"" : "null") + ","
+                + "\"reasons\":[\"The domain's registration date could not be established (RDAP unreachable).\"],"
+                + "\"candidateControlled\":false,\"cappedFrom\":" + (cappedFrom == null ? "null" : "\"" + cappedFrom + "\"")
+                + ",\"signals\":{\"rdap\":\"unreachable\"}}";
     }
 
     public static AgentModels.VerifyResponse response(String verifier, List<AgentModels.EvidenceItem> evidence,

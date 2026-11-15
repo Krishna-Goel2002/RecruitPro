@@ -123,5 +123,7 @@ def badge(request: BadgeVerifyRequest, settings: Settings = Depends(get_settings
 
 @router.post("/verify/reference", response_model=VerifyResponse, response_model_by_alias=True)
 def reference(request: ReferenceVerifyRequest, settings: Settings = Depends(get_settings),
-              clock: Clock = Depends(get_clock)) -> VerifyResponse:
-    return _respond(verify_reference(request, now=clock()), settings)
+              networks: NetworkFactory = Depends(get_network_factory), clock: Clock = Depends(get_clock)) -> VerifyResponse:
+    # The only network use is the employer-domain trust check (RDAP, MX, home page); its failures never fail the call.
+    network = networks(settings, request.referee.employer_domain or "", None)
+    return _respond(verify_reference(request, now=clock(), settings=settings, network=network), settings)

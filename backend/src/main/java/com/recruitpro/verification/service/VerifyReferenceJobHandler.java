@@ -14,7 +14,9 @@ import com.recruitpro.verification.entity.ClaimSubjectRef;
 import com.recruitpro.verification.entity.ReferenceStatus;
 import com.recruitpro.verification.entity.SubjectType;
 import com.recruitpro.verification.entity.VerificationReferenceRequest;
+import com.recruitpro.verification.entity.VerificationSourceKind;
 import com.recruitpro.verification.repository.VerificationReferenceRequestRepository;
+import com.recruitpro.verification.repository.VerificationSourceRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,8 @@ import java.util.Locale;
  * VERIFY_REFERENCE handler (entity id = verification_reference_requests.id): sends the referee's answers to the
  * agent's deterministic {@code /verify/reference} rules and stores the verdicts (with {@code reference_id}). Error
  * handling as in {@link VerifySourceJobHandler}; failures are recorded in the request's {@code error_code}.
+ * The agent also checks that the employer domain is the named employer's (employer name, and the candidate's proven
+ * website domains, which can never vouch for an employer; V26 trust fix).
  */
 @Component
 public class VerifyReferenceJobHandler implements BackgroundJobHandler {
@@ -39,6 +43,7 @@ public class VerifyReferenceJobHandler implements BackgroundJobHandler {
     private static final TypeReference<List<PublicReferenceAnswer>> ANSWERS = new TypeReference<List<PublicReferenceAnswer>>() { };
 
     private final VerificationReferenceRequestRepository referenceRepository;
+    private final VerificationSourceRepository sourceRepository;
     private final CandidateProfileRepository profileRepository;
     private final VerificationResultWriter resultWriter;
     private final AgentServiceClient agentClient;
@@ -46,10 +51,12 @@ public class VerifyReferenceJobHandler implements BackgroundJobHandler {
     private final TransactionTemplate transactions;
 
     public VerifyReferenceJobHandler(VerificationReferenceRequestRepository referenceRepository,
+                                     VerificationSourceRepository sourceRepository,
                                      CandidateProfileRepository profileRepository, VerificationResultWriter resultWriter,
                                      AgentServiceClient agentClient, VerificationViews views,
                                      PlatformTransactionManager transactionManager) {
         this.referenceRepository = referenceRepository;
+        this.sourceRepository = sourceRepository;
         this.profileRepository = profileRepository;
         this.resultWriter = resultWriter;
         this.agentClient = agentClient;
@@ -128,8 +135,13 @@ public class VerifyReferenceJobHandler implements BackgroundJobHandler {
         User user = profile == null ? null : profile.getUser();
         String holderName = user == null ? null
                 : ((user.getFirstName() == null ? "" : user.getFirstName()) + " " + (user.getLastName() == null ? "" : user.getLastName())).trim();
+        List<String> candidateDomains = CandidateDomains.proven(sourceRepository.findAllByCandidateIdAndKindAndRevokedAtIsNull(
+                reference.getCandidateId(), VerificationSourceKind.WEBSITE));
+        String employerName = reference.getEmployerName() == null || reference.getEmployerName().isBlank() ? null
+                : reference.getEmployerName().trim();
         return new AgentModels.ReferenceVerifyRequest(claims,
-                new AgentModels.Referee(reference.getRelationship().name(), emailDomain, reference.getEmployerDomain()),
-                answers, holderName == null || holderName.isBlank() ? null : holderName);
+                new AgentModels.Referee(reference.getRelationship().name(), emailDomain, reference.getEmployerDomain(),
+                        employerName),
+                answers, holderName == null || holderName.isBlank() ? null : holderName, candidateDomains);
     }
 }

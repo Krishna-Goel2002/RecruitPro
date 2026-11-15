@@ -95,6 +95,14 @@ public class ClaimVerdict extends BaseEntity {
     @Column(name = "is_current", nullable = false)
     private boolean current = true;
 
+    /**
+     * The agent's domain-trust result (V26): employer domain of a reference or badge issuer domain,
+     * {@code {check, domain, status, trustedBy, reasons, candidateControlled, cappedFrom, signals}}; null when no
+     * domain check applied. Read by {@link com.recruitpro.verification.service.DomainTrusts}.
+     */
+    @Column(name = "domain_trust_json", columnDefinition = "TEXT")
+    private String domainTrustJson;
+
     /** Subject reference as sent to the agent service: {@code fact:<id>} or {@code claim:<id>}. */
     public String subjectRef() {
         return ClaimSubjectRef.of(subjectType, subjectId);

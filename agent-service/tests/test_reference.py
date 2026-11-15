@@ -1,17 +1,25 @@
-"""Reference verifier (deterministic)."""
+"""Reference verifier: deterministic rules plus the employer-domain trust check (mocked RDAP, MX, home page)."""
 from __future__ import annotations
 
 import pytest
 
 from app.verifiers.reference import domains_match, is_free_mail
+from eval.builders import employer_home
 from tests.conftest import HEADERS
 
 
-def _post(client, relationship, email_domain, employer, answers, holder=None):
+@pytest.fixture(autouse=True)
+def _acme_home(fake_net):
+    """acme.com is an established employer: registered 10 years ago (FakeNet default), MX, home page names it."""
+    fake_net.pages["https://acme.com/"] = employer_home("Acme Corp")
+
+
+def _post(client, relationship, email_domain, employer, answers, holder=None, employer_name="Acme Corp", **extra):
     claims = [{"id": "claim:1", "type": "EXPERIENCE", "value": "Analyst at Acme"},
               {"id": "claim:2", "type": "SKILL", "value": "SQL"}]
     body = {"claims": claims, "referee": {"relationship": relationship, "emailDomain": email_domain,
-                                          "employerDomain": employer}, "answers": answers, "holderName": holder}
+                                          "employerDomain": employer, "employerName": employer_name},
+            "answers": answers, "holderName": holder, **extra}
     response = client.post("/api/v1/verify/reference", headers=HEADERS, json=body)
     assert response.status_code == 200, response.text
     return response.json()

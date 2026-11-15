@@ -80,6 +80,7 @@ public class VerificationResultWriter {
     public static final String EMPTY_RESPONSE = "EMPTY_RESPONSE";
     public static final String SOURCE_REVOKED = "SOURCE_REVOKED";
     static final int MAX_SNAPSHOT_CHARS = 262_144;
+    static final int MAX_DOMAIN_TRUST_CHARS = 20_000;
 
     private final VerificationRunRepository runRepository;
     private final VerificationSourceRepository sourceRepository;
@@ -424,9 +425,19 @@ public class VerificationResultWriter {
         verdict.setIntegrityNotesJson(views.write(notes));
         verdict.setEvidenceItemIdsJson(views.write(new ArrayList<>(cited)));
         verdict.setProbeQuestion(limit(draft.probeQuestion(), 500));
+        verdict.setDomainTrustJson(domainTrust(draft.domainTrust()));
         verdict.setCandidateStatus(CandidateVerdictStatus.AWAITING_CANDIDATE);
         verdict.setCurrent(true);
         return verdict;
+    }
+
+    /** The agent's domain-trust object as stored JSON (V26); null when absent, not an object or oversized. */
+    String domainTrust(com.fasterxml.jackson.databind.JsonNode trust) {
+        if (trust == null || !trust.isObject()) {
+            return null;
+        }
+        String json = views.write(trust);
+        return json == null || json.length() > MAX_DOMAIN_TRUST_CHARS ? null : json;
     }
 
     /** Supersedes a current verdict; true when it was shared (matching may have used it). */

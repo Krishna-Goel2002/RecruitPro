@@ -2,7 +2,7 @@
 
 Extracts: title, visible text (block elements become line breaks; script/style/template/svg/iframe skipped), hidden
 text (``hidden``, ``display:none``, ``visibility:hidden``; kept apart and only screened for injection), links,
-``<meta>`` values, JSON-LD (``Person``, ``CreativeWork`` family, ``author``), meta author, bylines
+``<meta>`` values, JSON-LD (``Person``, ``Organization`` names, ``CreativeWork`` family, ``author``), meta author, bylines
 (``rel=author``, ``itemprop=author``, ``class`` containing ``byline``/``author``, and "By Name" lines) and dates.
 """
 from __future__ import annotations
@@ -25,6 +25,8 @@ _BYLINE_CLASS = re.compile(r"(?:^|[\s_-])(?:byline|author|author-name|post-autho
 _HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)
 _BY_LINE = re.compile(r"^\s*(?:by|written by|posted by|author\s*:)\s+([A-Z][\w.'À-ɏ-]+"
                       r"(?:\s+[A-Z][\w.'À-ɏ-]+){0,3})\s*(?:[,|·•-].*)?$")
+ORGANIZATION_TYPES = {"organization", "corporation", "localbusiness", "educationalorganization", "collegeoruniversity",
+                      "governmentorganization", "ngo", "onlinebusiness", "researchorganization"}
 CREATIVE_TYPES = {"creativework", "article", "blogposting", "newsarticle", "scholarlyarticle", "softwaresourcecode",
                   "softwareapplication", "techarticle", "report", "book", "webpage", "profilepage", "aboutpage",
                   "presentationdigitaldocument", "digitaldocument", "course"}
@@ -39,6 +41,7 @@ class PageContent:
     meta: dict[str, str] = field(default_factory=dict)
     authors: list[str] = field(default_factory=list)  # authorship markers (meta, JSON-LD author, bylines)
     person_names: list[str] = field(default_factory=list)  # JSON-LD Person names (site owner markers)
+    organization_names: list[str] = field(default_factory=list)  # JSON-LD Organization names (domain trust only)
     structured_lines: list[str] = field(default_factory=list)
     dates: list[str] = field(default_factory=list)
 
@@ -176,6 +179,8 @@ def _walk_json_ld(node: Any, page: PageContent, depth: int = 0, budget: list[int
             values = _names(node.get(prop)) or ([str(node[prop])] if isinstance(node.get(prop), (int, float)) else [])
             if values:
                 page.structured_lines.append(f"Person {prop}: " + ", ".join(values))
+    if types & ORGANIZATION_TYPES:
+        page.organization_names.extend(_names(node.get("name")) + _names(node.get("legalName")))
     if types & CREATIVE_TYPES:
         label = sorted(types & CREATIVE_TYPES)[0]
         for prop in ("headline", "name"):
@@ -227,6 +232,7 @@ def extract_html(html: str) -> PageContent:
     page.dates += parser.times
     page.authors = list(dict.fromkeys(author.strip() for author in page.authors if author.strip()))[:20]
     page.person_names = list(dict.fromkeys(page.person_names))[:10]
+    page.organization_names = list(dict.fromkeys(name.strip() for name in page.organization_names if name.strip()))[:10]
     page.dates = list(dict.fromkeys(page.dates))[:20]
     return page
 

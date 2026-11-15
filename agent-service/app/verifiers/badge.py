@@ -15,9 +15,15 @@ Recipient: e-mail identities (hashed ``sha256$``/``md5$`` with salt, or plain) a
 against ``holderName``. ``ownershipProven`` = recipient matched. A comparable identity that does not match is a wrong
 recipient.
 
+Issuer trust (``app.trust.assess_issuer_domain``) for a valid credential whose issuer is bound to a domain: the
+organisation's list or the built-in list of well-known issuers (``app/data/trusted_issuers.json``) -> trusted;
+an issuer domain equal to (or under) a website the candidate proved ownership of -> untrusted (self-issued); else the
+domain must have been registered >= 365 days ago (RDAP; unreachable -> not trusted). An untrusted issuer caps the
+verdict at ``PARTLY_VERIFIED`` with note ``ISSUER_UNTRUSTED`` (``app.verdicts.finalize``).
+
 Per claim (only claims whose value matches the achievement by taxonomy skill or token overlap are judged; others are
 ``NOT_FOUND``): checked, valid, recipient matched, issuer bound to a domain (did:web, JWKS on the issuer's origin,
-OB 2.0 hosted) -> ``VERIFIED``; a ``did:key`` issuer (self-certifying, anyone can mint one) -> at most
+OB 2.0 hosted) and trusted -> ``VERIFIED``; a ``did:key`` issuer (self-certifying, anyone can mint one) -> at most
 ``PARTLY_VERIFIED`` with note ``ISSUER_NOT_DOMAIN_BOUND``; expired or not yet valid -> ``PARTLY_VERIFIED``;
 wrong recipient, invalid signature, revoked or hosted-origin mismatch -> ``CONTRADICTED``; unsupported proof or
 unresolvable key -> ``NOT_CHECKABLE``. Recipient not comparable -> ownership unproven (capped at PARTLY_VERIFIED).
@@ -46,12 +52,15 @@ from app.fetch.ssrf import FetchError
 from app.models import BadgeVerifyRequest, ClaimIn, EvidenceItem, IntegrityNote, Reason, Usage
 from app.network import Network
 from app.skills import covers, resolve_claim_skill, skills_in_text
+from app.trust import DomainTrust, assess_issuer_domain, issuer_domain
 from app.verdicts import DraftVerdict, VerifierOutput
 from app.verifiers.common import significant_tokens, tokens
 
 SUPPORTED_ALGS = {"EdDSA", "ES256", "RS256"}
 CLOCK_SKEW = timedelta(minutes=5)
 DOC_MAX_BYTES = 512 * 1024
+TRUST_REQUESTS = 6  # RDAP bootstrap + up to 3 registry queries
+ISSUER_KEY = "issuer-domain"
 
 
 class BadgeInputError(ValueError):
@@ -416,7 +425,7 @@ def achievement_matches(claim: ClaimIn, check: BadgeCheck) -> bool:
     return bool(wanted and name_tokens) and len(set(wanted) & set(name_tokens)) / len(set(wanted)) >= 0.6
 
 
-def _draft(claim: ClaimIn, check: BadgeCheck, owned: bool) -> DraftVerdict:
+def _draft(claim: ClaimIn, check: BadgeCheck, owned: bool, trust: DomainTrust | None = None) -> DraftVerdict:
     quote = check.achievement_name or None
     keys = ["badge-1"]
     if not achievement_matches(claim, check):
@@ -436,7 +445,7 @@ def _draft(claim: ClaimIn, check: BadgeCheck, owned: bool) -> DraftVerdict:
         state = "has expired" if check.expired else "is not valid yet"
         return DraftVerdict(claim, "PARTLY_VERIFIED", [Reason(
             text=f"The credential checks out and matches the claim, but it {state}.", evidence_keys=keys,
-            quote=quote)])
+            quote=quote)], trust=trust)
     if check.attributes.get("keySource") == "did:key":
         return DraftVerdict(claim, "PARTLY_VERIFIED", [Reason(
             text="The signature checks out and the achievement matches the claim, but the issuer is a did:key that "
@@ -449,10 +458,40 @@ def _draft(claim: ClaimIn, check: BadgeCheck, owned: bool) -> DraftVerdict:
     else:
         reasons.append(Reason(text="The recipient could not be compared with the candidate's details.",
                               evidence_keys=keys, quote=None))
-    return DraftVerdict(claim, "VERIFIED", reasons)
+    if trust is not None and trust.trusted:
+        reasons.append(Reason(text=("The issuer is trusted by the organisation." if trust.trusted_by == "ORGANIZATION"
+                                    else "The issuer's domain is an established issuer."),
+                              evidence_keys=[ISSUER_KEY], quote=None))
+    return DraftVerdict(claim, "VERIFIED", reasons, trust=trust)
 
 
-def build_output(request: BadgeVerifyRequest, check: BadgeCheck, *, budget: Budget, demo: bool = False) -> VerifierOutput:
+def check_issuer_trust(request: BadgeVerifyRequest, check: BadgeCheck, *, settings: Settings, network: Network,
+                       now: datetime, budget: Budget) -> DomainTrust | None:
+    """Issuer trust for a valid credential whose issuer is bound to a domain (did:key issuers stay capped by their own
+    rule); None when it does not apply. Adds the evidence item and the ISSUER_UNTRUSTED note."""
+    if check.status != "VALID" or check.attributes.get("keySource") == "did:key":
+        return None
+    domain = issuer_domain(check.issuer_id)
+    if not domain:
+        return None
+    trust = assess_issuer_domain(domain, now=now, fetcher=network.fetcher(settings, budget), cache=network.rdap_cache,
+                                 org_trusted=request.trusted_issuer_domains,
+                                 candidate_domains=request.candidate_domains)
+    if check.issuer_name:
+        trust.snapshot.insert(1, f"Issuer name (self-declared): {check.issuer_name}")
+    check.evidence.append(make_item(ISSUER_KEY, "BADGE", url=None, title="Issuer domain check",
+                                    text="\n".join(trust.snapshot), retrieved_at=now,
+                                    attributes={"check": trust.check, **trust.signals}))
+    if not trust.trusted:
+        check.notes.append(IntegrityNote(code="ISSUER_UNTRUSTED", evidence_keys=[ISSUER_KEY], text=(
+            "The badge issuer is not established as a trusted issuer ("
+            + ("untrusted" if trust.status == "UNTRUSTED" else "weak") + "): " + " ".join(trust.reasons)
+            + " The result is at most partly verified unless the organisation trusts this issuer.")))
+    return trust
+
+
+def build_output(request: BadgeVerifyRequest, check: BadgeCheck, *, budget: Budget, demo: bool = False,
+                 trust: DomainTrust | None = None, extra_requests: int = 0) -> VerifierOutput:
     owned = check.recipient == "matched"
     for item in check.evidence:
         item.attributes.update({"status": check.status, "recipient": check.recipient, "expired": check.expired,
@@ -464,17 +503,20 @@ def build_output(request: BadgeVerifyRequest, check: BadgeCheck, *, budget: Budg
     if check.status != "VALID":
         check.notes.append(IntegrityNote(code="CREDENTIAL_" + check.status, evidence_keys=["badge-1"],
                                          text=f"Credential check: {check.status_reason}."))
-    drafts = [_draft(claim, check, owned) for claim in request.claims]
+    drafts = [_draft(claim, check, owned, trust) for claim in request.claims]
     names = [request.holder_name] if request.holder_name else []
     identities = Identities(names=names)
     warnings = check.warnings + (["DEMO_FIXTURES: synthetic recorded data"] if demo else [])
     return VerifierOutput(verifier="badge", evidence=check.evidence, drafts=drafts, ownership_proven=owned,
                           identities=identities, notes=check.notes, warnings=warnings,
-                          usage=Usage(requests=budget.requests, truncated=budget.truncated))
+                          usage=Usage(requests=budget.requests + extra_requests, truncated=budget.truncated))
 
 
 def verify_badge(request: BadgeVerifyRequest, *, settings: Settings, network: Network, now: datetime) -> VerifierOutput:
     budget = Budget(20, settings.request_deadline_seconds)
     fetcher = network.fetcher(settings, budget)
     check = run_check(request, fetcher, now)
-    return build_output(request, check, budget=budget, demo=network.demo)
+    trust_budget = Budget(TRUST_REQUESTS, settings.request_deadline_seconds)
+    trust = check_issuer_trust(request, check, settings=settings, network=network, now=now, budget=trust_budget)
+    return build_output(request, check, budget=budget, demo=network.demo, trust=trust,
+                        extra_requests=trust_budget.requests)

@@ -19,10 +19,14 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from app.badges.keys import b64url_encode, did_key_from_ed25519
 from app.demo.fakes import FakeAccount, FakeCommit, FakePage, FakeRepo, fixed_resolver, github_handler, \
     gitlab_handler, web_handler
+from app.fetch.cache import TtlCache
 from app.network import Network
+from app.trust import BOOTSTRAP_URL
 
 NOW = datetime(2026, 11, 15, 12, 0, tzinfo=timezone.utc)
 PUBLIC_IP = "93.184.216.34"
+FAKE_RDAP = "https://rdap.test/"
+FAKE_RDAP_TLDS = ["com", "net", "org", "io", "example", "test", "dev", "in", "uk", "info", "app"]
 
 
 def iso(moment: datetime) -> str:
@@ -34,20 +38,70 @@ def days_ago(days: float) -> str:
 
 
 # ----------------------------------------------------------------------------------------------- network
+def rdap_record(name: str, registered: str | None) -> dict[str, Any]:
+    events = [{"eventAction": "registration", "eventDate": registered}] if registered else []
+    return {"objectClassName": "domain", "ldhName": name, "events": events}
+
+
 @dataclass
 class FakeNet:
+    """Fake upstreams. Domain trust: every domain is registered ``default_registered`` (10 years before NOW) and has
+    MX records unless ``registered`` / ``mx`` say otherwise (``None`` = unknown to the registry / no MX);
+    ``rdap_down`` makes the IANA bootstrap fail."""
     accounts: list[FakeAccount] = field(default_factory=list)
     pages: dict[str, FakePage] = field(default_factory=dict)
     hosts: dict[str, list[str]] = field(default_factory=dict)  # host -> addresses (default: PUBLIC_IP)
     txt: dict[str, list[str]] = field(default_factory=dict)
     gitlab: bool = False
     calls: list[str] = field(default_factory=list)
+    registered: dict[str, str | None] = field(default_factory=dict)
+    default_registered: str | None = field(default_factory=lambda: days_ago(3650))
+    mx: dict[str, list[str]] = field(default_factory=dict)
+    default_mx: bool = True
+    rdap_down: bool = False
+
+    def _rdap(self, request: httpx.Request) -> httpx.Response | None:
+        host = request.headers.get("host", request.url.host)
+        path = request.url.raw_path.decode()
+        if f"https://{host}{path}" in self.pages:
+            return None
+        rdap_type = {"content-type": "application/rdap+json"}
+        if f"https://{host}{path}" == BOOTSTRAP_URL:
+            self.calls.append(BOOTSTRAP_URL)
+            if self.rdap_down:
+                return httpx.Response(503, text="unavailable", headers={"content-type": "text/plain"})
+            return httpx.Response(200, json={"services": [[FAKE_RDAP_TLDS, [FAKE_RDAP]]]})
+        if host == "rdap.test" and path.startswith("/domain/"):
+            name = path[len("/domain/"):]
+            self.calls.append(f"{FAKE_RDAP}domain/{name}")
+            registered = self.registered.get(name, self.default_registered)
+            if registered is None:
+                return httpx.Response(404, json={"errorCode": 404}, headers=rdap_type)
+            return httpx.Response(200, content=json.dumps(rdap_record(name, registered)).encode(), headers=rdap_type)
+        return None
+
+    def _mx(self, host: str) -> list[str]:
+        if host in self.mx:
+            return list(self.mx[host])
+        return [f"mail.{host}"] if self.default_mx else []
 
     def network(self) -> Network:
         api = gitlab_handler(self.accounts, self.calls) if self.gitlab else github_handler(self.accounts, self.calls)
+        pages = web_handler(self.pages, self.calls)
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            return self._rdap(request) or pages(request)
+
         return Network(resolver=fixed_resolver(self.hosts, [PUBLIC_IP]),
-                       transport_factory=lambda: httpx.MockTransport(web_handler(self.pages, self.calls)),
-                       api_transport=httpx.MockTransport(api), txt_resolver=lambda host: list(self.txt.get(host, [])))
+                       transport_factory=lambda: httpx.MockTransport(handle),
+                       api_transport=httpx.MockTransport(api), txt_resolver=lambda host: list(self.txt.get(host, [])),
+                       mx_resolver=self._mx, rdap_cache=TtlCache())
+
+
+def employer_home(name: str) -> FakePage:
+    """A synthetic company home page naming ``name``."""
+    return FakePage(f"<!doctype html><html><head><title>{name} - home (synthetic)</title></head><body><main>"
+                    f"<h1>Welcome to {name}</h1><p>Synthetic company page for tests.</p></main></body></html>")
 
 
 def commits(login: str | None, name: str, dates: list[str], committed: str | None = None) -> list[FakeCommit]:

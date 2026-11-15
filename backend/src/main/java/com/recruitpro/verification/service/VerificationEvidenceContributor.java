@@ -55,7 +55,9 @@ public class VerificationEvidenceContributor implements EvidenceContributor {
         List<ClaimVerdict> candidates = new ArrayList<>();
         for (ClaimVerdict verdict : verdictRepository.findAllByCandidateIdAndCurrentTrueAndCandidateStatusOrderByIdAsc(
                 application.getCandidate().getId(), CandidateVerdictStatus.SHARED)) {
-            if (verdict.getVerdict() == VerdictValue.VERIFIED && verdict.isOwnershipProven()) {
+            // VERIFIED as it counts for this organisation (V26: a verdict capped only by an employer / issuer domain the
+            // organisation lists as trusted counts too); lifts() re-checks it.
+            if (verdict.isOwnershipProven() && DomainTrusts.effectiveVerdict(verdict, settings) == VerdictValue.VERIFIED) {
                 candidates.add(verdict);
             }
         }
@@ -72,8 +74,10 @@ public class VerificationEvidenceContributor implements EvidenceContributor {
             if (!VerificationStaffSupport.lifts(verdict, reviews.get(verdict.getId()), settings, connectors.get(verdict.getId()))) {
                 continue;
             }
+            String trust = verdict.getVerdict() == VerdictValue.VERIFIED ? ""
+                    : "; domain trusted by the organisation";
             facts.add(EvidenceContributor.fact(FACT_PREFIX + verdict.getId(), verdict.getClaimType().name(),
-                    verdict.getClaimValue(), "Verified by " + verdict.getVerifier() + "; confirmed by a recruiter",
+                    verdict.getClaimValue(), "Verified by " + verdict.getVerifier() + trust + "; confirmed by a recruiter",
                     SOURCE_SECTION, EvidenceTier.CORROBORATED));
         }
         return facts;

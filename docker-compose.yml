@@ -2,10 +2,21 @@
 #   Candidate portal  http://localhost:5173
 #   HR portal         http://localhost:5174
 #   Backend API       http://localhost:8080/api/v1  (Swagger UI: /swagger-ui.html)
-#   AI service        http://localhost:8000/health
-#   Agent service     http://localhost:8100/health
-#   Mailpit (email)   http://localhost:8025
+#   Agent service     http://localhost:8100/health  (bound to 127.0.0.1)
+#   Mailpit (email)   http://localhost:8025         (bound to 127.0.0.1; SMTP 1025)
+#   AI service        not published (no-egress network); check it with
+#                     docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"
+#   PostgreSQL        not published; docker compose exec postgres psql -U recruitpro -d recruitpro
 # Development values only. Copy .env.example to .env to override secrets.
+#
+# Networks (least privilege; "internal: true" = no route out of Docker and no published ports):
+#   internal      postgres, mailpit, ai-service, backend   - the backend's private services
+#   agent         backend, agent-service                   - the agent cannot reach postgres or the AI service
+#   egress        backend                                  - SMTP, GitHub OAuth, OIDC providers; publishes 8080
+#   agent-egress  agent-service                            - candidate URLs, GitHub/GitLab, badge issuers; publishes 8100
+#   edge          candidate-portal, hr-portal, mailpit     - published ports only
+# The AI service has no egress. For LLM_PROVIDER=anthropic|openai_compatible add the override:
+#   docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d
 name: recruitpro
 
 services:
@@ -15,10 +26,9 @@ services:
       POSTGRES_DB: recruitpro
       POSTGRES_USER: recruitpro
       POSTGRES_PASSWORD: recruitpro
-    ports:
-      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U recruitpro -d recruitpro"]
       interval: 5s
@@ -28,8 +38,9 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     ports:
-      - "8025:8025"   # web UI
-      - "1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # web UI
+      - "127.0.0.1:1025:1025"   # SMTP (for a backend run outside Docker)
+    networks: [internal, edge]
 
   ai-service:
     build: ./ai-service
@@ -41,8 +52,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    ports:
-      - "8000:8000"
+      # OCR for scanned resumes (RapidOCR is installed in the image; off unless set to true).
+      OCR_ENABLED: ${OCR_ENABLED:-false}
+    # No host port: the AI service is only on the internal network (no egress, as designed).
+    networks: [internal]
 
   agent-service:
     build: ./agent-service
@@ -58,7 +71,8 @@ services:
       # Optional server token for GitHub API rate limits on real (non-demo) accounts.
       GITHUB_TOKEN: ${AGENT_GITHUB_TOKEN:-}
     ports:
-      - "8100:8100"
+      - "127.0.0.1:8100:8100"
+    networks: [agent, agent-egress]
 
   backend:
     build: ./backend
@@ -115,6 +129,7 @@ services:
       FILE_STORAGE_PATH: /data/uploads
     ports:
       - "8080:8080"
+    networks: [internal, agent, egress]
     volumes:
       - resume-uploads:/data/uploads
 
@@ -127,6 +142,7 @@ services:
       - backend
     ports:
       - "5173:80"
+    networks: [edge]
 
   hr-portal:
     build:
@@ -137,6 +153,16 @@ services:
       - backend
     ports:
       - "5174:80"
+    networks: [edge]
+
+networks:
+  internal:
+    internal: true
+  agent:
+    internal: true
+  egress: {}
+  agent-egress: {}
+  edge: {}
 
 volumes:
   postgres-data:

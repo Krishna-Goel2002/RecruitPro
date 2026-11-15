@@ -10,9 +10,10 @@ TOKEN = "test-only-internal-token"
 
 
 def requirement(ident: int, kind: str, description: str, *, mandatory: bool = True, knockout: bool = False,
-                years: int | None = None, alternatives: list[str] | None = None) -> MatchRequirement:
+                years: int | None = None, alternatives: list[str] | None = None,
+                proficiency: str | None = None) -> MatchRequirement:
     return MatchRequirement(id=ident, type=kind, description=description, mandatory=mandatory, knockout=knockout,
-                            minimumYears=years, alternatives=alternatives or [])
+                            minimumYears=years, alternatives=alternatives or [], proficiency=proficiency)
 
 
 def fact(ident: str, kind: str, value: str, *, evidence: str | None = None, tier: str = "RESUME_STATED",

@@ -1,0 +1,12 @@
+# Keep the image small and free of local state: only app/ and the requirements files are needed at run time.
+.venv/
+venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.env
+.env.*
+tests/
+eval/
+*.md
+!README.md

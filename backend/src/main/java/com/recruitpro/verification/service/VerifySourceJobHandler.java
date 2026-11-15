@@ -128,7 +128,7 @@ public class VerifySourceJobHandler implements BackgroundJobHandler {
                     url = work.identifier();
                 }
                 yield agentClient.verifyBadge(new AgentModels.BadgeVerifyRequest(credential, url, work.claims(),
-                        work.holderName(), work.holderEmail()));
+                        work.holderName(), work.holderEmail(), work.candidateDomains()));
             }
         };
     }

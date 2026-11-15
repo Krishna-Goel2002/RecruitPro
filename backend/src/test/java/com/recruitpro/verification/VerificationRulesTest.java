@@ -13,6 +13,8 @@ import com.recruitpro.verification.entity.ReviewDecision;
 import com.recruitpro.verification.entity.SubjectType;
 import com.recruitpro.verification.entity.VerdictValue;
 import com.recruitpro.verification.entity.VerificationMode;
+import com.recruitpro.verification.dto.DomainTrustView;
+import com.recruitpro.verification.service.DomainTrusts;
 import com.recruitpro.verification.service.VerificationResultWriter;
 import com.recruitpro.verification.service.VerificationSettingsService;
 import com.recruitpro.verification.service.VerificationStaffSupport;
@@ -81,6 +83,57 @@ class VerificationRulesTest {
                 review(ReviewDecision.OVERRULE), visible, "GITHUB"), "latest review CONFIRM");
         assertFalse(VerificationStaffSupport.lifts(verdict(VerdictValue.VERIFIED, true, CandidateVerdictStatus.SHARED, true),
                 null, visible, "GITHUB"), "reviewed at all");
+    }
+
+    @Test
+    void domainTrustCountsOnlyForTheOrganisationThatListsTheDomain() {
+        VerificationSettingsService.Effective trusting = new VerificationSettingsService.Effective(VerificationMode.VISIBLE,
+                Map.of("REFERENCE", true), List.of("acme.example"), List.of());
+        VerificationSettingsService.Effective badgesOnly = new VerificationSettingsService.Effective(VerificationMode.VISIBLE,
+                Map.of("REFERENCE", true), List.of(), List.of("acme.example"));
+        VerificationSettingsService.Effective plain = new VerificationSettingsService.Effective(VerificationMode.VISIBLE,
+                Map.of("REFERENCE", true));
+        ClaimVerdict capped = verdict(VerdictValue.PARTLY_VERIFIED, true, CandidateVerdictStatus.SHARED, true);
+        capped.setDomainTrustJson(VerificationFixtures.domainTrustJson("EMPLOYER_DOMAIN", "eu.acme.example", "WEAK", "VERIFIED"));
+        ClaimVerdict partly = verdict(VerdictValue.PARTLY_VERIFIED, true, CandidateVerdictStatus.SHARED, true);
+        partly.setDomainTrustJson(VerificationFixtures.domainTrustJson("EMPLOYER_DOMAIN", "acme.example", "WEAK", null));
+        ClaimVerdictReview confirm = review(ReviewDecision.CONFIRM);
+
+        assertEquals(VerdictValue.VERIFIED, DomainTrusts.effectiveVerdict(capped, trusting), "a subdomain of a listed domain");
+        assertTrue(VerificationStaffSupport.lifts(capped, confirm, trusting, "REFERENCE"));
+        assertEquals(VerdictValue.PARTLY_VERIFIED, DomainTrusts.effectiveVerdict(capped, plain), "other organisations");
+        assertFalse(VerificationStaffSupport.lifts(capped, confirm, plain, "REFERENCE"));
+        assertEquals(VerdictValue.PARTLY_VERIFIED, DomainTrusts.effectiveVerdict(capped, badgesOnly), "the list of the other check");
+        assertEquals(VerdictValue.PARTLY_VERIFIED, DomainTrusts.effectiveVerdict(partly, trusting), "not capped by the domain");
+        assertEquals(VerdictValue.PARTLY_VERIFIED, DomainTrusts.effectiveVerdict(capped, null));
+        ClaimVerdict notOwned = verdict(VerdictValue.PARTLY_VERIFIED, false, CandidateVerdictStatus.SHARED, true);
+        notOwned.setDomainTrustJson(capped.getDomainTrustJson());
+        assertFalse(VerificationStaffSupport.lifts(notOwned, confirm, trusting, "REFERENCE"), "ownership still required");
+        ClaimVerdict broken = verdict(VerdictValue.PARTLY_VERIFIED, true, CandidateVerdictStatus.SHARED, true);
+        broken.setDomainTrustJson("{not json");
+        assertEquals(VerdictValue.PARTLY_VERIFIED, DomainTrusts.effectiveVerdict(broken, trusting));
+
+        DomainTrustView blind = DomainTrusts.view(capped, trusting, false);
+        assertEquals("TRUSTED", blind.status());
+        assertEquals("ORGANIZATION", blind.trustedBy());
+        assertEquals("WEAK", blind.agentStatus());
+        assertTrue(blind.liftedByOrganization());
+        assertNull(blind.domain(), "blind-first: the domain is withheld until reveal");
+        assertEquals("eu.acme.example", DomainTrusts.view(capped, trusting, true).domain());
+        DomainTrustView other = DomainTrusts.view(capped, plain, true);
+        assertEquals("WEAK", other.status());
+        assertNull(other.trustedBy());
+        assertFalse(other.liftedByOrganization());
+        ClaimVerdict agentTrusted = verdict(VerdictValue.VERIFIED, true, CandidateVerdictStatus.SHARED, true);
+        agentTrusted.setDomainTrustJson(VerificationFixtures.domainTrustJson("BADGE_ISSUER", "credly.com", "TRUSTED", null));
+        assertEquals("AGENT", DomainTrusts.view(agentTrusted, plain, false).trustedBy());
+        assertNull(DomainTrusts.view(verdict(VerdictValue.VERIFIED, true, CandidateVerdictStatus.SHARED, true), plain, true));
+
+        assertEquals("acme.example", DomainTrusts.normalise(" https://www.ACME.example/about "));
+        assertEquals("acme.example", DomainTrusts.normalise("acme.example.:443"));
+        assertTrue(DomainTrusts.within("eu.acme.example", "acme.example"));
+        assertFalse(DomainTrusts.within("notacme.example", "acme.example"));
+        assertFalse(DomainTrusts.within("acme.example", ""));
     }
 
     @Test

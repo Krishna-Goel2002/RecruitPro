@@ -48,14 +48,20 @@ public final class AgentModels {
     public record DocumentVerifyRequest(List<Claim> claims, String holderName) {
     }
 
-    /** {@code credential} is a JWT string or a JSON object (pasted credential); {@code url} a hosted assertion. */
+    /**
+     * {@code credential} is a JWT string or a JSON object (pasted credential); {@code url} a hosted assertion.
+     * {@code candidateDomains}: hosts of the candidate's PROVEN website sources; an issuer there is self-issued
+     * (ISSUER_UNTRUSTED). Organisation allow-lists are not sent: verdicts are shared with every organisation, so each
+     * organisation's list is applied when it views them ({@code DomainTrusts}).
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record BadgeVerifyRequest(Object credential, String url, List<Claim> claims, String holderName,
-                                     String holderEmail) {
+                                     String holderEmail, List<String> candidateDomains) {
     }
 
+    /** {@code employerName} is compared with the employer domain's home page (employer-domain trust). */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record Referee(String relationship, String emailDomain, String employerDomain) {
+    public record Referee(String relationship, String emailDomain, String employerDomain, String employerName) {
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -64,7 +70,7 @@ public final class AgentModels {
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ReferenceVerifyRequest(List<Claim> claims, Referee referee, List<ReferenceAnswer> answers,
-                                         String holderName) {
+                                         String holderName, List<String> candidateDomains) {
     }
 
     // ------------------------------------------------------------------------------------------ responses
@@ -84,9 +90,11 @@ public final class AgentModels {
     public record IntegrityNote(String code, String text, List<String> evidenceKeys) {
     }
 
+    /** {@code domainTrust}: references (anchored) and domain-bound badge issuers only; stored as JSON. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Verdict(String claimId, String claimType, String claimValue, String verdict, boolean ownershipProven,
-                          List<Reason> reasons, List<IntegrityNote> integrityNotes, String probeQuestion) {
+                          List<Reason> reasons, List<IntegrityNote> integrityNotes, String probeQuestion,
+                          JsonNode domainTrust) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

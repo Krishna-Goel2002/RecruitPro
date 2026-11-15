@@ -129,7 +129,7 @@ public class StaffVerificationService {
                         && tier.level() < EvidenceTier.CORROBORATED.level()) {
                     tier = EvidenceTier.CORROBORATED;
                 }
-                staffVerdicts.add(support.staffVerdict(verdict, review, reviewerNames, connector, revealed));
+                staffVerdicts.add(support.staffVerdict(verdict, review, reviewerNames, connector, revealed, settings));
             }
             claims.add(new StaffClaim(first.getSubjectType().name(), first.getSubjectId(), first.getClaimType().name(),
                     first.getClaimValue(), tier.name(), staffVerdicts));
@@ -196,7 +196,7 @@ public class StaffVerificationService {
         for (Application application : applications) {
             revealed |= ApplicantQueryService.isRevealed(application.getIdentityRevealedAt(), blind);
         }
-        return support.staffVerdict(verdict, saved, support.reviewerNames(List.of(saved)), connector, revealed);
+        return support.staffVerdict(verdict, saved, support.reviewerNames(List.of(saved)), connector, revealed, settings);
     }
 
     private boolean blindReview(Long organizationId) {

@@ -16,7 +16,8 @@ import java.time.LocalDateTime;
 
 /**
  * Verification settings of one organisation (principle 9). No row means SHADOW with every connector enabled.
- * {@code connectors_json} is an object {@code {"GITHUB": true, ..., "REFERENCE": true}}.
+ * {@code connectors_json} is an object {@code {"GITHUB": true, ..., "REFERENCE": true}}; the two trusted-domain
+ * columns are JSON arrays of lower-case domain names (V26).
  */
 @Entity
 @Table(name = "organization_verification_settings")
@@ -36,6 +37,14 @@ public class OrganizationVerificationSettings {
 
     @Column(name = "connectors_json", columnDefinition = "TEXT")
     private String connectorsJson;
+
+    /** JSON array of employer domains the organisation trusts for references (V26); null = none. */
+    @Column(name = "trusted_employer_domains_json", columnDefinition = "TEXT")
+    private String trustedEmployerDomainsJson;
+
+    /** JSON array of Open Badge issuer domains the organisation trusts (V26); null = none. */
+    @Column(name = "trusted_badge_issuers_json", columnDefinition = "TEXT")
+    private String trustedBadgeIssuersJson;
 
     @Column(name = "updated_by")
     private Long updatedBy;

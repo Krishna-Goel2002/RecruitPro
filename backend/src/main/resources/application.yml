@@ -244,6 +244,23 @@ app:
       interval-ms: 900000
       initial-delay-ms: 60000
 
+  # Data-retention purge (WP-OPS, retention/RetentionPurgeService): deletes used/expired tokens and login states,
+  # finished background jobs, delivered notifications, old rate-limit windows and audit events; anonymises old
+  # expired/cancelled/declined reference requests. Periods in days; each batch is its own transaction.
+  retention:
+    enabled: ${RETENTION_ENABLED:true}
+    cron: ${RETENTION_CRON:0 30 3 * * *}       # 03:30 UTC daily; "-" disables the schedule
+    batch-size: 500
+    max-batches-per-table: 200                  # per run; the rest follows on the next run
+    token-days: 30                              # user_tokens and refresh_tokens after use, revocation or expiry
+    job-done-days: 30                           # background_jobs DONE
+    job-failed-days: 90                         # background_jobs FAILED / DEAD
+    notification-days: 180                      # e-mails SENT/SKIPPED and read in-app messages
+    state-days: 1                               # sso_login_states, verification_oauth_states after use or expiry
+    rate-limit-days: 1                          # rate_limit_buckets windows
+    reference-days: 365                         # EXPIRED/CANCELLED/DECLINED reference requests: referee PII removed
+    audit-days: ${RETENTION_AUDIT_DAYS:730}     # audit_events; 0 = keep forever
+
   file-storage:
     upload-dir: ${FILE_STORAGE_PATH:./uploads}
     allowed-types: pdf,doc,docx

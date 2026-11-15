@@ -22,10 +22,12 @@ docker compose up --build
 | Candidate portal | http://localhost:5173 |
 | HR, interviewer and admin portal | http://localhost:5174 |
 | Backend API | http://localhost:8080/api/v1 (Swagger UI: http://localhost:8080/swagger-ui.html, not in `prod`) |
-| AI service | http://localhost:8000/health |
-| Agent service (verification agents) | http://localhost:8100/health |
-| Mailpit (every outgoing email) | http://localhost:8025 (SMTP on 1025) |
-| PostgreSQL 16 (pgvector image) | localhost:5432, database / user / password `recruitpro` |
+| AI service | not published (internal network, no egress): `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` |
+| Agent service (verification agents) | http://localhost:8100/health (127.0.0.1 only) |
+| Mailpit (every outgoing email) | http://localhost:8025 (SMTP on 1025; 127.0.0.1 only) |
+| PostgreSQL 16 (pgvector image) | not published: `docker compose exec postgres psql -U recruitpro -d recruitpro` |
+
+Networks: PostgreSQL, Mailpit, the AI service and the backend share an `internal` network without internet access; the agent service reaches the backend over its own internal network and the internet over a separate one; only the backend has general egress (SMTP, GitHub OAuth, OIDC). An LLM provider for the AI service needs `docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d`. To reach PostgreSQL from the host (e.g. a backend started with `mvnw`), add a `docker-compose.override.yml` that gives `postgres` `ports: ["127.0.0.1:5432:5432"]` and `networks: [internal, egress]`. Details: [WP-OPS-NOTES.md](docs/plan/WP-OPS-NOTES.md).
 
 The compose file uses development secrets. To change them, copy `.env.example` to `.env` next to `docker-compose.yml` and edit it. Data lives in the `postgres-data` and `resume-uploads` volumes; `docker compose down -v` removes them.
 
@@ -148,7 +150,7 @@ Run all of these before merging; CI (`.github/workflows/ci.yml`) runs the same s
 | Gate | Command | Status in the build environment |
 |---|---|---|
 | **G-JAVA-REAL** backend compile + unit and integration tests (H2 in PostgreSQL mode) | `cd backend && ./mvnw verify` | passed for `9ad341a` on 15 Nov 2026 (239 tests, 6 skipped); **not yet run for `2fedafb` and later** |
-| G-PY AI service tests | `cd ai-service && python -m pytest -q` | passed (178) |
+| G-PY AI service tests | `cd ai-service && python -m pytest -q` | passed (178; 186 with WP-OPS on `redesign`) |
 | G-PY evaluation thresholds (synthetic data) | `cd ai-service && python -m eval.run --check` | passed |
 | G-AG agent service tests | `cd agent-service && python -m pytest -q` | passed (176) |
 | G-AG evaluation (false corroboration ≤ 0.02, kappa ≥ 0.70; synthetic) | `cd agent-service && python -m eval.run --check` | passed (83 cases, FCR 0.0, kappa 1.0) |

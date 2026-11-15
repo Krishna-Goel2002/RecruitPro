@@ -51,7 +51,7 @@ class RequirementResult(BaseModel):
 
 
 class MatchResponse(BaseModel):
-    algorithmVersion: Literal["evidence-ladder-3"] = "evidence-ladder-3"
+    algorithmVersion: Literal["evidence-ladder-4"] = "evidence-ladder-4"
     scoreLabel: str
     verifiedCoverage: float | None
     claimedCoverage: float | None

@@ -238,6 +238,32 @@ class VerifySourceJobHandlerIntegrationTest extends VerificationIntegrationTestB
         assertNull(runs.findById(runId).orElseThrow().getVerifier());
     }
 
+    @Test
+    void badgeRunsSendTheCandidatesProvenWebsiteDomainsAndStoreDomainTrust() throws Exception {
+        VerificationSource badge = verification.source(me, VerificationSourceKind.OPEN_BADGE,
+                "https://badges.runner-site.example/assertions/1", true);
+        verification.source(me, VerificationSourceKind.WEBSITE, "https://runner-site.example/", true);
+        verification.source(me, VerificationSourceKind.WEBSITE, "https://not-mine.example/", false);
+        long runId = startRun(badge.getId());
+        String trust = VerificationFixtures.domainTrustJson("BADGE_ISSUER", "badges.runner-site.example", "UNTRUSTED", "VERIFIED");
+        when(agentClient.verifyBadge(any())).thenReturn(VerificationFixtures.response("badge",
+                List.of(VerificationFixtures.item("badge-1", "BADGE", "https://badges.runner-site.example/assertions/1", "{}")),
+                List.of(VerificationFixtures.withDomainTrust(VerificationFixtures.agentVerdict("claim:" + goClaim.getId(),
+                        "SKILL", "Go", "PARTLY_VERIFIED", true, "badge-1"), mapper.readTree(trust)))));
+
+        handler.handle(runId);
+
+        ArgumentCaptor<AgentModels.BadgeVerifyRequest> sent = ArgumentCaptor.forClass(AgentModels.BadgeVerifyRequest.class);
+        verify(agentClient).verifyBadge(sent.capture());
+        assertEquals("https://badges.runner-site.example/assertions/1", sent.getValue().url());
+        assertEquals(List.of("runner-site.example"), sent.getValue().candidateDomains(), "only PROVEN websites");
+        ClaimVerdict stored = verdicts.findAllByRunIdOrderByIdAsc(runId).get(0);
+        assertEquals(VerdictValue.PARTLY_VERIFIED, stored.getVerdict());
+        JsonNode storedTrust = mapper.readTree(stored.getDomainTrustJson());
+        assertEquals("UNTRUSTED", storedTrust.path("status").asText());
+        assertEquals("VERIFIED", storedTrust.path("cappedFrom").asText());
+    }
+
     private long startRun(Long sourceId) throws Exception {
         JsonNode run = data(mvc.perform(post(BASE + "/sources/{id}/runs", sourceId).with(candidate("runner@cand.test")))
                 .andExpect(status().isOk())

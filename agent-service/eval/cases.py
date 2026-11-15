@@ -3,7 +3,8 @@ badges signed with keys generated at run time, references). Every case runs the 
 verdict layer offline; the gold verdict is what a careful human reviewer would conclude from the same evidence.
 
 Adversarial cases are marked: forks only, bulk history, backdated history, ownership unproven, injection text, hidden text, wrong badge
-recipient, tampered signatures, foreign keys, lookalike/free-mail referee domains, SSRF redirects.
+recipient, tampered signatures, foreign keys, lookalike/free-mail referee domains, SSRF redirects, new or
+candidate-owned employer domains, badge issuers on new or candidate-owned domains.
 """
 from __future__ import annotations
 
@@ -22,8 +23,9 @@ from app.verifiers.code import verify_code
 from app.verifiers.document import verify_document
 from app.verifiers.reference import verify_reference
 from app.verifiers.web import verify_web
-from eval.builders import (NOW, FakeNet, did_key_of, days_ago, ed25519_key, es256_key, make_docx, make_pdf, make_pptx,
-                           monthly, ob2_documents, ob3_payload, package_json, repo, rs256_key, sign, status_list, tamper)
+from eval.builders import (NOW, FakeNet, did_key_of, days_ago, ed25519_key, employer_home, es256_key, make_docx,
+                           make_pdf, make_pptx, monthly, ob2_documents, ob3_payload, package_json, repo, rs256_key, sign,
+                           status_list, tamper)
 
 SETTINGS = load_settings({"AGENT_SERVICE_TOKEN": "eval", "LLM_PROVIDER": "none"})
 
@@ -283,10 +285,12 @@ ISSUER = "https://issuer.example"
 
 def _badge_case(case_id: str, claims: list[tuple[str, str, str, str]], *, credential=None, url: str | None = None,
                 pages: dict[str, FakePage] | None = None, email: str | None = "holder@example.org",
-                adversarial: bool = False) -> Case:
-    net = FakeNet(pages=pages or {})
+                adversarial: bool = False, registered: dict[str, str | None] | None = None,
+                candidate_domains: list[str] | None = None) -> Case:
+    net = FakeNet(pages=pages or {}, registered=registered or {})
     request = BadgeVerifyRequest(credential=credential, url=url, holder_email=email, holder_name="Mira Testperson",
-                                 claims=[claim(i, t, v) for i, t, v, _ in claims])
+                                 claims=[claim(i, t, v) for i, t, v, _ in claims],
+                                 candidate_domains=candidate_domains or [])
 
     def run() -> VerifyResponse:
         return finalize(verify_badge(request, settings=SETTINGS, network=net.network(), now=NOW))
@@ -318,7 +322,21 @@ def badge_cases() -> list[Case]:
     foreign_url, foreign_pages = ob2_documents(ISSUER, badge_name="Python Programming",
                                                assertion_host="https://badges-mirror.example")
     revoked_url, revoked_pages = ob2_documents(ISSUER, badge_name="Python Programming", revoked=True)
+    own_issuer = "https://badges.mira-portfolio.example"
+    own_url, own_pages = ob2_documents(own_issuer, badge_name="Python Programming")
+    own_jwks = {f"{own_issuer}/.well-known/jwks.json": FakePage(json.dumps({"keys": [{**es.jwk, "kid": "k1"}]}),
+                                                                "application/json")}
+    partly = [("b1", "CERTIFICATION", "Python Programming", "PARTLY_VERIFIED"), ("b2", "SKILL", "Haskell", "NOT_FOUND")]
     return [
+        # issuer trust (adversarial): a correctly signed or hosted badge whose issuer the candidate controls
+        _badge_case("badge-ob2-candidate-owned-issuer", partly, url=own_url, pages=own_pages,
+                    candidate_domains=["mira-portfolio.example"], adversarial=True),
+        _badge_case("badge-ob3-candidate-owned-issuer", partly,
+                    credential=sign(ob3_payload(own_issuer, "Python Programming"), es, kid="k1"), pages=own_jwks,
+                    candidate_domains=["mira-portfolio.example"], adversarial=True),
+        _badge_case("badge-ob3-new-issuer-domain", partly,
+                    credential=sign(ob3_payload(ISSUER, "Python Programming"), es, kid="k1"), pages=jwks_pages,
+                    registered={"issuer.example": days_ago(45)}, adversarial=True),
         _badge_case("badge-ob3-eddsa-didkey-self-issued", [("b1", "CERTIFICATION", "Python Programming",
                                                             "PARTLY_VERIFIED"), ("b2", "SKILL", "Haskell", "NOT_FOUND")],
                     credential=sign(ob3_payload(did, "Python Programming"), ed, kid=f"{did}#{did.split(':')[-1]}"),
@@ -383,14 +401,22 @@ def _alg_none(payload: dict) -> str:
 
 # -------------------------------------------------------------------------------------------- references
 def _ref_case(case_id: str, relationship: str, email_domain: str, employer: str | None, answer: str | None,
-              gold: str, adversarial: bool = False) -> Case:
+              gold: str, adversarial: bool = False, *, employer_name: str | None = "Acme Corp",
+              registered: dict[str, str | None] | None = None, rdap_down: bool = False, mx: bool = True,
+              home: str | None = "Acme Corp", candidate_domains: list[str] | None = None,
+              org_trusted: list[str] | None = None) -> Case:
+    """Employer acme.com is established by default: registered 10 years ago, MX, home page names "Acme Corp"."""
+    net = FakeNet(registered=registered or {}, rdap_down=rdap_down, default_mx=mx,
+                  pages={"https://acme.com/": employer_home(home)} if home else {})
     request = ReferenceVerifyRequest(
         claims=[claim("r1", "EXPERIENCE", "Backend Engineer at Acme Corp")],
-        referee={"relationship": relationship, "emailDomain": email_domain, "employerDomain": employer},
-        answers=[{"claimId": "r1", "answer": answer, "comment": "Worked with them for two years."}] if answer else [])
+        referee={"relationship": relationship, "emailDomain": email_domain, "employerDomain": employer,
+                 "employerName": employer_name},
+        answers=[{"claimId": "r1", "answer": answer, "comment": "Worked with them for two years."}] if answer else [],
+        candidate_domains=candidate_domains or [], trusted_employer_domains=org_trusted or [])
 
     def run() -> VerifyResponse:
-        return finalize(verify_reference(request, now=NOW))
+        return finalize(verify_reference(request, now=NOW, settings=SETTINGS, network=net.network()))
 
     return Case(case_id, "reference", run, {"r1": gold}, adversarial)
 
@@ -411,6 +437,21 @@ def reference_cases() -> list[Case]:
         _ref_case("ref-no-employer-domain", "MANAGER", "acme.com", None, "CONFIRM", "PARTLY_VERIFIED"),
         _ref_case("ref-lookalike-domain", "MANAGER", "acme.com.evil.io", "acme.com", "CONFIRM", "PARTLY_VERIFIED", True),
         _ref_case("ref-outlook", "PEER", "outlook.com", "acme.com", "CONFIRM", "PARTLY_VERIFIED", True),
+        # employer-domain trust: the candidate types the employer domain
+        _ref_case("ref-new-employer-domain", "MANAGER", "acme.com", "acme.com", "CONFIRM", "PARTLY_VERIFIED", True,
+                  registered={"acme.com": days_ago(90)}),
+        _ref_case("ref-candidate-owned-employer-domain", "MANAGER", "acme.com", "acme.com", "CONFIRM",
+                  "PARTLY_VERIFIED", True, candidate_domains=["acme.com"]),
+        _ref_case("ref-employer-home-page-mismatch", "PEER", "acme.com", "acme.com", "CONFIRM", "PARTLY_VERIFIED",
+                  True, home="Personal blog of a friend"),
+        _ref_case("ref-employer-domain-no-mx", "MANAGER", "acme.com", "acme.com", "CONFIRM", "PARTLY_VERIFIED", True,
+                  mx=False),
+        _ref_case("ref-rdap-unreachable", "MANAGER", "acme.com", "acme.com", "CONFIRM", "PARTLY_VERIFIED",
+                  rdap_down=True),
+        _ref_case("ref-no-employer-name", "MANAGER", "acme.com", "acme.com", "CONFIRM", "PARTLY_VERIFIED",
+                  employer_name=None),
+        _ref_case("ref-org-trusted-domain", "MANAGER", "acme.com", "acme.com", "CONFIRM", "VERIFIED",
+                  rdap_down=True, home=None, org_trusted=["acme.com"]),
     ]
 
 

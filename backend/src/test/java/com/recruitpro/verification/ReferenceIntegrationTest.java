@@ -16,6 +16,7 @@ import com.recruitpro.verification.entity.ClaimVerdict;
 import com.recruitpro.verification.entity.ReferenceStatus;
 import com.recruitpro.verification.entity.VerdictValue;
 import com.recruitpro.verification.entity.VerificationReferenceRequest;
+import com.recruitpro.verification.entity.VerificationSourceKind;
 import com.recruitpro.verification.repository.ClaimVerdictRepository;
 import com.recruitpro.verification.repository.EvidenceItemRepository;
 import com.recruitpro.verification.repository.VerificationReferenceRequestRepository;
@@ -111,9 +112,14 @@ class ReferenceIntegrationTest extends VerificationIntegrationTestBase {
                 .andExpect(status().isGone());
 
         String referenceSnapshot = "Referee answer: CONFIRM";
+        // V26: the candidate's proven websites travel with the request (they can never vouch for an employer).
+        verification.source(me, VerificationSourceKind.WEBSITE, "https://www.Portfolio.example/about", true);
+        verification.source(me, VerificationSourceKind.WEBSITE, "https://unproven.example/", false);
+        String trust = VerificationFixtures.domainTrustJson("EMPLOYER_DOMAIN", "acme.example", "TRUSTED", null);
         when(agentClient.verifyReference(any())).thenReturn(VerificationFixtures.response("reference",
                 List.of(VerificationFixtures.item("reference-1", "REFERENCE_RESPONSE", null, referenceSnapshot)),
-                List.of(VerificationFixtures.agentVerdict("claim:" + role.getId(), "EXPERIENCE", "x", "VERIFIED", true, "reference-1"),
+                List.of(VerificationFixtures.withDomainTrust(VerificationFixtures.agentVerdict("claim:" + role.getId(),
+                                "EXPERIENCE", "x", "VERIFIED", true, "reference-1"), mapper.readTree(trust)),
                         VerificationFixtures.agentVerdict("claim:" + skill.getId(), "SKILL", "x", "CONTRADICTED", false, "reference-1"))));
         handler.handle(stored.getId());
         ArgumentCaptor<AgentModels.ReferenceVerifyRequest> sent = ArgumentCaptor.forClass(AgentModels.ReferenceVerifyRequest.class);
@@ -121,6 +127,8 @@ class ReferenceIntegrationTest extends VerificationIntegrationTestBase {
         assertEquals("acme.example", sent.getValue().referee().emailDomain());
         assertEquals("acme.example", sent.getValue().referee().employerDomain());
         assertEquals("MANAGER", sent.getValue().referee().relationship());
+        assertEquals("Acme", sent.getValue().referee().employerName());
+        assertEquals(List.of("portfolio.example"), sent.getValue().candidateDomains());
         assertEquals("Test Candidate", sent.getValue().holderName());
         assertEquals(2, sent.getValue().answers().size());
 
@@ -130,7 +138,9 @@ class ReferenceIntegrationTest extends VerificationIntegrationTestBase {
         assertTrue(stored2.get(0).isOwnershipProven(), "an independent referee anchors the claim");
         assertEquals("Backend engineer at Acme, 2021-2024", stored2.get(0).getClaimValue());
         assertEquals(CandidateVerdictStatus.AWAITING_CANDIDATE, stored2.get(0).getCandidateStatus());
+        assertEquals("acme.example", mapper.readTree(stored2.get(0).getDomainTrustJson()).path("domain").asText());
         assertEquals(VerdictValue.CONTRADICTED, stored2.get(1).getVerdict());
+        assertEquals(null, stored2.get(1).getDomainTrustJson());
         assertEquals(1, evidence.findAllByCandidateIdOrderByIdAsc(me.getId()).size());
         assertNotNull(references.findById(stored.getId()).orElseThrow().getVerifiedAt());
         assertFalse(notifications.findAllByRecipientEmailAndTemplateOrderByIdAsc("refs@cand.test",

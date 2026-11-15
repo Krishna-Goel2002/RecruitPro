@@ -111,7 +111,7 @@ class TestEndpoints:
         client = TestClient(app)
         single = client.post("/api/v1/match", json={"requirements": requirements, "facts": facts, "timeline": None},
                              headers=self.headers(token)).json()
-        assert single["algorithmVersion"] == "evidence-ladder-3" and single["verifiedCoverage"] == 100.0
+        assert single["algorithmVersion"] == "evidence-ladder-4" and single["verifiedCoverage"] == 100.0
         assert single["knockoutsVerified"] is True and single["requirements"][0]["factIds"] == ["fact:1"]
         batch = client.post("/api/v1/match/batch", json={"requirements": requirements, "candidates": [
             {"applicationId": 5, "facts": facts}, {"applicationId": 6, "facts": []}]}, headers=self.headers(token)).json()

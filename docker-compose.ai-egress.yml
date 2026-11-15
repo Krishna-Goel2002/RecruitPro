@@ -1,0 +1,10 @@
+# Opt-in override: gives the AI service outbound internet for an LLM provider
+# (LLM_PROVIDER=anthropic or openai_compatible). Without it the AI service has no egress.
+#   docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d
+# Only de-identified text is sent to the LLM (ai-service/app/llm/provider.py).
+services:
+  ai-service:
+    networks: [internal, ai-egress]
+
+networks:
+  ai-egress: {}

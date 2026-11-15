@@ -301,3 +301,149 @@ All of these are backwards compatible.
   `GITHUB_TOKEN` in production.
 - **`AGENT_DEMO_FIXTURES=true` answers every ownership challenge for `demo-` identifiers.** It must be false outside
   local demos. The service logs a warning at startup when it is on.
+
+## Trust fixes, 16 Nov 2026 (branch `redesign`, uncommitted): employer domains and badge issuers
+
+Two gaming paths that STATUS.md listed as design limits are closed. Both rest on one module, `app/trust.py`
+(`DomainTrust` = `TRUSTED | WEAK | UNTRUSTED`, reasons, raw signals, `trustedBy` `AGENT | ORGANIZATION`).
+
+### Signals (all network use through the SSRF-guarded fetcher or the DNS seam of `app/network.py`)
+
+- **RDAP registration date.** `https://data.iana.org/rdap/dns.json` (IANA bootstrap) -> the registry's RDAP base for the
+  TLD -> `<base>domain/<name>`, `events[eventAction=registration]`. A 404 is retried one label up (`eu.acme.com` ->
+  `acme.com`), at most 3 queries, never for a public second level (`co.uk`, `com.au`, ...; a small hard-coded set, no
+  public-suffix list is vendored). robots.txt is not consulted (machine endpoint). The bootstrap and successful lookups
+  are cached in-process for 24 h (`app/fetch/cache.py`, `Network.rdap_cache`; demo and test networks get their own
+  cache). Failure, no date, or an unknown TLD -> age unknown.
+- **MX** (employer only): `Network.mx_resolver` (dnspython, 5 s; null MX counts as none) on the employer domain, then
+  the referee's mail domain. Any DNS error -> unknown (never fails the call).
+- **Home page** (employer only): `https://<domain>/`, then `https://www.<domain>/`, 1 MB, robots.txt respected. Match =
+  every significant token of the employer name (legal words such as Inc, Ltd, Pvt, GmbH, Corp, Co, "The" removed)
+  appears in title + meta (`og:site_name`, `application-name`, `og:title`, `description`) + visible text, or a JSON-LD
+  `Organization`/`Corporation`/... `name`/`legalName` has the same token set (`PageContent.organization_names`, new).
+- **Candidate-controlled**: the domain equals, or is a subdomain of, one of the candidate's PROVEN website domains
+  (`candidateDomains`, sent by the backend). Proving `blog.mysite.com` does not make `mysite.com` candidate-controlled.
+
+### Rules
+
+| Check | TRUSTED | UNTRUSTED | WEAK |
+|---|---|---|---|
+| Employer domain (anchored references only: MANAGER/PEER/CLIENT and mail domain matches) | organisation list (`ORGANIZATION`); or age >= 365 days **and** MX **and** home page match (`AGENT`) | candidate-controlled; registered < 365 days ago | anything else (RDAP unreachable or unknown to the registry, no MX, home page missing or not naming the employer, no employer name) |
+| Badge issuer (valid credential, issuer bound to a domain: OB2 hosted, `did:web`, https/JWKS) | organisation list; built-in list `app/data/trusted_issuers.json` (`AGENT`); age >= 365 days and not candidate-controlled (`AGENT`) | candidate-controlled (checked after the built-in list); registered < 365 days ago | RDAP unreachable / unknown |
+
+- The cap lives in the shared layer (`app/verdicts.py` `apply_trust_cap`, applied before the ownership cap): a draft
+  carrying a non-`TRUSTED` domain trust is at most `PARTLY_VERIFIED`, with the reason "Nothing independent shows that the
+  employer domain belongs to the named employer ..." / "The issuer is not an established, trusted issuer ...".
+- Notes: `EMPLOYER_DOMAIN_UNPROVEN` (with the reasons), `EMPLOYER_DOMAIN_NEW` (< 365 days), `ISSUER_UNTRUSTED`.
+  `did:key` keeps `ISSUER_NOT_DOMAIN_BOUND` and gets no domain check.
+- Evidence items: `employer-domain` (kind `PAGE`, URL = home page) and `issuer-domain` (kind `BADGE`); the snapshot lists
+  the RDAP date and server, MX hosts, home page title and the matching line, list membership and the result.
+- `ownershipProven` is unchanged by the trust check (the anchor / the recipient still hold), so a capped verdict reads
+  `PARTLY_VERIFIED`, `ownershipProven: true`, `domainTrust.cappedFrom: "VERIFIED"`.
+- Budgets: reference 12 requests, badge issuer check 6 (separate from the badge's 20).
+- Verifier versions `badge-1.1`, `reference-1.1`. `/verify/reference` now takes the network factory (identifier = the
+  employer domain, so `demo-` employer domains use the demo fixtures).
+
+### Contract additions (all optional, backwards compatible)
+
+- Requests: `referee.employerName` (<= 200); `candidateDomains` (<= 50) on reference and badge requests;
+  `trustedEmployerDomains` / `trustedIssuerDomains` (<= 200) on reference / badge requests (organisation allow-list ->
+  `trustedBy: ORGANIZATION`). **The backend does not send the organisation lists**: one run's verdicts are shown to
+  every organisation the candidate applies to, so an organisation's list must not change a stored verdict. It applies
+  them when that organisation views a verdict (below). The request fields exist for single-tenant deployments and tests.
+- Response: `verdicts[].domainTrust` = `{check: EMPLOYER_DOMAIN|BADGE_ISSUER, domain, status, trustedBy, reasons[],
+  candidateControlled, cappedFrom: VERIFIED|null, signals{rdap, registeredAt, ageDays, rdapServer, mx, mxHosts,
+  homepage, homepageUrl, allowlisted, organizationListed, candidateControlled, status, trustedBy}}`; null when no domain
+  check applied. Reasons are de-identified; `domain` is raw (the backend withholds it from staff until reveal).
+
+### Backend (`backend/.../verification/**`, V26)
+
+- V26: `organization_verification_settings.trusted_employer_domains_json`, `.trusted_badge_issuers_json` (JSON arrays),
+  `claim_verdicts.domain_trust_json` (the agent's object, <= 20000 chars, else not stored).
+- `VerifyReferenceJobHandler` sends `employerName` and `candidateDomains`; `VerificationRunService.claim` sends
+  `candidateDomains` with OPEN_BADGE runs (`CandidateDomains.proven`: hosts of PROVEN, non-revoked WEBSITE sources).
+- `DomainTrusts.effectiveVerdict(verdict, orgSettings)`: the stored verdict, except PARTLY_VERIFIED with
+  `cappedFrom = VERIFIED` whose domain (or a parent) the organisation lists for that check -> VERIFIED. Used by the tier
+  rule (`VerificationStaffSupport.lifts`), the staff view and `VerificationEvidenceContributor` (fact evidence text
+  "Verified by badge; domain trusted by the organisation; confirmed by a recruiter"). Another organisation sees the
+  stored PARTLY_VERIFIED. The stored verdict never changes; shadow labels/metrics use the stored verdict.
+- Settings validation: each entry normalised (scheme, path, port, `www.`, trailing dot stripped; lower case), must match
+  the reference domain regex, `co.uk`-style public second levels refused, de-duplicated, <= 200 per list; 400 otherwise.
+  Changing a list is audited (`VERIFICATION_SETTINGS_CHANGED`) and re-matches reviewed candidates like a mode change.
+- Tests: `DomainTrustIntegrationTest`, `VerificationRulesTest.domainTrustCountsOnlyForTheOrganisationThatListsTheDomain`,
+  additions to `ReferenceIntegrationTest` and `VerifySourceJobHandlerIntegrationTest`. **Not compiled** (JDK 11 sandbox,
+  no Maven Central); static checks: `java_static_check` 586 files 0 errors, `check_entity_schema` 479 columns 0/0,
+  `check_migrations_pg` V1–V26 applied.
+
+### Demo fixtures
+
+- `demo-analytics.example` ("Demo Analytics"): RDAP 2016-03-01, MX `mail.demo-analytics.example`, home page with a
+  JSON-LD Organization -> `TRUSTED`; RUN_AND_TEST_GUIDE 6.18 (employer "Demo Analytics", referee
+  `priya@demo-analytics.example`) still ends `VERIFIED`. The employer name must be filled in.
+- `demo-newco.example` ("Demo Newco"): registered 40 days before the check -> `PARTLY_VERIFIED`, `EMPLOYER_DOMAIN_NEW`.
+- Demo RDAP (`https://demo-rdap.example/`, reached through the bootstrap URL served offline) also dates
+  `demo-badges.example` (2019) and `demo-portfolio.example` (2020), so the demo badges keep `VERIFIED`.
+
+### Results (Python 3.10 sandbox)
+
+- `cd agent-service && python3 -m pytest -q` -> **205 passed** (29 new in `tests/test_trust.py`: every signal, RDAP walk,
+  public second level, cache and expiry, SSRF guard on the home page, DNS failure, org list, candidate-owned domains,
+  allow-list, did:key, demo domains).
+- `python3 -m eval.run --check` -> exit 0: **93 cases, 37 adversarial, 127 claims, FCR 0.0, kappa 1.0**. New adversarial:
+  `ref-new-employer-domain`, `ref-candidate-owned-employer-domain`, `ref-employer-home-page-mismatch`,
+  `ref-employer-domain-no-mx`, `badge-ob2-candidate-owned-issuer`, `badge-ob3-candidate-owned-issuer`,
+  `badge-ob3-new-issuer-domain`; plus `ref-rdap-unreachable`, `ref-no-employer-name`, `ref-org-trusted-domain`.
+
+### Residual risks
+
+- A candidate who controls an aged domain with MX and a home page naming the employer (or an aged issuer domain they
+  did not prove to RecruitPro) still passes; the recruiter sees the domain after reveal and must confirm.
+- The built-in issuer list is a **starting list** of platforms known to host Open Badges; a platform being listed means
+  it hosts the badge for an organisation it onboarded, not that the issuer's name is genuine.
+- RDAP is not served for every TLD (some ccTLDs): those domains stay `WEAK` unless an organisation lists them.
+- Real RDAP, MX and home pages were not called from the sandbox (all mocked); RDAP answers are cached per process.
+
+### For the redesign agents (HR portal)
+
+Admin > Verification needs two editable lists (ADMIN only). Exact API shape:
+
+```
+GET /api/v1/admin/verification/settings
+-> {"data": {"mode": "VISIBLE", "connectors": {"GITHUB": true, ...},
+             "updatedAt": "2026-11-16T20:00:00", "updatedByName": "Ada Admin",
+             "trustedEmployerDomains": ["acme.com"],          // never null; [] when none
+             "trustedBadgeIssuers": ["credly.com", "university.edu"]}}
+
+PUT /api/v1/admin/verification/settings
+    {"mode": "VISIBLE",                                        // still required
+     "connectors": {...},                                      // optional, as before
+     "trustedEmployerDomains": ["acme.com", "https://www.globex.example/"],   // optional; replaces the list; [] clears
+     "trustedBadgeIssuers": ["badges.university.edu"]}         // optional; omitted/null keeps the stored list
+-> same shape as GET (entries normalised: "globex.example"); 400 {message: "trustedEmployerDomains: 'x' is not a
+   domain name such as example.com"} or "... can hold at most 200 domains"
+```
+
+Suggested copy: "Trusted employer domains: references from people at these domains count as verified even when the
+domain cannot be checked automatically (subdomains included)." / "Trusted badge issuers: badges issued from these
+domains count as verified (subdomains included). Well-known badge platforms (Credly, Badgr, ...) are already trusted."
+
+Staff Verification tab: each verdict (`GET /api/v1/hr/applications/{id}/verification` ->
+`claims[].verdicts[]`, also `POST /api/v1/hr/verdicts/{id}/review`) has a new nullable field:
+
+```
+"domainTrust": {"check": "EMPLOYER_DOMAIN" | "BADGE_ISSUER",
+                "domain": "acme.com" | null,                // null until the identity is revealed
+                "status": "TRUSTED" | "WEAK" | "UNTRUSTED",  // for the viewer's organisation
+                "trustedBy": "AGENT" | "ORGANIZATION" | null,
+                "agentStatus": "TRUSTED" | "WEAK" | "UNTRUSTED",
+                "reasons": ["The domain was registered 3 year(s) before the check.", ...],
+                "candidateControlled": false,
+                "liftedByOrganization": true}               // verdict shows VERIFIED only because your org trusts it
+```
+
+`verdict` is already the value for the viewer's organisation. Suggested display: a chip "Employer domain trusted by
+RecruitPro checks" (`trustedBy AGENT`), "Trusted by your organisation" (`ORGANIZATION`), or "Employer domain not
+established" / "Issuer not established" (`WEAK`/`UNTRUSTED`) with the reasons in a tooltip; integrity note codes
+`EMPLOYER_DOMAIN_UNPROVEN`, `EMPLOYER_DOMAIN_NEW`, `ISSUER_UNTRUSTED` need labels. Candidate portal: the reference form
+should ask for the employer name whenever an employer domain is given (without it the domain cannot be trusted and a
+confirmation stays partly verified); the candidate sees the same integrity notes on the verdict.

@@ -1,4 +1,4 @@
-"""Requirement matching v3 - ``evidence-ladder-3`` (plan Section 6.1 / 6.2 item 8).
+"""Requirement matching v4 - ``evidence-ladder-4`` (plan Section 6.1 / 6.2 item 8).
 
 For every requirement the engine decides MATCHED / UNCLEAR / NOT_OBSERVED from typed facts and
 the experience timeline, and reports the *tier* of the weakest evidence needed for the match:
@@ -12,6 +12,13 @@ Weights: must-have 2, nice-to-have 1. OTHER requirements need human review: alwa
 and excluded from the denominator. Candidate edits arrive as separate ``claim:*`` facts at
 SELF_CLAIMED, so they raise claimed coverage only (finding C1). Work-sample (``ws:N:rM``) and
 interview (``iv:N:rM``) facts are linked to requirement M and satisfy it directly.
+
+v4 adds requirement *proficiency* for SKILL requirements (conservative depth rule): BASIC and
+INTERMEDIATE are unchanged; an ADVANCED match also needs >= 3 years of relevant timeline evidence
+for every named skill, or tier >= CORROBORATED, or an explicit level word (advanced, expert,
+senior, lead) in the cited evidence; EXPERT needs >= 5 years, or tier >= DEMONSTRATED, or the word
+"expert". Missing depth turns MATCHED into UNCLEAR with an explanation of what was missing; it
+never produces NOT_OBSERVED.
 """
 from __future__ import annotations
 
@@ -32,7 +39,7 @@ from app.pipeline.education import LEVELS, EducationInfo, degree_levels, fields_
 from app.pipeline.text import content_tokens, stem
 from app.taxonomy.taxonomy import Skill, get_taxonomy
 
-ALGORITHM_VERSION = "evidence-ladder-3"
+ALGORITHM_VERSION = "evidence-ladder-4"
 SCORE_LABEL = "Verified requirement evidence coverage (not a probability of success)"
 RESUME_RANK = tier_rank("RESUME_STATED")
 _STATUS_RANK = {"NOT_OBSERVED": 0, "UNCLEAR": 1, "MATCHED": 2}
@@ -577,6 +584,103 @@ def _result(requirement: MatchRequirement, outcome: _Outcome, tier: str | None) 
     )
 
 
+# ----------------------------------------------------------------------------------- proficiency
+@dataclass(frozen=True)
+class _Depth:
+    months: int          # minimum timeline months per named skill
+    tier: str            # minimum evidence tier
+    words: tuple[str, ...]  # explicit level words accepted in the evidence
+
+
+_DEPTH = {
+    "ADVANCED": _Depth(36, "CORROBORATED", ("advanced", "expert", "senior", "lead")),
+    "EXPERT": _Depth(60, "DEMONSTRATED", ("expert",)),
+}
+_SKIP_ATTRIBUTES = frozenset({"skillId", "startDate", "endDate", "months", "current", "degreeLevel"})
+
+
+def _level_text(text: str) -> str:
+    """``text`` with skill names removed, so "Lead Generation" or "Advanced Cardiac Life Support" is
+    not read as a level word; a qualifier in front of the canonical name ("Advanced Excel") stays."""
+    for mention in reversed(get_taxonomy().find_mentions(text, list_context=True)):
+        surface = mention.surface.lower().split()
+        if len(surface) >= 2 and " ".join(surface[1:]) == mention.skill.name.lower():
+            continue
+        text = text[:mention.start] + " " + text[mention.end:]
+    return text
+
+
+def _level_word(texts: list[str], words: tuple[str, ...]) -> str | None:
+    pattern = re.compile(r"\b(" + "|".join(words) + r")\b", re.I)
+    for text in texts:
+        found = pattern.search(_level_text(text))
+        if found:
+            return found.group(1).lower()
+    return None
+
+
+def _fact_texts(fact: _Fact) -> list[str]:
+    attributes = fact.raw.attributes or {}
+    return [fact.raw.value, fact.raw.evidence or ""] + [str(value) for key, value in attributes.items()
+                                                       if key not in _SKIP_ATTRIBUTES and isinstance(value, str)]
+
+
+def _apply_proficiency(requirement: MatchRequirement, outcome: _Outcome, tier: str, roles: list[_Role]) -> _Outcome:
+    """Conservative depth rule for ADVANCED/EXPERT SKILL requirements (see the module docstring).
+
+    Depth is satisfied by the tier of the match, or - for every skill the requirement names - by
+    enough months in relevant timeline roles or an explicit level word in the cited facts or the
+    relevant roles. A requirement without taxonomy skills can only use the tier or a level word in
+    the cited facts. Missing depth turns MATCHED into UNCLEAR (never NOT_OBSERVED)."""
+    level = (requirement.proficiency or "").strip().upper()
+    depth = _DEPTH.get(level)
+    if depth is None or requirement.type != "SKILL" or outcome.status != "MATCHED":
+        return outcome
+    if tier_rank(tier) >= tier_rank(depth.tier):
+        outcome.explanation += f" {level.capitalize()} proficiency: the evidence is at tier {tier}."
+        return outcome
+    cited_texts = [text for fact in outcome.facts for text in _fact_texts(fact)]
+    options = [requirement.description] + [alt for alt in requirement.alternatives if alt.strip()]
+    groups = next((cnf for option in options if (cnf := skill_cnf(option))
+                   and all(any(_covers(group, fact.skills) for fact in outcome.facts) for group in cnf)), ())
+    satisfied: list[str] = []
+    missing: list[str] = []
+    for group in groups:
+        names = " or ".join(skill.name for skill in group)
+        relevant = [role for role in roles if _relevant(group, role.skills, role.tokens, role.head)]
+        months = _role_months(relevant) if relevant else 0
+        role_texts = [text for role in relevant for text in (_fact_texts(role.fact) if role.fact else [role.label])]
+        word = _level_word(cited_texts + role_texts, depth.words)
+        if months >= depth.months:
+            satisfied.append(f"{names}: {_years(months)} in the resume timeline")
+        elif word:
+            satisfied.append(f"{names}: the evidence says '{word}'")
+        else:
+            missing.append(f"{names} ({_years(months) if months else 'no dated roles'} in the resume timeline, "
+                           f"{_years(depth.months)} needed)")
+    if not groups:
+        word = _level_word(cited_texts, depth.words)
+        if word:
+            satisfied.append(f"the evidence says '{word}'")
+        else:
+            missing.append("no dated roles can be tied to this requirement")
+    if not missing:
+        outcome.explanation += f" {level.capitalize()} proficiency: {'; '.join(satisfied)}."
+        return outcome
+    accepted = ", ".join(f"'{word}'" for word in depth.words)
+    outcome.status = "UNCLEAR"
+    outcome.explanation = (f"{outcome.explanation} The requirement asks for {level} proficiency, but depth was not "
+                           f"established: {'; '.join(missing)}; the evidence is at tier {tier} (depth needs "
+                           f"{depth.tier} or higher) and states no level ({accepted}).")
+    outcome.hint = (f"Probe depth in {requirement.description} at {level} level: ask for the most complex recent work "
+                    f"they did with it and their own role, or assign a work sample or interview question that tests it.")
+    return outcome
+
+
+def _finish(requirement: MatchRequirement, outcome: _Outcome, tier: str, roles: list[_Role]) -> RequirementResult:
+    return _result(requirement, _apply_proficiency(requirement, outcome, tier, roles), tier)
+
+
 def _match_one(requirement: MatchRequirement, facts: list[_Fact], roles: list[_Role], total: int | None) -> RequirementResult:
     if requirement.type == "OTHER":
         return RequirementResult(
@@ -588,7 +692,7 @@ def _match_one(requirement: MatchRequirement, facts: list[_Fact], roles: list[_R
     if linked:
         best = max(linked, key=lambda fact: fact.rank)
         outcome = _Outcome("MATCHED", [best], f"{_SOURCE_LABEL[best.provenance]} was rated as meeting this requirement.")
-        return _result(requirement, outcome, best.raw.tier)
+        return _finish(requirement, outcome, best.raw.tier, roles)
     textual = [fact for fact in facts if fact.linked_requirement is None]
 
     def context(minimum: int) -> _Context:
@@ -605,8 +709,8 @@ def _match_one(requirement: MatchRequirement, facts: list[_Fact], roles: list[_R
             continue
         stricter = _evaluate(requirement, candidate)
         if stricter.status == "MATCHED":
-            return _result(requirement, stricter, TIER_ORDER[minimum])
-    return _result(requirement, outcome, "SELF_CLAIMED")
+            return _finish(requirement, stricter, TIER_ORDER[minimum], roles)
+    return _finish(requirement, outcome, "SELF_CLAIMED", roles)
 
 
 def match_requirements(request: MatchRequest, today: date | None = None) -> MatchResponse:

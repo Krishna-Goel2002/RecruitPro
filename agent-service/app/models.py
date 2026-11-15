@@ -5,7 +5,7 @@ probe questions <= 500, claim values <= 1000.
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -53,6 +53,24 @@ class IntegrityNote(CamelModel):
     evidence_keys: list[str] = Field(default_factory=list)
 
 
+TrustStatus = Literal["TRUSTED", "WEAK", "UNTRUSTED"]
+DomainTrustCheck = Literal["EMPLOYER_DOMAIN", "BADGE_ISSUER"]
+
+
+class DomainTrustOut(CamelModel):
+    """Independent domain trust behind a reference anchor or a badge issuer (``app.trust``). ``domain`` is raw (the
+    backend withholds it from staff until reveal); ``reasons`` are de-identified. ``cappedFrom`` = ``VERIFIED`` when
+    this check alone lowered the verdict to PARTLY_VERIFIED (an organisation that trusts the domain may lift it)."""
+    check: DomainTrustCheck
+    domain: str
+    status: TrustStatus
+    trusted_by: Optional[Literal["AGENT", "ORGANIZATION"]] = None
+    reasons: list[str] = Field(default_factory=list)
+    candidate_controlled: bool = False
+    capped_from: Optional[VerdictValue] = None
+    signals: dict[str, Any] = Field(default_factory=dict)
+
+
 class Verdict(CamelModel):
     claim_id: str
     claim_type: ClaimType
@@ -62,6 +80,7 @@ class Verdict(CamelModel):
     reasons: list[Reason] = Field(default_factory=list)
     integrity_notes: list[IntegrityNote] = Field(default_factory=list)
     probe_question: Optional[str] = None
+    domain_trust: Optional[DomainTrustOut] = None  # references (anchored) and badges (domain-bound issuer) only
 
 
 class SkillEvidence(CamelModel):
@@ -137,18 +156,27 @@ class DocumentVerifyRequest(CamelModel):
     holder_name: Optional[str] = Field(default=None, max_length=200)
 
 
+DomainList = list[Annotated[str, Field(min_length=1, max_length=253)]]
+
+
 class BadgeVerifyRequest(CamelModel):
     credential: Optional[Union[str, dict[str, Any]]] = None
     url: Optional[str] = Field(default=None, max_length=2000)
     claims: list[ClaimIn] = Field(default_factory=list, max_length=MAX_CLAIMS)
     holder_name: Optional[str] = Field(default=None, max_length=200)
     holder_email: Optional[str] = Field(default=None, max_length=320)
+    # Domains of websites the candidate proved ownership of: an issuer there is self-issued (ISSUER_UNTRUSTED).
+    candidate_domains: DomainList = Field(default_factory=list, max_length=50)
+    # Optional organisation allow-list (trustedBy ORGANIZATION). The backend applies organisation lists per
+    # organisation at view time instead, because one run's verdicts are shown to every organisation.
+    trusted_issuer_domains: DomainList = Field(default_factory=list, max_length=200)
 
 
 class Referee(CamelModel):
     relationship: Relationship
     email_domain: str = Field(min_length=1, max_length=253)
     employer_domain: Optional[str] = Field(default=None, max_length=253)
+    employer_name: Optional[str] = Field(default=None, max_length=200)  # compared with the domain's home page
 
 
 class ReferenceAnswer(CamelModel):
@@ -162,6 +190,8 @@ class ReferenceVerifyRequest(CamelModel):
     referee: Referee
     answers: list[ReferenceAnswer] = Field(default_factory=list, max_length=MAX_CLAIMS)
     holder_name: Optional[str] = Field(default=None, max_length=200)  # optional extension: de-identifies comments
+    candidate_domains: DomainList = Field(default_factory=list, max_length=50)
+    trusted_employer_domains: DomainList = Field(default_factory=list, max_length=200)  # see BadgeVerifyRequest
 
 
 class OwnershipCheckRequest(CamelModel):

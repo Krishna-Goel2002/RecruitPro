@@ -118,10 +118,14 @@ public class VerificationRunService {
 
     // ------------------------------------------------------------------------------------------ job support
 
-    /** Everything the VERIFY_SOURCE handler needs to call the agent (read in one transaction). */
+    /**
+     * Everything the VERIFY_SOURCE handler needs to call the agent (read in one transaction). {@code candidateDomains}:
+     * hosts of the candidate's PROVEN websites (sent with badges for the issuer-trust check; empty for other kinds).
+     */
     public record WorkItem(long runId, Long sourceId, Long candidateId, VerificationSourceKind kind, String identifier,
                            boolean ownershipProven, String accessToken, String filePath, String credentialText,
-                           List<AgentModels.Claim> claims, String holderName, String holderEmail) {
+                           List<AgentModels.Claim> claims, String holderName, String holderEmail,
+                           List<String> candidateDomains) {
         @Override
         public String toString() {
             return "WorkItem[runId=" + runId + ", kind=" + kind + ", claims=" + (claims == null ? 0 : claims.size()) + "]";
@@ -166,9 +170,12 @@ public class VerificationRunService {
             }
             claims.add(new AgentModels.Claim(subject.ref(), subject.claimType().name(), subject.value()));
         }
+        List<String> candidateDomains = source.getKind() != VerificationSourceKind.OPEN_BADGE ? List.of()
+                : CandidateDomains.proven(sourceRepository.findAllByCandidateIdAndKindAndRevokedAtIsNull(
+                        run.getCandidateId(), VerificationSourceKind.WEBSITE));
         return new WorkItem(run.getId(), source.getId(), run.getCandidateId(), source.getKind(), source.getIdentifier(),
                 source.isOwnershipProven(), decryptToken(source), source.getFilePath(), source.getCredentialText(),
-                claims, holderName == null || holderName.isBlank() ? null : holderName, holderEmail);
+                claims, holderName == null || holderName.isBlank() ? null : holderName, holderEmail, candidateDomains);
     }
 
     private String decryptToken(VerificationSource source) {

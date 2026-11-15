@@ -1,0 +1,13 @@
+{
+  "description": "Built-in starting list of well-known Open Badges issuing platforms, by domain. A badge whose issuer id (OB 2.0 issuer profile URL, OB 3.0 did:web host or https issuer) is on one of these domains or a subdomain of it counts as a trusted issuer without further checks. Being on this list means the platform hosts and signs the badge for an issuing organisation it has onboarded; it does not vouch for the issuing organisation's name, which staff still see in the evidence. This is a starting list, not a registry: extend it deliberately (with a source) and prefer the per-organisation list (Admin > Verification > Trusted badge issuers) for local issuers.",
+  "version": "2026-11-16",
+  "issuers": [
+    {"domain": "credly.com", "name": "Credly (Pearson)", "note": "OB 2.0 hosted assertions and issuer profiles"},
+    {"domain": "youracclaim.com", "name": "Acclaim (former Credly domain)", "note": "legacy OB 2.0 badges"},
+    {"domain": "badgr.com", "name": "Badgr / Canvas Credentials", "note": "OB 2.0 hosted assertions"},
+    {"domain": "badgr.io", "name": "Badgr / Canvas Credentials API", "note": "api.badgr.io hosts OB 2.0 assertions"},
+    {"domain": "openbadgefactory.com", "name": "Open Badge Factory", "note": "OB 2.0 hosted assertions"},
+    {"domain": "openbadgepassport.com", "name": "Open Badge Passport", "note": "OB 2.0 badges and issuer profiles"},
+    {"domain": "accredible.com", "name": "Accredible", "note": "OB 2.0 / OB 3.0 credentials"}
+  ]
+}

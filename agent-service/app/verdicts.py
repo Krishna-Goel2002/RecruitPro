@@ -4,7 +4,10 @@ Rules applied here, in this order, for all verifiers:
 
 1. **Injection screen.** Every evidence item's snapshot text is scanned for prompt-injection markers; matches add an
    integrity note ``INSTRUCTION_TEXT`` (the text stays data and never changes a verdict).
-2. **Ownership cap.** ``ownershipProven = false`` => the verdict is at most ``PARTLY_VERIFIED`` (a ``VERIFIED`` draft is
+2. **Domain-trust cap.** A draft that carries a domain-trust result (reference employer domain, badge issuer domain;
+   ``app.trust``) other than ``TRUSTED`` is at most ``PARTLY_VERIFIED``; the response's ``domainTrust.cappedFrom``
+   records ``VERIFIED`` when this cap alone lowered it (so an organisation that trusts the domain may lift it).
+   **Ownership cap.** ``ownershipProven = false`` => the verdict is at most ``PARTLY_VERIFIED`` (a ``VERIFIED`` draft is
    lowered and a reason says why). ``CONTRADICTED``, ``NOT_FOUND`` and ``NOT_CHECKABLE`` are not raised or lowered.
 3. **Source notes.** Source-level integrity notes are attached to every verdict of the response.
 4. **Probe questions.** ``PARTLY_VERIFIED``, ``NOT_CHECKABLE`` and ``CONTRADICTED`` get a neutral, template-based
@@ -22,16 +25,22 @@ from app.citations import validate_summary
 from app.core.config import VERIFIER_VERSIONS
 from app.deidentify import Identities, deidentify
 from app.injection import find_markers
-from app.models import (MAX_PROBE, ClaimIn, EvidenceItem, IntegrityNote, Reason, SkillEvidence, Usage, Verdict,
-                        VerdictValue, VerifyResponse)
+from app.models import (MAX_PROBE, ClaimIn, DomainTrustOut, EvidenceItem, IntegrityNote, Reason, SkillEvidence, Usage,
+                        Verdict, VerdictValue, VerifyResponse)
 
 if TYPE_CHECKING:
     from app.llm.summary import SummaryWriter
+    from app.trust import DomainTrust
 
 logger = logging.getLogger(__name__)
 
 RANK = {"NOT_CHECKABLE": 0, "NOT_FOUND": 0, "CONTRADICTED": 0, "PARTLY_VERIFIED": 1, "VERIFIED": 2}
 CAP_REASON = "Ownership of this source is not proven, so the result is capped at partly verified."
+TRUST_CAP_REASONS = {
+    "EMPLOYER_DOMAIN": "Nothing independent shows that the employer domain belongs to the named employer, so the result "
+                       "is capped at partly verified.",
+    "BADGE_ISSUER": "The issuer is not an established, trusted issuer, so the result is capped at partly verified.",
+}
 INSTRUCTION_TEXT = "INSTRUCTION_TEXT"
 
 _PROBES: dict[str, str] = {
@@ -54,6 +63,7 @@ class DraftVerdict:
     reasons: list[Reason] = field(default_factory=list)
     notes: list[IntegrityNote] = field(default_factory=list)
     ownership_proven: bool | None = None  # per-claim override; None = the output's ownership_proven
+    trust: "DomainTrust | None" = None  # domain trust behind this verdict (references, badges)
 
 
 @dataclass
@@ -74,6 +84,20 @@ def apply_ownership_cap(verdict: VerdictValue, ownership_proven: bool) -> Verdic
     if not ownership_proven and verdict == "VERIFIED":
         return "PARTLY_VERIFIED"
     return verdict
+
+
+def apply_trust_cap(verdict: VerdictValue, trust: "DomainTrust | None") -> VerdictValue:
+    """Without a TRUSTED domain behind it, a verdict that depends on that domain is at most PARTLY_VERIFIED."""
+    if trust is not None and not trust.trusted and verdict == "VERIFIED":
+        return "PARTLY_VERIFIED"
+    return verdict
+
+
+def _trust_out(trust: "DomainTrust", capped_from: VerdictValue | None, identities: Identities) -> DomainTrustOut:
+    return DomainTrustOut.model_validate({
+        "check": trust.check, "domain": trust.domain, "status": trust.status, "trusted_by": trust.trusted_by,
+        "reasons": [deidentify(reason, identities) or "" for reason in trust.reasons],
+        "candidate_controlled": trust.candidate_controlled, "capped_from": capped_from, "signals": dict(trust.signals)})
 
 
 def probe_question(claim: ClaimIn, verdict: str) -> str | None:
@@ -125,9 +149,14 @@ def finalize(output: VerifierOutput, *, summary_writer: "SummaryWriter | None" =
     verdicts: list[Verdict] = []
     for draft in output.drafts:
         owned = output.ownership_proven if draft.ownership_proven is None else draft.ownership_proven
-        value = apply_ownership_cap(draft.verdict, owned)
         reasons = list(draft.reasons)
-        if value != draft.verdict:
+        trusted_value = apply_trust_cap(draft.verdict, draft.trust)
+        capped_from: VerdictValue | None = None
+        if trusted_value != draft.verdict and draft.trust is not None:
+            capped_from = draft.verdict
+            reasons.append(Reason(text=TRUST_CAP_REASONS[draft.trust.check], evidence_keys=[], quote=None))
+        value = apply_ownership_cap(trusted_value, owned)
+        if value != trusted_value:
             reasons.append(Reason(text=CAP_REASON, evidence_keys=[], quote=None))
         notes = _merge_notes(draft.notes, source_notes)
         verdicts.append(Verdict(
@@ -138,6 +167,7 @@ def finalize(output: VerifierOutput, *, summary_writer: "SummaryWriter | None" =
                                            evidence_keys=[key for key in note.evidence_keys if key in known])
                              for note in notes],
             probe_question=deidentify(probe_question(draft.claim, value), ids),
+            domain_trust=None if draft.trust is None else _trust_out(draft.trust, capped_from, ids),
         ))
     warnings = list(dict.fromkeys(output.warnings))
     usage = output.usage.model_copy()

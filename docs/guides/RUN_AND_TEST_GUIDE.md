@@ -78,13 +78,13 @@ pnpm --version     # 10.x
 python --version   # 3.12.x (3.10/3.11 ok)
 ```
 
-**Ports the stack uses:** 5173, 5174, 8080, 8000, 8100, 8025, 1025, 5432. Check that none are in use:
+**Ports the stack publishes:** 5173, 5174, 8080, and on 127.0.0.1 only 8100, 8025, 1025. The AI service (8000) and PostgreSQL (5432) are on an internal Docker network and are not published (see 4.3). Check that none are in use:
 
 ```powershell
-netstat -ano | findstr ":5173 :5174 :8080 :8000 :8100 :8025 :1025 :5432"
+netstat -ano | findstr ":5173 :5174 :8080 :8100 :8025 :1025"
 ```
 
-Nothing should be listed. A local PostgreSQL on 5432 is the usual culprit; stop it with `Stop-Service postgresql*` in an admin PowerShell.
+Nothing should be listed. (A local PostgreSQL on 5432 no longer conflicts, because the compose database publishes no port.)
 
 ---
 
@@ -220,26 +220,28 @@ agent-service logs a **warning on purpose**: `AGENT_DEMO_FIXTURES=true: demo- lo
 docker compose ps
 ```
 
-All 7 services (`postgres`, `mailpit`, `ai-service`, `agent-service`, `backend`, `candidate-portal`, `hr-portal`) should be `running`. `postgres`, `backend`, `agent-service` show `(healthy)`.
+All 7 services (`postgres`, `mailpit`, `ai-service`, `agent-service`, `backend`, `candidate-portal`, `hr-portal`) should be `running`. `postgres`, `backend`, `ai-service`, `agent-service` show `(healthy)`.
 
 | Port | URL | Expected |
 |---|---|---|
 | 8080 | http://localhost:8080/api/v1/health | `{"success":true,"message":"Health check passed","data":{"status":"UP"},...}` |
 | 8080 | http://localhost:8080/swagger-ui.html | API documentation (dev profile only) |
-| 8000 | http://localhost:8000/health | `{"status":"ok",...,"llmProvider":"none",...}` |
+| (8000, not published) | `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` | `{"status":"ok",...,"llmProvider":"none","ocrAvailable":false}` |
 | 8100 | http://localhost:8100/health | `{"status":"ok","version":...,"llmProvider":"none","demoFixtures":true}` |
 | 8025 | http://localhost:8025 | Mailpit inbox. Every email the app sends lands here; nothing goes to real inboxes. |
 | 5173 | http://localhost:5173 | Candidate portal sign-in |
 | 5174 | http://localhost:5174 | HR portal sign-in |
-| 5432 | `docker compose exec postgres psql -U recruitpro -d recruitpro -c "select email, role from users;"` | 5 demo users |
+| (5432, not published) | `docker compose exec postgres psql -U recruitpro -d recruitpro -c "select email, role from users;"` | 5 demo users |
 
 Quick check from PowerShell:
 
 ```powershell
-foreach ($u in "http://localhost:8080/api/v1/health","http://localhost:8000/health","http://localhost:8100/health") { Invoke-RestMethod $u | ConvertTo-Json -Compress }
+foreach ($u in "http://localhost:8080/api/v1/health","http://localhost:8100/health") { Invoke-RestMethod $u | ConvertTo-Json -Compress }
 ```
 
-bash: `for u in localhost:8080/api/v1/health localhost:8000/health localhost:8100/health; do curl -s $u; echo; done`
+bash: `for u in localhost:8080/api/v1/health localhost:8100/health; do curl -s $u; echo; done`
+
+The AI service has no host port and no internet access by design (networks in `docker-compose.yml`); `docker compose ps` shows its health check, the admin dashboard shows **AI service UP**, and the `docker compose exec` line above prints its `/health`.
 
 ### 4.4 Smoke test (2 minutes)
 
@@ -864,7 +866,7 @@ ANTHROPIC_API_KEY=...
 # openai_compatible instead: OPENAI_BASE_URL=https://.../v1  OPENAI_API_KEY=...
 ```
 
-Then run `docker compose up -d ai-service agent-service`. **Expect:** `/health` on ports 8000 and 8100 shows `"llmProvider":"anthropic"`.
+Then run `docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d ai-service agent-service` (the override gives the AI service internet access, which it otherwise does not have). **Expect:** the AI service `/health` (`docker compose exec` line in 4.3) and http://localhost:8100/health show `"llmProvider":"anthropic"`.
 
 ---
 
@@ -873,7 +875,7 @@ Then run `docker compose up -d ai-service agent-service`. **Expect:** `/health` 
 | Symptom | Cause and fix |
 |---|---|
 | `mvnw verify` fails | Send the first `[ERROR]` lines (4.1). Fall back to `9ad341a` (4.1 step 3). |
-| `port is already allocated` | Another program uses the port (often PostgreSQL on 5432). Find it with `netstat -ano \| findstr :5432` and stop it. |
+| `port is already allocated` | Another program uses the port. Find it with `netstat -ano \| findstr :8080` (or the port named) and stop it. |
 | Build killed / `exit code 137` / very slow | Docker memory. Give Docker Desktop at least 8 GB (Settings → Resources) and retry `docker compose up --build`. |
 | Docker errors about WSL | `wsl --install` in an admin PowerShell, reboot, select WSL 2 in Docker Desktop. |
 | Backend exits with `app.encryption.key must be Base64 encoded` or `must decode to exactly 32 bytes` | Bad `APP_ENCRYPTION_KEY` in `.env`. Leave it empty or generate one (Section 3). |

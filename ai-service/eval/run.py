@@ -3,7 +3,10 @@
 Generates the seeded synthetic gold set, runs every document through the real parser (file bytes
 in, ``ParseResponse`` out) and the matcher, and reports skill-extraction precision/recall/F1,
 date accuracy, requirement agreement (Cohen's kappa over MATCHED/UNCLEAR/NOT_OBSERVED), ranking
-NDCG@10, the name/gender counterfactual flip rate and the adverse-impact ratio. ``--check`` exits
+NDCG@10, the name/gender counterfactual flip rate and the adverse-impact ratio. Requirement
+proficiency (evidence-ladder-4) is checked twice: hand-labelled cases (``eval.proficiency``) and an
+invariant over the synthetic set (re-matching every SKILL requirement as ADVANCED and EXPERT may only
+turn MATCHED into UNCLEAR, never anything into NOT_OBSERVED). ``--check`` exits
 with status 1 when a metric misses its threshold.
 
 Synthetic data is far cleaner than real resumes, so these numbers overstate real-world accuracy;
@@ -28,6 +31,7 @@ from app.taxonomy.taxonomy import get_taxonomy
 from eval.domains import DOMAINS, JobRequirementSpec, JobSpec
 from eval.generator import EVAL_TODAY, SyntheticResume, generate, render
 from eval.metrics import adverse_impact_ratio, cohen_kappa, ndcg_at_k, precision_recall_f1
+from eval.proficiency import CASES as PROFICIENCY_CASES, request as proficiency_request
 
 DEFAULT_SEED = 20261108
 DEFAULT_PER_DOMAIN = 26
@@ -40,6 +44,8 @@ THRESHOLDS = {  # metric: (comparison, threshold)
     "name_swap_flip_rate": ("<=", 0.0),
     "adverse_impact_ratio": (">=", 0.80),
     "date_accuracy": (">=", 0.90),
+    "proficiency_case_accuracy": (">=", 1.0),
+    "proficiency_invariant_violations": ("<=", 0),
 }
 
 
@@ -115,18 +121,42 @@ def gold_status(spec: JobRequirementSpec, resume: SyntheticResume, domain_famili
     return "NOT_OBSERVED"
 
 
-def _requirements(job: JobSpec) -> list[MatchRequirement]:
+def _requirements(job: JobSpec, proficiency: str | None = None) -> list[MatchRequirement]:
     return [MatchRequirement(id=index + 1, type=spec.type, description=spec.description, mandatory=spec.mandatory,
-                             knockout=spec.mandatory and spec.type != "OTHER", minimumYears=spec.minimum_years)
+                             knockout=spec.mandatory and spec.type != "OTHER", minimumYears=spec.minimum_years,
+                             proficiency=proficiency if spec.type == "SKILL" else None)
             for index, spec in enumerate(job.requirements)]
 
 
-def _match(job: JobSpec, parsed: ParseResponse) -> MatchResponse:
+def _match(job: JobSpec, parsed: ParseResponse, proficiency: str | None = None) -> MatchResponse:
     facts = [MatchFact(id=f"fact:{index}", type=fact.type, value=fact.value, evidence=fact.evidence,
                        sourceSection=fact.sourceSection, tier="RESUME_STATED", attributes=fact.attributes)
              for index, fact in enumerate(parsed.facts) if fact.type not in {"EMAIL", "PHONE", "LINK"}]
-    return match_requirements(MatchRequest(requirements=_requirements(job), facts=facts, timeline=parsed.timeline),
+    return match_requirements(MatchRequest(requirements=_requirements(job, proficiency), facts=facts, timeline=parsed.timeline),
                               today=EVAL_TODAY)
+
+
+def _proficiency_cases() -> tuple[float, list[str]]:
+    wrong = []
+    for case in PROFICIENCY_CASES:
+        status = match_requirements(proficiency_request(case), today=EVAL_TODAY).requirements[0].status
+        if status != case.gold:
+            wrong.append(f"{case.name}: {status} (gold {case.gold})")
+    return (len(PROFICIENCY_CASES) - len(wrong)) / len(PROFICIENCY_CASES), wrong
+
+
+def _proficiency_violations(job: JobSpec, base: MatchResponse, deeper: MatchResponse) -> tuple[int, int, int]:
+    """(violations, MATCHED SKILL requirements, of which downgraded) for one re-match with a proficiency.
+
+    The only change a proficiency may cause is MATCHED -> UNCLEAR on a SKILL requirement."""
+    violations = matched = downgraded = 0
+    for spec, before, after in zip(job.requirements, base.requirements, deeper.requirements):
+        if before.status != after.status and (spec.type != "SKILL" or (before.status, after.status) != ("MATCHED", "UNCLEAR")):
+            violations += 1
+        if spec.type == "SKILL" and before.status == "MATCHED":
+            matched += 1
+            downgraded += after.status != "MATCHED"
+    return violations, matched, downgraded
 
 
 def _gold_coverage(job: JobSpec, statuses: list[str]) -> float:
@@ -173,6 +203,9 @@ def evaluate(seed: int = DEFAULT_SEED, per_domain: int = DEFAULT_PER_DOMAIN, wor
     ndcgs: list[float] = []
     flips = twin_checks = 0
     selected: dict[str, list[bool]] = {"F": [], "M": []}
+    proficiency_violations = 0
+    proficiency_matched = {"ADVANCED": 0, "EXPERT": 0}
+    proficiency_downgraded = {"ADVANCED": 0, "EXPERT": 0}
     by_domain = {domain.key: [resume for resume in resumes if resume.domain.key == domain.key] for domain in DOMAINS}
     for domain in DOMAINS:
         others = [resume for resume in base if resume.domain.key != domain.key]
@@ -189,6 +222,12 @@ def evaluate(seed: int = DEFAULT_SEED, per_domain: int = DEFAULT_PER_DOMAIN, wor
                     pairs.extend((label, outcome.status) for label, outcome, spec in zip(gold, result.requirements, job.requirements)
                                  if spec.type != "OTHER")
                     selected[resume.gender].append((result.verifiedCoverage or 0) >= SELECTION_THRESHOLD)
+                    if resume.twin_of is None and any(spec.type == "SKILL" for spec in job.requirements):
+                        for level in ("ADVANCED", "EXPERT"):
+                            bad, matched, downgraded = _proficiency_violations(job, result, _match(job, parsed[resume.id], level))
+                            proficiency_violations += bad
+                            proficiency_matched[level] += matched
+                            proficiency_downgraded[level] += downgraded
             ndcgs.append(ndcg_at_k([gain * 3 for *_, gain in sorted(ranking)], 10))
             for resume in by_domain[domain.key]:
                 if resume.twin_of is not None:
@@ -199,6 +238,7 @@ def evaluate(seed: int = DEFAULT_SEED, per_domain: int = DEFAULT_PER_DOMAIN, wor
                     flips += not same
 
     rates = {group: (sum(values) / len(values) if values else 0.0) for group, values in selected.items()}
+    case_accuracy, wrong_cases = _proficiency_cases()
     return {
         "resumes": len(resumes), "base_resumes": len(base), "jobs": sum(len(domain.jobs) for domain in DOMAINS),
         "skill_precision": round(precision, 4), "skill_recall": round(recall, 4), "skill_f1": round(f1, 4),
@@ -210,6 +250,12 @@ def evaluate(seed: int = DEFAULT_SEED, per_domain: int = DEFAULT_PER_DOMAIN, wor
         "name_swap_flip_rate": round(flips / twin_checks, 4) if twin_checks else 0.0, "counterfactual_checks": twin_checks,
         "selection_rates": {group: round(rate, 4) for group, rate in rates.items()},
         "adverse_impact_ratio": round(adverse_impact_ratio(rates), 4),
+        "proficiency_case_accuracy": round(case_accuracy, 4), "proficiency_cases": len(PROFICIENCY_CASES),
+        "proficiency_case_failures": wrong_cases,
+        "proficiency_invariant_violations": proficiency_violations,
+        # Informational: share of MATCHED SKILL requirements that the proficiency turns into UNCLEAR.
+        "proficiency_downgrade_share": {level: round(proficiency_downgraded[level] / proficiency_matched[level], 4)
+                                        if proficiency_matched[level] else 0.0 for level in proficiency_matched},
     }
 
 

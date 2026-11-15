@@ -27,8 +27,8 @@ VERIFIER_VERSIONS = {
     "code": "code-1.0",
     "web": "web-1.0",
     "document": "document-1.0",
-    "badge": "badge-1.0",
-    "reference": "reference-1.0",
+    "badge": "badge-1.1",  # 1.1: issuer trust (app/trust.py)
+    "reference": "reference-1.1",  # 1.1: employer-domain trust
 }
 DEFAULT_USER_AGENT = "RecruitProVerifier/1.0 (+contact)"
 

@@ -1,0 +1,16 @@
+{
+  "name": "ui-snapshots",
+  "private": true,
+  "type": "module",
+  "description": "Headless screenshots of both portals against fixture API answers.",
+  "scripts": {
+    "candidate": "node snap.mjs --portal candidate --dist ../../frontend/dist --theme both",
+    "hr": "node snap.mjs --portal hr --dist ../../hr-frontend/dist --theme both"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  },
+  "optionalDependencies": {
+    "@sparticuz/chromium": "^131.0.0"
+  }
+}

@@ -14,6 +14,7 @@ otherwise.
 | WP-PLAT | Staff MFA (TOTP, recovery codes, org requirement), OIDC SSO for staff (Google, Microsoft, generic; PKCE, nonce, JWKS), multi-instance safety (job dedupe key, notification row claims, database rate-limit store), `X-Request-Id`, Prometheus, structured logs, security headers and nginx CSP, ICS invitations, scorecard editing with revisions, work-sample file uploads and HR cancellation, fairness date range, demo assessment seed (V23, V24) | [WP-PLAT-NOTES.md](WP-PLAT-NOTES.md) |
 | WP-FE-CAND2 / WP-FE-HR2 | Candidate "Strengthen your application" (`/verification`) and referee page (`/reference/:token`); HR applicant Verification tab, admin Verification page, account security (MFA), MFA and SSO sign-in, `/sso/complete`, work-sample attachments and cancellation, fairness range | [WP-FE-FINISH-NOTES.md](WP-FE-FINISH-NOTES.md) |
 | Demo patches (committed in `50e7b39`) | Demo assessment seed in its own transaction; scorecard **Edit** button; require-MFA and SSO-domain controls on the organisation page; compose passes SSO/LLM/`AGENT_GITHUB_TOKEN`; `.env.example` key fix; `tools/totp.py` | [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md) section 0.2 |
+| WP-OPS (branch `redesign`, uncommitted) | Scheduled data-retention purge (`backend/.../retention/`, `app.retention.*`, audit `RETENTION_PURGE`); ai-service image with LibreOffice Writer (headless) and the RapidOCR extra (`OCR_ENABLED` still false); compose network isolation (AI service and PostgreSQL internal only, agent on its own internal + egress networks, dev ports on 127.0.0.1); requirement proficiency in matching (`evidence-ladder-4`) | [WP-OPS-NOTES.md](WP-OPS-NOTES.md) |
 
 ## B. Review fixes, 16 Nov 2026 (evening)
 
@@ -28,15 +29,30 @@ otherwise.
 | 7 | Verdicts of a disappeared subject stayed in use | Deleting a claim, replacing it with the extracted value, or changing its value marks that claim's current verdicts WITHDRAWN (`ClaimVerdictWithdrawal`). Verdicts whose subject is no longer current (fact of a re-analysed resume, claim rejected by a recruiter) are left out of the staff view, reviews, the shadow queue and matching (`VerificationStaffSupport.withCurrentSubjects`) | `StaffVerificationIntegrationTest.verdictsOfSubjectsThatDisappearedAreWithdrawnOrLeftOut` |
 | 8 | Org requires MFA but `APP_ENCRYPTION_KEY` missing: MFA silently skipped | Staff sign-in now fails closed with 503 `MFA_NOT_CONFIGURED` | `MfaNotConfiguredIntegrationTest` |
 
+## B2. Trust fixes (branch `redesign`, uncommitted): employer domains and badge issuers
+
+Both were listed under "design limits" in E; details in [WP-AG-NOTES.md](WP-AG-NOTES.md) "Trust fixes".
+
+| # | Gaming path | Fix | Tests |
+|---|---|---|---|
+| T1 | A referee mailbox on a domain the candidate controls, typed as the employer domain, gave `VERIFIED` | agent-service `app/trust.py` checks the employer domain independently: RDAP registration date (IANA bootstrap -> registry, through the SSRF-guarded fetcher, cached 24 h), MX records, and the home page naming the employer (normalised tokens) or a JSON-LD `Organization` of that name. `TRUSTED` (age >= 365 days **and** MX **and** home page) is required for `VERIFIED`; `WEAK`/`UNTRUSTED` -> at most `PARTLY_VERIFIED` with note `EMPLOYER_DOMAIN_UNPROVEN` (+ `EMPLOYER_DOMAIN_NEW` under 365 days). RDAP unreachable -> `WEAK`, never trusted by default. A domain under one of the candidate's proven websites -> `UNTRUSTED`. The backend now sends `employerName` and the candidate's proven website domains | `tests/test_trust.py` (29), `test_reference.py`; eval `ref-new-employer-domain`, `ref-candidate-owned-employer-domain`, `ref-employer-home-page-mismatch`, `ref-employer-domain-no-mx` (adversarial), `ref-rdap-unreachable`, `ref-no-employer-name`, `ref-org-trusted-domain`; `ReferenceIntegrationTest` |
+| T2 | A badge from an issuer on a domain the candidate controls (OB2 hosted, OB3 `did:web`/JWKS) gave `VERIFIED` | Issuer trust: built-in starting list `agent-service/app/data/trusted_issuers.json` (Credly/Acclaim, Badgr, Open Badge Factory, Open Badge Passport, Accredible) **or** RDAP age >= 365 days and the issuer domain is not (under) a website the candidate proved. Otherwise at most `PARTLY_VERIFIED` with `ISSUER_UNTRUSTED`. `did:key` stays capped (`ISSUER_NOT_DOMAIN_BOUND`). The backend sends the candidate's PROVEN website domains with every badge run | `tests/test_trust.py`; eval `badge-ob2-candidate-owned-issuer`, `badge-ob3-candidate-owned-issuer`, `badge-ob3-new-issuer-domain` (adversarial); `VerifySourceJobHandlerIntegrationTest` |
+| T3 | Organisation-level trust | V26: `organization_verification_settings.trusted_employer_domains_json` / `trusted_badge_issuers_json`; `GET/PUT /api/v1/admin/verification/settings` gain `trustedEmployerDomains` / `trustedBadgeIssuers` (additive). Verdicts are shared across organisations, so a list applies only when that organisation views a verdict: a verdict capped only by domain trust (`domainTrust.cappedFrom = VERIFIED`) counts as `VERIFIED` for the organisation that lists the domain (staff view, tier rule, `vf:` matching fact) and for no other. `StaffVerdict.domainTrust` shows `trustedBy` `AGENT` or `ORGANIZATION`; the domain itself is withheld until reveal. `claim_verdicts.domain_trust_json` stores the agent's result | `DomainTrustIntegrationTest` (settings validation, per-organisation lift, blind-first domain), `VerificationRulesTest.domainTrustCountsOnlyForTheOrganisationThatListsTheDomain` (not compiled here, see D) |
+
+Demo: employer `demo-analytics.example` ("Demo Analytics") is trusted offline (RUN_AND_TEST_GUIDE 6.18 still gives
+`VERIFIED`); `demo-newco.example` ("Demo Newco") is 40 days old and gives `PARTLY_VERIFIED` with `EMPLOYER_DOMAIN_NEW`.
+The demo badge issuer `demo-badges.example` is dated 2019 by the demo RDAP fixture, so the demo badges still verify.
+Verifier versions: `badge-1.1`, `reference-1.1`.
+
 ## C. What has been verified, and how
 
 | Check | Command | Result (16 Nov 2026, after the review fixes) |
 |---|---|---|
-| Java syntax, imports, types (static) | `python3 tools/java_static_check.py backend/src` | 577 files, 0 errors |
-| Entity ↔ schema | `python3 tools/check_entity_schema.py` | 476 columns of 41 entities vs V1–V25, 0 errors, 0 warnings |
-| Migrations on PostgreSQL 16 | `python3 tools/check_migrations_pg.py` | V1–V25 applied |
-| agent-service | `cd agent-service && python3 -m pytest -q` / `python3 -m eval.run --check` | 176 passed / exit 0: 83 cases (30 adversarial), false-corroboration rate 0.0, kappa 1.0 |
-| ai-service | `cd ai-service && python3 -m pytest -q` / `python3 -m eval.run --check` | 178 passed / CHECK PASSED |
+| Java syntax, imports, types (static) | `python3 tools/java_static_check.py backend/src` | 577 files, 0 errors (trust fixes, `redesign`: 586 files, 0 errors) |
+| Entity ↔ schema | `python3 tools/check_entity_schema.py` | 476 columns of 41 entities vs V1–V25, 0 errors, 0 warnings (trust fixes: 479 columns vs V1–V26, 0/0) |
+| Migrations on PostgreSQL 16 | `python3 tools/check_migrations_pg.py` | V1–V25 applied (trust fixes: V1–V26 applied) |
+| agent-service | `cd agent-service && python3 -m pytest -q` / `python3 -m eval.run --check` | 176 passed / exit 0: 83 cases (30 adversarial), false-corroboration rate 0.0, kappa 1.0 (trust fixes, `redesign`: 205 passed / exit 0: 93 cases (37 adversarial), 127 claims, FCR 0.0, kappa 1.0) |
+| ai-service | `cd ai-service && python3 -m pytest -q` / `python3 -m eval.run --check` | 178 passed / CHECK PASSED (WP-OPS, `redesign`: 186 passed / CHECK PASSED incl. 18 proficiency cases) |
 | Candidate portal | clean copy, `npx --yes pnpm@10 install --frozen-lockfile && npx --yes pnpm@10 build` | passed |
 | HR portal | same | passed |
 | Java logic | read-through reviews by independent agents during WP-VBE and WP-PLAT | 2 test bugs (WP-VBE) and 4 minor runtime issues (WP-PLAT) found and fixed |
@@ -46,8 +62,8 @@ Python ran on 3.10 in the sandbox (CI uses 3.12). All tests are offline (no netw
 
 ## D. Not compiled or not run yet
 
-- **No Java written after `9ad341a` has been compiled**: `2fedafb` (WP-VBE, WP-PLAT), the demo patches and the review
-  fixes above. The sandbox has JDK 11 and no Maven Central. First step on a JDK 21 machine: `cd backend && ./mvnw verify`
+- **No Java written after `9ad341a` has been compiled**: `2fedafb` (WP-VBE, WP-PLAT), the demo patches, the review
+  fixes above and the trust fixes (B2). The sandbox has JDK 11 and no Maven Central. First step on a JDK 21 machine: `cd backend && ./mvnw verify`
   (RUN_AND_TEST_GUIDE 4.1). Expect a few small compile or test fixes.
 - The Docker images of agent-service and of the new backend have not been built.
 - No flow of plan v2 has been clicked through against a live stack; flows were traced through the code and the agent
@@ -57,16 +73,24 @@ Python ran on 3.10 in the sandbox (CI uses 3.12). All tests are offline (no netw
 
 ## E. Known limitations (design limits, not fixed)
 
-- **Referee employer domain is typed by the candidate.** A referee mailbox on a domain the candidate controls, entered as
-  the employer domain, anchors a reference to `VERIFIED` (free-mail domains never count). Recruiters see the employer
-  name/domain and must review before confirming; independent domain evidence is future work.
-- **Badge issuer trust is not established.** An OB2 hosted badge or an OB3 `did:web`/JWKS issuer on a domain the candidate
-  controls verifies (signatures and recipients are checked; `did:key` issuers are capped at PARTLY_VERIFIED). An issuer
-  allow-list is future work.
-- **No data-retention purge.** Evidence snapshots, verdicts, audit events and match runs are kept until the candidate
-  deletes the account; there is no time-based purge. Snapshot deletion on revoke is after-commit and best-effort.
-- **ai-service Docker image has no LibreOffice or OCR.** `.doc` falls back to the olefile reader; scanned PDFs return
-  NEEDS_OCR. OCR exists only as an optional extra (`requirements-ocr.txt`, `OCR_ENABLED=true`).
+- **Employer-domain and issuer trust (closed by the trust fixes, B2; residual limits).** Trust rests on public signals:
+  a domain the candidate registered more than a year ago, with MX and a home page naming the employer, still passes
+  (the recruiter sees the domain after reveal and must confirm); a badge issuer on an aged domain the candidate did not
+  prove ownership of still passes. The built-in issuer list is a starting list. RDAP has no public-suffix list (a few
+  second-level suffixes such as `co.uk` are hard-coded). Organisation lists apply per organisation at view time.
+- **Data retention (WP-OPS, partly closed).** A daily purge now removes used/expired tokens and login states,
+  finished background jobs, delivered notifications, old rate-limit windows and audit events older than 730 days
+  (configurable, 0 = keep), and strips referee details from old expired/cancelled/declined reference requests
+  ([WP-OPS-NOTES.md](WP-OPS-NOTES.md)). Evidence snapshots, verdicts and match runs are still kept until the
+  candidate deletes the account; snapshot deletion on revoke is after-commit and best-effort.
+- **ai-service Docker image: LibreOffice and OCR (WP-OPS, closed).** The image installs headless LibreOffice Writer
+  (`.doc` conversion with hidden-text checks) and the RapidOCR extra; OCR still runs only with `OCR_ENABLED=true`
+  (default false) and has not been tried on real scans. The image is larger (about 0.8–1.1 GB, estimate, not built
+  here); build args restore the small image.
+- **Requirement proficiency (WP-OPS, closed).** ADVANCED/EXPERT SKILL requirements need evidence of depth (years,
+  tier or an explicit level word) or they become UNCLEAR (`evidence-ladder-4`); a conservative heuristic.
+- **Compose network isolation (WP-OPS, closed).** The AI service and PostgreSQL are on an internal network without
+  egress or host ports; LLM mode needs `docker-compose.ai-egress.yml`.
 - **MFA and the encryption key.** Without `APP_ENCRYPTION_KEY`, MFA enrolment, SSO and GitHub OAuth are unavailable; an
   organisation that requires MFA now refuses staff sign-in (503 `MFA_NOT_CONFIGURED`) instead of skipping MFA. SSO
   sign-ins count as MFA-satisfied by the identity provider.

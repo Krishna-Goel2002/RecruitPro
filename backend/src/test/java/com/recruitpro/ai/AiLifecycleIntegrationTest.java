@@ -320,7 +320,7 @@ class AiLifecycleIntegrationTest {
         // Confirm the append-only run persisted in job_match_runs
         JobMatchRun run = matchRuns.findFirstByApplicationIdAndCurrentRunTrueOrderByIdDesc(app1.getId()).orElseThrow();
         assertTrue(run.getVerifiedCoverage().compareTo(BigDecimal.ZERO) > 0);
-        assertEquals("evidence-ladder-3", run.getAlgorithmVersion());
+        assertEquals("evidence-ladder-4", run.getAlgorithmVersion());
         assertEquals("INITIAL", run.getTriggerReason());
         assertNotNull(run.getRequirementResultsJson());
     }

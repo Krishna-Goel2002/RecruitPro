@@ -72,10 +72,13 @@ public class VerificationStaffSupport {
      * Tier rule (plan v2 3.5): the verdict lifts its claim to CORROBORATED for the organisation only when it is
      * VERIFIED with proven ownership (references: independent referee), current and SHARED by the candidate, the
      * organisation is VISIBLE with the verdict's connector enabled, and the organisation's latest review CONFIRMs it.
+     * "VERIFIED" is the verdict as it counts for the organisation ({@link DomainTrusts#effectiveVerdict}): a verdict
+     * capped only by an employer / issuer domain the agent could not establish counts when the organisation lists it.
      */
     public static boolean lifts(ClaimVerdict verdict, ClaimVerdictReview latestReview,
                                 VerificationSettingsService.Effective settings, String connector) {
-        return verdict != null && verdict.getVerdict() == VerdictValue.VERIFIED && verdict.isOwnershipProven()
+        return verdict != null && DomainTrusts.effectiveVerdict(verdict, settings) == VerdictValue.VERIFIED
+                && verdict.isOwnershipProven()
                 && verdict.isCurrent() && verdict.getCandidateStatus() == CandidateVerdictStatus.SHARED
                 && settings != null && settings.visible() && settings.enabled(connector)
                 && latestReview != null && latestReview.getDecision() == ReviewDecision.CONFIRM;
@@ -160,12 +163,23 @@ public class VerificationStaffSupport {
      */
     public StaffVerdict staffVerdict(ClaimVerdict verdict, ClaimVerdictReview review, Map<Long, String> reviewerNames,
                                      String connector, boolean revealed) {
+        return staffVerdict(verdict, review, reviewerNames, connector, revealed, null);
+    }
+
+    /**
+     * As above, for an organisation's settings: {@code verdict} is the verdict as it counts for the organisation and
+     * {@code domainTrust} reflects its trusted-domain lists ({@link DomainTrusts}). Without settings the stored verdict
+     * and the agent's own domain trust are shown.
+     */
+    public StaffVerdict staffVerdict(ClaimVerdict verdict, ClaimVerdictReview review, Map<Long, String> reviewerNames,
+                                     String connector, boolean revealed, VerificationSettingsService.Effective settings) {
         ReviewView myReview = review == null ? null : new ReviewView(review.getDecision().name(), review.getNote(),
                 review.getReviewerUserId() == null ? null : reviewerNames.get(review.getReviewerUserId()), review.getCreatedAt());
         int evidenceCount = views.ids(verdict.getEvidenceItemIdsJson()).size();
-        return new StaffVerdict(verdict.getId(), verdict.getVerifier(), verdict.getVerdict().name(), verdict.isOwnershipProven(),
+        VerdictValue value = DomainTrusts.effectiveVerdict(verdict, settings);
+        return new StaffVerdict(verdict.getId(), verdict.getVerifier(), value.name(), verdict.isOwnershipProven(),
                 views.reasons(verdict.getReasonsJson()), views.notes(verdict.getIntegrityNotesJson()), verdict.getProbeQuestion(),
                 revealed ? verdict.getCandidateNote() : null, myReview, revealed ? evidence(verdict) : null, evidenceCount,
-                connector, verdict.getCreatedAt());
+                connector, verdict.getCreatedAt(), DomainTrusts.view(verdict, settings, revealed));
     }
 }
