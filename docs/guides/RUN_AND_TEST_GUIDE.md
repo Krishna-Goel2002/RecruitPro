@@ -936,7 +936,7 @@ Send:
 
 ## Changes after 16 Nov evening
 
-Review fixes, uncommitted, on top of the patches in 0.2. Details and test names: [STATUS.md](../plan/STATUS.md) section B. Still **not compiled**: run 4.1 (`./mvnw verify`) first; new migration **V25** (`verification_oauth_states` columns).
+Review fixes (committed in `50e7b39`), on top of the patches in 0.2. Details and test names: [STATUS.md](../plan/STATUS.md) section B. Still **not compiled**: run 4.1 (`./mvnw verify`) first; new migration **V25** (`verification_oauth_states` columns).
 
 - **GitHub OAuth (only with `GITHUB_CLIENT_ID/SECRET` set):** "Connect with GitHub" now sets a short-lived cookie `rp_oauth_github` and uses PKCE. Finish the GitHub step **in the same browser** that clicked the button; another browser or a blocked cookie ends on `?error=BROWSER_MISMATCH`. `GITHUB_OAUTH_REDIRECT_URI` must point at the same API host the portal calls (default `http://localhost:8080/...`). Register the same callback URL in the GitHub OAuth app.
 - **6.18 references:** the e-mail now names the candidate by **first name only** ("Asha asked you for a reference", not "Asha Synthetica ...").

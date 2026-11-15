@@ -1,6 +1,6 @@
 # Plan v2 status, 16 Nov 2026
 
-Branch `Kshitij`, HEAD `2fedafb` plus uncommitted demo patches and the review fixes of 16 Nov evening (nothing
+Branch `Kshitij`, commit `50e7b39` (demo patches and the review fixes of 16 Nov evening are committed) (nothing
 committed). Plan: [IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md). How to run and click through everything:
 [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md). Detailed explanations: [docs/handbook/](../handbook/).
 The older WP-INT status (audit findings C1–L13) follows further down and is still valid except where this section says
@@ -14,7 +14,7 @@ otherwise.
 | WP-VBE | Backend Claim Ledger (V21, V22): sources with consent, ownership checks, GitHub OAuth, runs via the job queue, evidence with SHA-256 and snapshots, append-only verdicts, candidate Share/Hide/Re-check, references with a public referee page, staff view (blind-first), per-organisation reviews and the CORROBORATED lift into matching, SHADOW/VISIBLE mode, connectors, shadow labelling queue and metrics, export/deletion, demo seed | [WP-VBE-NOTES.md](WP-VBE-NOTES.md) |
 | WP-PLAT | Staff MFA (TOTP, recovery codes, org requirement), OIDC SSO for staff (Google, Microsoft, generic; PKCE, nonce, JWKS), multi-instance safety (job dedupe key, notification row claims, database rate-limit store), `X-Request-Id`, Prometheus, structured logs, security headers and nginx CSP, ICS invitations, scorecard editing with revisions, work-sample file uploads and HR cancellation, fairness date range, demo assessment seed (V23, V24) | [WP-PLAT-NOTES.md](WP-PLAT-NOTES.md) |
 | WP-FE-CAND2 / WP-FE-HR2 | Candidate "Strengthen your application" (`/verification`) and referee page (`/reference/:token`); HR applicant Verification tab, admin Verification page, account security (MFA), MFA and SSO sign-in, `/sso/complete`, work-sample attachments and cancellation, fairness range | [WP-FE-FINISH-NOTES.md](WP-FE-FINISH-NOTES.md) |
-| Demo patches (uncommitted) | Demo assessment seed in its own transaction; scorecard **Edit** button; require-MFA and SSO-domain controls on the organisation page; compose passes SSO/LLM/`AGENT_GITHUB_TOKEN`; `.env.example` key fix; `tools/totp.py` | [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md) section 0.2 |
+| Demo patches (committed in `50e7b39`) | Demo assessment seed in its own transaction; scorecard **Edit** button; require-MFA and SSO-domain controls on the organisation page; compose passes SSO/LLM/`AGENT_GITHUB_TOKEN`; `.env.example` key fix; `tools/totp.py` | [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md) section 0.2 |
 
 ## B. Review fixes, 16 Nov 2026 (evening)
 
