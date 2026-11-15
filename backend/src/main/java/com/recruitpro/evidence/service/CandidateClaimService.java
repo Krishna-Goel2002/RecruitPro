@@ -13,6 +13,7 @@ import com.recruitpro.evidence.entity.CandidateClaim;
 import com.recruitpro.evidence.entity.ClaimType;
 import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.evidence.repository.CandidateClaimRepository;
+import com.recruitpro.verification.service.ClaimVerdictWithdrawal;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,7 +21,8 @@ import java.util.List;
 
 /**
  * Candidate claims (D5, C1): free-standing claims (/api/v1/candidates/me/claims) and corrections of resume
- * facts (fact review). Every change queues re-matching of the candidate's applications.
+ * facts (fact review). Every change queues re-matching of the candidate's applications; deleting a claim or
+ * changing its value withdraws the claim's current verification verdicts.
  */
 @Service
 @Transactional
@@ -32,13 +34,16 @@ public class CandidateClaimService {
     private final CandidateProfileService profileService;
     private final ResumeAnalysisFactRepository factRepository;
     private final MatchTriggerService matchTriggerService;
+    private final ClaimVerdictWithdrawal verdictWithdrawal;
 
     public CandidateClaimService(CandidateClaimRepository claimRepository, CandidateProfileService profileService,
-                                 ResumeAnalysisFactRepository factRepository, MatchTriggerService matchTriggerService) {
+                                 ResumeAnalysisFactRepository factRepository, MatchTriggerService matchTriggerService,
+                                 ClaimVerdictWithdrawal verdictWithdrawal) {
         this.claimRepository = claimRepository;
         this.profileService = profileService;
         this.factRepository = factRepository;
         this.matchTriggerService = matchTriggerService;
+        this.verdictWithdrawal = verdictWithdrawal;
     }
 
     /** Not read-only: {@code getOrProvisionMine()} may create a missing candidate profile. */
@@ -80,6 +85,7 @@ public class CandidateClaimService {
                     });
         }
         claimRepository.delete(claim);
+        verdictWithdrawal.withdrawForClaim(candidate.getId(), claim.getId());
         matchTriggerService.requestMatchForCandidate(candidate.getId());
     }
 
@@ -96,9 +102,14 @@ public class CandidateClaimService {
         CandidateClaim claim = linked.isEmpty() ? new CandidateClaim() : linked.get(0);
         for (int i = 1; i < linked.size(); i++) {
             claimRepository.delete(linked.get(i));
+            verdictWithdrawal.withdrawForClaim(candidate.getId(), linked.get(i).getId());
         }
         if (claim.getId() != null && value.equals(claim.getClaimValue()) && claim.getClaimType() == type) {
             return claim;
+        }
+        if (claim.getId() != null) {
+            // The claim's value changes: verdicts about the old value no longer apply.
+            verdictWithdrawal.withdrawForClaim(candidate.getId(), claim.getId());
         }
         claim.setCandidate(candidate);
         claim.setClaimType(type);
@@ -117,6 +128,9 @@ public class CandidateClaimService {
             return;
         }
         claimRepository.deleteAll(linked);
+        for (CandidateClaim claim : linked) {
+            verdictWithdrawal.withdrawForClaim(candidate.getId(), claim.getId());
+        }
         matchTriggerService.requestMatchForCandidate(candidate.getId());
     }
 

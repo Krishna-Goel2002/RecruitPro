@@ -135,4 +135,20 @@ class AdminVerificationIntegrationTest extends VerificationIntegrationTestBase {
                 .andExpect(jsonPath("$.data.byVerdict", hasSize(5)))
                 .andExpect(jsonPath("$.data.readyForVisible", is(false)));
     }
+
+    @Test
+    void theShadowQueueLeavesOutDisabledConnectors() throws Exception {
+        mvc.perform(put(BASE + "/settings").with(staff("admin@admin-org.test", "ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"SHADOW\",\"connectors\":{\"GITHUB\":false}}"))
+                .andExpect(status().isOk());
+        mvc.perform(get(BASE + "/shadow-queue").with(staff("hr@admin-org.test", "HR_MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalElements", is(0)))
+                .andExpect(jsonPath("$.data.content", hasSize(0)));
+        mvc.perform(put(BASE + "/settings").with(staff("admin@admin-org.test", "ADMIN")).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"SHADOW\",\"connectors\":{\"GITHUB\":true}}"))
+                .andExpect(status().isOk());
+        mvc.perform(get(BASE + "/shadow-queue").with(staff("hr@admin-org.test", "HR_MANAGER")))
+                .andExpect(jsonPath("$.data.totalElements", is(2)));
+    }
 }

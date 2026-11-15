@@ -37,13 +37,18 @@ public class GitHubOAuthClient {
         this.apiUrl = apiUrl.endsWith("/") ? apiUrl.substring(0, apiUrl.length() - 1) : apiUrl;
     }
 
-    /** Exchanges an authorization code; the result has {@code error} set when GitHub refused it. */
-    public TokenResponse exchangeCode(String clientId, String clientSecret, String code, String redirectUri) {
+    /**
+     * Exchanges an authorization code with its PKCE {@code code_verifier}; the result has {@code error} set when
+     * GitHub refused it.
+     */
+    public TokenResponse exchangeCode(String clientId, String clientSecret, String code, String redirectUri,
+                                      String codeVerifier) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("client_id", clientId);
         form.add("client_secret", clientSecret);
         form.add("code", code);
         form.add("redirect_uri", redirectUri);
+        form.add("code_verifier", codeVerifier);
         return restClient.post().uri(tokenUrl)
                 .accept(MediaType.APPLICATION_JSON)
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)

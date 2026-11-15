@@ -35,7 +35,8 @@ import java.util.Set;
  * Shadow evaluation (principle 9, plan v2 section 5): ADMIN and HR_MANAGER label the shared, current verdicts of
  * candidates who applied to their organisation (unlabelled by the caller first); the metrics compare verdicts with
  * the labels and say whether the organisation is ready for VISIBLE mode. Evidence items appear only for candidates
- * with a revealed application in the organisation (blind-first).
+ * with a revealed application in the organisation (blind-first). Verdicts of connectors disabled in the
+ * organisation's settings are not queued.
  */
 @Service
 public class ShadowEvaluationService {
@@ -48,16 +49,19 @@ public class ShadowEvaluationService {
     private final ClaimVerdictLabelRepository labelRepository;
     private final VerificationLookupRepository lookupRepository;
     private final VerificationStaffSupport support;
+    private final VerificationSettingsService settingsService;
 
     public ShadowEvaluationService(SecurityUtils securityUtils, OrganizationRepository organizationRepository,
                                    ClaimVerdictRepository verdictRepository, ClaimVerdictLabelRepository labelRepository,
-                                   VerificationLookupRepository lookupRepository, VerificationStaffSupport support) {
+                                   VerificationLookupRepository lookupRepository, VerificationStaffSupport support,
+                                   VerificationSettingsService settingsService) {
         this.securityUtils = securityUtils;
         this.organizationRepository = organizationRepository;
         this.verdictRepository = verdictRepository;
         this.labelRepository = labelRepository;
         this.lookupRepository = lookupRepository;
         this.support = support;
+        this.settingsService = settingsService;
     }
 
     /** GET /api/v1/admin/verification/shadow-queue?page&size. */
@@ -69,9 +73,19 @@ public class ShadowEvaluationService {
         CurrentUser caller = securityUtils.requireOrganizationMember();
         Long organizationId = caller.organizationId();
         List<Long> candidateIds = lookupRepository.findCandidateIdsByOrganizationId(organizationId);
-        List<ClaimVerdict> verdicts = candidateIds.isEmpty() ? List.of()
+        List<ClaimVerdict> shared = candidateIds.isEmpty() ? List.of()
                 : verdictRepository.findAllByCandidateIdInAndCurrentTrueAndCandidateStatusOrderByIdDesc(candidateIds,
                 CandidateVerdictStatus.SHARED);
+        // Connectors disabled in the organisation's settings (and verdicts whose source is gone) are left out, as in
+        // the staff view.
+        VerificationSettingsService.Effective settings = settingsService.effective(organizationId);
+        Map<Long, String> connectors = support.connectors(shared);
+        List<ClaimVerdict> verdicts = new ArrayList<>();
+        for (ClaimVerdict verdict : support.withCurrentSubjects(shared)) {
+            if (settings.enabled(connectors.get(verdict.getId()))) {
+                verdicts.add(verdict);
+            }
+        }
         List<Long> verdictIds = verdicts.stream().map(ClaimVerdict::getId).toList();
         Map<Long, List<ClaimVerdictLabel>> labels = new HashMap<>();
         if (!verdictIds.isEmpty()) {
@@ -110,7 +124,6 @@ public class ShadowEvaluationService {
                 }
             }
         }
-        Map<Long, String> connectors = support.connectors(slice);
         List<ShadowQueueItem> items = new ArrayList<>();
         for (ClaimVerdict verdict : slice) {
             boolean revealed = revealedCandidates.contains(verdict.getCandidateId());

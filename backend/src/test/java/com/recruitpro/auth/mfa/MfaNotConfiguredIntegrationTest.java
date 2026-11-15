@@ -1,6 +1,7 @@
 package com.recruitpro.auth.mfa;
 
 import com.recruitpro.organization.entity.Organization;
+import com.recruitpro.organization.repository.OrganizationRepository;
 import com.recruitpro.support.TestDataFactory;
 import com.recruitpro.user.entity.Role;
 import org.junit.jupiter.api.AfterEach;
@@ -10,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -30,13 +32,36 @@ class MfaNotConfiguredIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired TestDataFactory fixtures;
+    @Autowired OrganizationRepository organizations;
+    @Autowired PasswordEncoder passwordEncoder;
+
+    Organization organization;
 
     @BeforeEach
     void setUp() {
         fixtures.cleanDatabase();
-        Organization organization = fixtures.organization("No Key Org");
+        organization = fixtures.organization("No Key Org");
         fixtures.staff(organization, "hr@nokey.test", Role.HR_MANAGER);
         fixtures.staff(organization, "admin@nokey.test", Role.ADMIN);
+    }
+
+    @Test
+    void staffSignInIsRefusedWhenTheOrganisationRequiresMfaButNoKeyIsConfigured() throws Exception {
+        String password = "SecurePassword123!";
+        fixtures.staff(organization, "staff@nokey.test", Role.RECRUITER, passwordEncoder.encode(password), true);
+        String body = "{\"email\":\"staff@nokey.test\",\"password\":\"" + password + "\"}";
+        mvc.perform(post("/api/v1/auth/login").header("X-RecruitPro-Portal", "staff")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        // Required earlier (with a key), then the key went missing: fail closed instead of skipping the second factor.
+        Organization requiring = organizations.findById(organization.getId()).orElseThrow();
+        requiring.setRequireStaffMfa(true);
+        organizations.save(requiring);
+        mvc.perform(post("/api/v1/auth/login").header("X-RecruitPro-Portal", "staff")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.message", startsWith("MFA_NOT_CONFIGURED")))
+                .andExpect(jsonPath("$.data.accessToken").doesNotExist());
     }
 
     @AfterEach

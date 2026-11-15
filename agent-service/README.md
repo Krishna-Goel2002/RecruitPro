@@ -21,15 +21,17 @@ Every result names its evidence. Each evidence item carries a URL (or file), ret
 
 All `/api/*` routes need `X-Internal-Service-Token: $AGENT_SERVICE_TOKEN`. Response shapes are in `app/models.py`
 (camelCase JSON). Errors: 422 `{"detail": {"code", "message"}}` when a source cannot be read at all (`URL_BLOCKED`,
-`ROBOTS_DISALLOWED`, `SOURCE_NOT_FOUND`, `UNSUPPORTED_DOCUMENT`, `BAD_CREDENTIAL`, ...), 502 for upstream trouble
+`ROBOTS_DISALLOWED`, `SOURCE_NOT_FOUND`, `UNSUPPORTED_DOCUMENT`, `BAD_CREDENTIAL`, `BAD_TARGET`, ...), 502 for upstream trouble
 (`TIMEOUT`, `RATE_LIMITED`, `UPSTREAM_ERROR`, ...), 413 for oversized bodies, 401/503 for authentication.
 
 ## Rules (summary; the docstrings of each module state them in full)
 
 - **Code** (`app/verifiers/code.py`): owned repositories, non-forks, forks only with own commits after the fork.
   SKILL `VERIFIED` when >= 2 repositories show the skill with authored share >= 0.5 and the account's commits in them
-  span >= 30 days; `PARTLY_VERIFIED` when any repository shows it; else `NOT_FOUND`; other claim types
-  `NOT_CHECKABLE`. Notes: `BULK_HISTORY`, `FORK_ONLY`, `UNLINKED_AUTHOR`, `TEMPLATE_README`. Nothing is cloned or run;
+  span >= 30 days (committer dates, each clamped to the repository's creation date, so backdated history in a fresh
+  repository does not count); `PARTLY_VERIFIED` when any repository shows it; else `NOT_FOUND`; other claim types
+  `NOT_CHECKABLE`. Notes: `BULK_HISTORY`, `BACKDATED_HISTORY`, `FORK_ONLY`, `UNLINKED_AUTHOR`, `TEMPLATE_README`.
+  Nothing is cloned or run;
   stars, watchers and followers are stripped from every payload on arrival.
 - **Web** (`app/verifiers/web.py`): `VERIFIED` only when stated on a page with a matching authorship marker (JSON-LD,
   meta author, byline); `PARTLY_VERIFIED` when stated without one; `CONTRADICTED` only for an explicit conflicting

@@ -61,10 +61,12 @@ def monthly(start_days_ago: int, count: int, step: int = 30) -> list[str]:
 def repo(name: str, *, languages: dict[str, int] | None = None, topics: list[str] | None = None,
          files: dict[str, str] | None = None, user: str = "dev", user_dates: list[str] | None = None,
          others: int = 0, created_days_ago: int = 400, fork: bool = False, stats: bool = True,
-         unlinked: bool = False, name_on_commits: str = "Dev Person") -> FakeRepo:
+         unlinked: bool = False, name_on_commits: str = "Dev Person", committed: str | None = None) -> FakeRepo:
+    """A repository of ``user``; ``committed`` sets one committer date for all of the user's commits (default: each
+    commit's author date)."""
     dates = user_dates if user_dates is not None else monthly(300, 6)
     login = None if unlinked else user
-    history = commits(login, name_on_commits, dates) + commits("someone-else", "Someone Else",
+    history = commits(login, name_on_commits, dates, committed) + commits("someone-else", "Someone Else",
                                                                [days_ago(200)] * others)
     contributors = [(user, 0 if unlinked else len(dates))] + ([("someone-else", others)] if others else [])
     return FakeRepo(name=name, languages=languages or {}, topics=topics or [], files=files or {}, commits=history,

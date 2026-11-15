@@ -121,12 +121,21 @@ public class DemoDataSeeder {
                         requirement(RequirementType.SKILL, "Python", true, null),
                         requirement(RequirementType.SKILL, "Tableau or Power BI", false, null),
                         requirement(RequirementType.EXPERIENCE, "Data analysis", true, 1)));
-        if (assessmentSeeder != null) {
-            // WP-PLAT: kit, work sample (scored), completed + scheduled interview with a scorecard.
-            assessmentSeeder.seed(organizationId);
-        }
         log.info("Demo data ready: organisation '{}' with {}, {}, {}, {} and candidate {} (password from app.seed.password)",
                 ORGANIZATION_NAME, ADMIN_EMAIL, HR_EMAIL, RECRUITER_EMAIL, INTERVIEWER_EMAIL, CANDIDATE_EMAIL);
+    }
+
+    /**
+     * WP-PLAT demo assessments (kit, scored work sample, completed + scheduled interview with a scorecard). Called by
+     * {@link DevSeedRunner} after {@link #seed} has committed, in its own transaction, so a failure here can never roll
+     * back the demo accounts and jobs or stop the application from starting.
+     */
+    public void seedAssessments() {
+        if (assessmentSeeder == null) {
+            return;
+        }
+        organizationRepository.findBySlug(ORGANIZATION_SLUG)
+                .ifPresent(organization -> assessmentSeeder.seed(organization.getId()));
     }
 
     private User staff(Long organizationId, String email, String firstName, String lastName, Role role, String password) {

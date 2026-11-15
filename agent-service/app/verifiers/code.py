@@ -12,13 +12,18 @@ mapped to taxonomy skills (``app.skills``).
 SKILL claim:
 * ``VERIFIED`` when >= 2 repositories show the skill with authored share >= 0.5 and the user's commits in those
   repositories together span >= 30 days (the shared ownership cap lowers this to PARTLY_VERIFIED when ownership is
-  not proven). Repositories flagged ``BULK_HISTORY`` do not count towards these two (they still show the skill);
+  not proven). Repositories flagged ``BULK_HISTORY`` do not count towards these two (they still show the skill).
+  Commit dates are set by whoever makes the commit, so the span uses committer dates (author dates only when no
+  committer date is given), each clamped to [repository created_at, now]: history dated before a repository existed
+  counts as made on its creation day, so a repository created < 30 days ago cannot supply a 30-day span;
 * ``PARTLY_VERIFIED`` when any considered repository shows the skill;
 * ``NOT_FOUND`` otherwise. Other claim types -> ``NOT_CHECKABLE``. Code never yields ``CONTRADICTED``.
 
 Integrity notes (never verdicts): ``BULK_HISTORY`` (repository created < 14 days ago and all of the user's commits on
-one day), ``FORK_ONLY`` (fork without own commits ignored), ``UNLINKED_AUTHOR`` (commits with the account's name but
-an e-mail address not linked to the account), ``TEMPLATE_README`` (README matches a known project template).
+one day), ``BACKDATED_HISTORY`` (own commits dated more than a day before the repository was created; the clamp above
+already keeps that time out of the span), ``FORK_ONLY`` (fork without own commits ignored), ``UNLINKED_AUTHOR``
+(commits with the account's name but an e-mail address not linked to the account), ``TEMPLATE_README`` (README
+matches a known project template).
 """
 from __future__ import annotations
 
@@ -44,6 +49,7 @@ LANGUAGE_MIN_SHARE = 0.05
 STRONG_SHARE = 0.5
 SPAN_DAYS = 30
 BULK_WINDOW = timedelta(days=14)
+BACKDATE_GRACE = timedelta(days=1)  # a first commit made shortly before the repository is created is normal
 README_EXCERPT = 1000
 TEMPLATE_SIGNATURES = (
     "this project was bootstrapped with [create react app]",
@@ -77,6 +83,7 @@ class _Repo:
     skills: dict[str, _Shown] = field(default_factory=dict)  # skill id -> where it shows
     raw_names: dict[str, _Shown] = field(default_factory=dict)  # lower-case language/topic/dependency -> where
     bulk: bool = False
+    span_dates: list[datetime] = field(default_factory=list)  # counted commit dates (see counted_commit_dates)
 
 
 def _article(word: str) -> str:
@@ -97,6 +104,25 @@ def is_bulk_history(repo: RepoFacts, now: datetime) -> bool:
     authored_days = {moment.date() for moment in repo.user_commit_dates}
     committed_days = {moment.date() for moment in repo.user_committer_dates} or authored_days
     return len(authored_days) == 1 or len(committed_days) == 1
+
+
+def counted_commit_dates(repo: RepoFacts, now: datetime) -> list[datetime]:
+    """The account's commit dates that count towards the 30-day span: committer dates (author dates when the source
+    gave none), each clamped to [repository created_at, now]. Commit dates are chosen by the committer, so history can
+    never reach back before the repository existed on the code host (nor past the time of the check)."""
+    dates = repo.user_committer_dates or repo.user_commit_dates
+    created = repo.created_at
+    return [min(max(moment, created) if created else moment, now) for moment in dates]
+
+
+def backdated_commits(repo: RepoFacts) -> int:
+    """How many of the account's commits are dated (authored or committed) more than BACKDATE_GRACE before the
+    repository was created."""
+    if repo.created_at is None:
+        return 0
+    cutoff = repo.created_at - BACKDATE_GRACE
+    return max(sum(1 for moment in repo.user_commit_dates if moment < cutoff),
+               sum(1 for moment in repo.user_committer_dates if moment < cutoff))
 
 
 def is_template_readme(text: str | None) -> bool:
@@ -120,8 +146,10 @@ def _repo_snapshot(repo: RepoFacts) -> str:
     ])
 
 
-def _commit_snapshot(repo: RepoFacts) -> str:
+def _commit_snapshot(repo: RepoFacts, counted: list[datetime]) -> str:
     dates = sorted(repo.user_commit_dates)
+    span = sorted(counted)
+    counted_text = f"{_day(span[0])} to {_day(span[-1])}" if span else "none"
     share = "unknown" if repo.authored_share is None else f"{repo.authored_share:.2f}"
     return "\n".join([
         f"Commits sampled: {repo.commits_sampled}",
@@ -129,6 +157,7 @@ def _commit_snapshot(repo: RepoFacts) -> str:
         f"Authored share: {share} (source: {'contributor statistics' if repo.share_source == 'stats' else 'latest commits'})",
         f"First commit by the account: {_day(dates[0]) if dates else 'none'}",
         f"Last commit by the account: {_day(dates[-1]) if dates else 'none'}",
+        f"Dates counted (committer dates, not before the repository was created): {counted_text}",
         f"Commits with the account's name but an unlinked e-mail address: {repo.unlinked_commits}",
     ])
 
@@ -210,7 +239,7 @@ def _skill_verdict(claim: ClaimIn, repos: list[_Repo]) -> DraftVerdict:
                       evidence_keys=list(dict.fromkeys(key for _, shown in showing for key in shown.keys)),
                       quote=first_quote)]
     strong = [repo for repo, _ in showing if _strong(repo)]
-    dates = [moment for repo in strong for moment in repo.facts.user_commit_dates]
+    dates = [moment for repo in strong for moment in repo.span_dates]
     span = (max(dates) - min(dates)).days if dates else 0
     commit_keys = [repo.commits_key for repo in strong]
     if len(strong) >= 2 and span >= SPAN_DAYS:
@@ -244,6 +273,8 @@ def build_output(request: CodeVerifyRequest, facts: AccountFacts, *, now: dateti
                      manifest_keys={path: f"manifest-{index}-{number}"
                                     for number, path in enumerate(repo.manifests, start=1)})
         item.bulk = is_bulk_history(repo, now)
+        item.span_dates = counted_commit_dates(repo, now)
+        backdated = backdated_commits(repo)
         _analyse(item)
         repos.append(item)
         evidence.append(make_item(item.key, "REPOSITORY", url=repo.url, title=repo.full_name, text=_repo_snapshot(repo),
@@ -251,7 +282,7 @@ def build_output(request: CodeVerifyRequest, facts: AccountFacts, *, now: dateti
                                                                 "skills": sorted(item.skills), **attributes}))
         dates = sorted(repo.user_commit_dates)
         evidence.append(make_item(item.commits_key, "COMMIT_SUMMARY", url=repo.url, title=f"Commits in {repo.full_name}",
-                                  text=_commit_snapshot(repo), retrieved_at=now, attributes={
+                                  text=_commit_snapshot(repo, item.span_dates), retrieved_at=now, attributes={
                                       "userCommits": repo.user_commits, "commitsSampled": repo.commits_sampled,
                                       "authoredShare": repo.authored_share, "shareSource": repo.share_source,
                                       "firstCommitAt": dates[0].isoformat() if dates else None,
@@ -270,6 +301,11 @@ def build_output(request: CodeVerifyRequest, facts: AccountFacts, *, now: dateti
             notes.append(IntegrityNote(code="BULK_HISTORY", evidence_keys=[item.key, item.commits_key], text=(
                 f"All of the account's commits in {repo_label(index - 1)} fall on one day and the repository was created less "
                 "than 14 days ago; it does not count towards a verified result.")))
+        if backdated:
+            notes.append(IntegrityNote(code="BACKDATED_HISTORY", evidence_keys=[item.key, item.commits_key], text=(
+                f"{backdated} commit(s) by the account in {repo_label(index - 1)} are dated before the repository was "
+                "created (for example history imported from elsewhere, or dates set when committing); only the time "
+                "since the repository was created counts towards a verified result.")))
         if repo.unlinked_commits:
             notes.append(IntegrityNote(code="UNLINKED_AUTHOR", evidence_keys=[item.commits_key], text=(
                 f"{repo.unlinked_commits} commit(s) in {repo_label(index - 1)} carry the account's name but an e-mail address "

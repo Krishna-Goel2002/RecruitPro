@@ -189,7 +189,9 @@ public class ReferenceService {
         reference.setExpiresAt(now.plus(TTL));
         reference.setConsentedAt(now);
         VerificationReferenceRequest saved = referenceRepository.save(reference);
-        String candidateName = (nullToEmpty(user.getFirstName()) + " " + nullToEmpty(user.getLastName())).trim();
+        // First name only, as the consent text says ("may email this person with my first name"); the public referee
+        // page shows the first name too.
+        String candidateName = nullToEmpty(user.getFirstName()).trim();
         Map<String, String> params = new HashMap<>();
         params.put("refereeName", name);
         params.put("candidateName", candidateName.isEmpty() ? "A RecruitPro candidate" : candidateName);

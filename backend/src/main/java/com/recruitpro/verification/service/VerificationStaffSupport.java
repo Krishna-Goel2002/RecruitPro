@@ -37,15 +37,35 @@ public class VerificationStaffSupport {
     private final EvidenceItemRepository evidenceRepository;
     private final UserRepository userRepository;
     private final VerificationViews views;
+    private final VerificationSubjects subjects;
 
     public VerificationStaffSupport(VerificationSourceRepository sourceRepository, ClaimVerdictReviewRepository reviewRepository,
                                     EvidenceItemRepository evidenceRepository, UserRepository userRepository,
-                                    VerificationViews views) {
+                                    VerificationViews views, VerificationSubjects subjects) {
         this.sourceRepository = sourceRepository;
         this.reviewRepository = reviewRepository;
         this.evidenceRepository = evidenceRepository;
         this.userRepository = userRepository;
         this.views = views;
+        this.subjects = subjects;
+    }
+
+    /**
+     * The verdicts whose claim subject is still current (a fact of the resume's current analysis, or a claim that
+     * exists and was not rejected by a recruiter), in their order. Orphaned verdicts, e.g. of facts of a replaced
+     * analysis, are left out of the staff view, the shadow queue and matching (review fix 16 Nov 2026).
+     */
+    public List<ClaimVerdict> withCurrentSubjects(Collection<ClaimVerdict> verdicts) {
+        Map<Long, Set<String>> refsByCandidate = new HashMap<>();
+        List<ClaimVerdict> kept = new ArrayList<>();
+        for (ClaimVerdict verdict : verdicts) {
+            Set<String> refs = refsByCandidate.computeIfAbsent(verdict.getCandidateId(),
+                    id -> subjects.currentSubjectsByRef(id).keySet());
+            if (refs.contains(verdict.subjectRef())) {
+                kept.add(verdict);
+            }
+        }
+        return kept;
     }
 
     /**

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { interviewsApi } from '../../api/assessments'
 import { qk } from '../../api/queryKeys'
-import { InterviewDetail, Rating, Recommendation, RECOMMENDATIONS, ScorecardInput } from '../../api/types'
+import { InterviewDetail, Rating, Recommendation, RECOMMENDATIONS, Scorecard, ScorecardInput } from '../../api/types'
 import { useAuth, useCurrentUser } from '../../auth/AuthContext'
 import { RequirementTags, StatusBadge, TierBadge } from '../../components/Badges'
 import { ConfirmDialog } from '../../components/Dialog'
@@ -21,7 +21,10 @@ const RECOMMENDATION_TEXT: Record<Recommendation, string> = {
   STRONG_YES: 'Strong yes',
 }
 
-/** /interviews/:interviewId — kit questions, focus requirements and the scorecard form (assigned interviewer only). */
+/**
+ * /interviews/:interviewId — kit questions, focus requirements and the scorecard form (assigned interviewer only). The
+ * author can edit a submitted scorecard until the application is decided (WP-PLAT: PUT /interviews/{id}/scorecard).
+ */
 export function InterviewDetailPage() {
   const { interviewId } = useParams()
   const id = Number(interviewId)
@@ -37,6 +40,8 @@ function InterviewView({ interview }: { interview: InterviewDetail }) {
   const { can } = useAuth()
   const isMine = interview.interviewerUserId === user.id
   const canScore = isMine && interview.status === 'SCHEDULED' && !interview.scorecard
+  const canEdit = isMine && interview.scorecard != null && interview.status !== 'CANCELLED'
+  const [editing, setEditing] = useState(false)
   const locationUrl = safeHttpUrl(interview.location)
   const linkToApplicant = can('jobs.view')
 
@@ -85,8 +90,14 @@ function InterviewView({ interview }: { interview: InterviewDetail }) {
             </section>
           )}
 
-          {canScore ? (
-            <ScorecardForm interview={interview} />
+          {canScore || (canEdit && editing) ? (
+            <ScorecardForm
+              key={editing ? 'edit' : 'new'}
+              interview={interview}
+              existing={editing ? interview.scorecard : null}
+              onDone={() => setEditing(false)}
+              onCancel={editing ? () => setEditing(false) : undefined}
+            />
           ) : (
             <section className="detail-card section-card" aria-labelledby="kit-heading">
               <h2 id="kit-heading">Interview questions</h2>
@@ -107,6 +118,14 @@ function InterviewView({ interview }: { interview: InterviewDetail }) {
         <aside className="applicant-aside">
           <section className="detail-card section-card" aria-labelledby="scorecard-heading">
             <h2 id="scorecard-heading">Scorecard</h2>
+            {canEdit && !editing && (
+              <div className="detail-actions">
+                <button type="button" className="outline-button" onClick={() => setEditing(true)}>Edit scorecard</button>
+              </div>
+            )}
+            {interview.scorecard && (interview.scorecard.revisionCount ?? 0) > 0 && (
+              <p className="item-meta">Edited {interview.scorecard.revisionCount} time{interview.scorecard.revisionCount === 1 ? '' : 's'}; earlier versions are kept for the audit trail.</p>
+            )}
             {interview.scorecard ? <ScorecardView scorecard={interview.scorecard} questions={interview.kit} /> : (
               <p className="muted-copy">
                 {interview.status === 'CANCELLED' ? 'This interview was cancelled.'
@@ -121,22 +140,33 @@ function InterviewView({ interview }: { interview: InterviewDetail }) {
   )
 }
 
-function ScorecardForm({ interview }: { interview: InterviewDetail }) {
+function ScorecardForm({ interview, existing, onDone, onCancel }: {
+  interview: InterviewDetail
+  /** A submitted scorecard to edit (pre-fills the form and saves with PUT); null for a first submission. */
+  existing?: Scorecard | null
+  onDone?: () => void
+  onCancel?: () => void
+}) {
   const queryClient = useQueryClient()
   const notices = useNotices()
   const baseId = useId()
-  const [ratings, setRatings] = useState<Record<string, Rating | null>>(() => Object.fromEntries(interview.kit.map(question => [question.id, null])))
-  const [notes, setNotes] = useState<Record<string, string>>({})
-  const [recommendation, setRecommendation] = useState<Recommendation | null>(null)
-  const [summary, setSummary] = useState('')
+  const editing = existing != null
+  const [ratings, setRatings] = useState<Record<string, Rating | null>>(() => Object.fromEntries(interview.kit.map(question => [
+    question.id, existing?.ratings.find(rating => rating.questionId === question.id)?.rating ?? null,
+  ])))
+  const [notes, setNotes] = useState<Record<string, string>>(() => Object.fromEntries((existing?.ratings ?? [])
+    .filter(rating => rating.notes).map(rating => [rating.questionId, rating.notes as string])))
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(existing?.recommendation ?? null)
+  const [summary, setSummary] = useState(existing?.summary ?? '')
   const [touched, setTouched] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   const submit = useMutation({
-    mutationFn: (body: ScorecardInput) => interviewsApi.submitScorecard(interview.id, body),
+    mutationFn: (body: ScorecardInput) => editing ? interviewsApi.updateScorecard(interview.id, body) : interviewsApi.submitScorecard(interview.id, body),
     onSuccess: () => {
       setConfirmOpen(false)
-      notices.success('Scorecard submitted. Thank you.')
+      notices.success(editing ? 'Scorecard updated. The previous version is kept in the history.' : 'Scorecard submitted. Thank you.')
+      onDone?.()
       void queryClient.invalidateQueries({ queryKey: qk.interviews })
       void queryClient.invalidateQueries({ queryKey: ['applicants', interview.jobId] })
     },
@@ -170,7 +200,7 @@ function ScorecardForm({ interview }: { interview: InterviewDetail }) {
 
   return (
     <section className="detail-card section-card" aria-labelledby="scorecard-form-heading">
-      <h2 id="scorecard-form-heading">Questions and scorecard</h2>
+      <h2 id="scorecard-form-heading">{editing ? 'Edit your scorecard' : 'Questions and scorecard'}</h2>
       <p className="section-intro">Ask each question, use the follow-ups as needed, and rate the answer against the anchors (1 weak … 4 strong). Notes are optional but help the team.</p>
       <form className="scorecard-form" onSubmit={onSubmit} noValidate>
         <ol className="question-list">
@@ -219,16 +249,17 @@ function ScorecardForm({ interview }: { interview: InterviewDetail }) {
 
         <FormError error={submit.error} />
         <div className="editor-actions">
-          <span className="item-meta">{touched && missing ? 'Rate every question and choose a recommendation.' : 'Scorecards cannot be edited after submission.'}</span>
-          <button type="submit" className="primary-button workspace-primary" disabled={submit.isPending}>{submit.isPending ? 'Submitting…' : 'Submit scorecard'}</button>
+          <span className="item-meta">{touched && missing ? 'Rate every question and choose a recommendation.' : 'You can edit your scorecard until the application is decided; every version is kept.'}</span>
+          {onCancel && <button type="button" className="outline-button" onClick={onCancel} disabled={submit.isPending}>Cancel</button>}
+          <button type="submit" className="primary-button workspace-primary" disabled={submit.isPending}>{submit.isPending ? 'Saving…' : editing ? 'Save changes' : 'Submit scorecard'}</button>
         </div>
       </form>
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Submit your scorecard?"
-        message={`Recommendation: ${recommendation ? RECOMMENDATION_TEXT[recommendation] : '—'}. You cannot change it afterwards. Ratings of 3 or 4 on requirement-linked questions count as interview-verified evidence.`}
-        confirmLabel="Submit scorecard"
+        title={editing ? 'Save your changes?' : 'Submit your scorecard?'}
+        message={`Recommendation: ${recommendation ? RECOMMENDATION_TEXT[recommendation] : '—'}. ${editing ? 'The previous version is kept and the change is audited.' : 'You can edit it until the application is decided.'} Ratings of 3 or 4 on requirement-linked questions count as interview-verified evidence.`}
+        confirmLabel={editing ? 'Save changes' : 'Submit scorecard'}
         busy={submit.isPending}
         error={submit.error}
         onCancel={() => setConfirmOpen(false)}

@@ -3,10 +3,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import timedelta
 
+import pytest
+
+from app.core.budget import Budget
+from app.core.clock import parse_instant
+from app.core.config import load_settings
 from app.demo.fakes import FakeAccount
-from app.sources.common import POPULARITY_KEYS, strip_popularity
-from eval.builders import days_ago, monthly, package_json, repo
+from app.sources.common import POPULARITY_KEYS, RepoFacts, strip_popularity
+from app.sources.github import GitHubSource
+from app.sources.gitlab import GitLabSource
+from app.verifiers.code import backdated_commits, counted_commit_dates
+from eval.builders import NOW, days_ago, monthly, package_json, repo
 from tests.conftest import HEADERS
 
 REACT = {"package.json": package_json({"react": "^18", "react-dom": "^18"})}
@@ -77,7 +86,85 @@ def test_bulk_history_is_noted_and_does_not_count(client, fake_net):
         repo("b", languages=TS, created_days_ago=2, user_dates=[days_ago(2)] * 10)], [("SKILL", "TypeScript")])
     verdict = data["verdicts"][0]
     assert verdict["verdict"] == "PARTLY_VERIFIED"
-    assert {note["code"] for note in verdict["integrityNotes"]} == {"BULK_HISTORY"}
+    assert {note["code"] for note in verdict["integrityNotes"]} == {"BULK_HISTORY", "BACKDATED_HISTORY"}
+
+
+BACKDATED = [days_ago(400 - index * 30) for index in range(10)]  # a year of history ...
+
+
+def test_backdated_history_in_fresh_repos_is_not_verified(client, fake_net):
+    # ... in repositories created three days ago: commit dates are set by the committer
+    data = _post(client, fake_net, [repo("shop", languages=TS, created_days_ago=3, user_dates=BACKDATED),
+                                    repo("shop2", languages=TS, created_days_ago=3, user_dates=BACKDATED)],
+                 [("SKILL", "TypeScript")])
+    verdict = data["verdicts"][0]
+    assert verdict["verdict"] == "PARTLY_VERIFIED"
+    assert any("span 0 days" in reason["text"] for reason in verdict["reasons"])
+    notes = [note for note in verdict["integrityNotes"] if note["code"] == "BACKDATED_HISTORY"]
+    assert [note["evidenceKeys"] for note in notes] == [["repo-1", "commits-1"], ["repo-2", "commits-2"]]
+    assert "10 commit(s)" in notes[0]["text"] and "repository A" in notes[0]["text"]
+    assert "shop" not in json.dumps(notes) and "dev" not in json.dumps(notes)
+    commits = next(item for item in data["evidence"] if item["key"] == "commits-1")
+    assert f"Dates counted (committer dates, not before the repository was created): {days_ago(3)[:10]} to " \
+           f"{days_ago(3)[:10]}" in commits["snapshotText"]
+
+
+def test_fresh_repo_counts_only_its_real_age(client, fake_net):
+    # one genuine repository with 20 days of history plus a backdated fresh one: the fresh one may not stretch the span
+    data = _post(client, fake_net, [repo("old", languages=TS, created_days_ago=400,
+                                         user_dates=[days_ago(60), days_ago(40)]),
+                                    repo("fresh", languages=TS, created_days_ago=45, user_dates=BACKDATED)],
+                 [("SKILL", "TypeScript")])
+    verdict = data["verdicts"][0]
+    assert verdict["verdict"] == "PARTLY_VERIFIED"
+    assert any("span 20 days" in reason["text"] for reason in verdict["reasons"])
+    assert [note["code"] for note in verdict["integrityNotes"]] == ["BACKDATED_HISTORY"]
+
+
+def test_genuine_old_history_is_still_verified(client, fake_net):
+    first_push = days_ago(300)  # first commit made a couple of hours before the repository was created: normal
+    data = _post(client, fake_net, [repo("a", languages=TS, created_days_ago=400, user_dates=monthly(300, 6)),
+                                    repo("b", languages=TS, created_days_ago=300, user_dates=[days_ago(300)]
+                                         + monthly(270, 4)),
+                                    repo("c", languages=TS, created_days_ago=299.9, user_dates=[first_push])],
+                 [("SKILL", "TypeScript")])
+    verdict = data["verdicts"][0]
+    assert verdict["verdict"] == "VERIFIED"
+    assert verdict["integrityNotes"] == []
+
+
+def test_committer_date_is_preferred_over_author_date(client, fake_net):
+    # author dates claim ten months of work; the commits were actually committed within two days
+    data = _post(client, fake_net, [repo("a", languages=TS, user_dates=BACKDATED, committed=days_ago(3)),
+                                    repo("b", languages=TS, user_dates=BACKDATED, committed=days_ago(2))],
+                 [("SKILL", "TypeScript")])
+    verdict = data["verdicts"][0]
+    assert verdict["verdict"] == "PARTLY_VERIFIED"
+    assert any("span 1 days" in reason["text"] for reason in verdict["reasons"])
+
+
+@pytest.mark.parametrize("gitlab", [False, True])
+def test_parsers_keep_committer_dates(fake_net, gitlab):
+    fake_net.gitlab = gitlab
+    fake_net.accounts.append(FakeAccount(login="dev", name="Dev Person", repos=[
+        repo("a", languages=TS, created_days_ago=400, user_dates=[days_ago(300), days_ago(200)],
+             committed=days_ago(5))]))
+    settings = load_settings({"AGENT_SERVICE_TOKEN": "x"})
+    source_cls = GitLabSource if gitlab else GitHubSource
+    facts = source_cls(settings, Budget(50, 30), None, transport=fake_net.network().api_transport).collect("dev", 10)
+    parsed = facts.repos[0]
+    assert [moment.isoformat() for moment in parsed.user_commit_dates] == \
+        [parse_instant(days_ago(300)).isoformat(), parse_instant(days_ago(200)).isoformat()]
+    assert counted_commit_dates(parsed, NOW) == [parse_instant(days_ago(5))] * 2
+
+
+def test_counted_dates_are_clamped_to_creation_and_now():
+    facts = RepoFacts(full_name="x/y", url=None, is_fork=False, created_at=NOW - timedelta(days=3), pushed_at=None,
+                      user_commit_dates=[NOW - timedelta(days=300), NOW + timedelta(days=90)])
+    assert counted_commit_dates(facts, NOW) == [NOW - timedelta(days=3), NOW]
+    assert backdated_commits(facts) == 1
+    assert backdated_commits(RepoFacts(full_name="x/y", url=None, is_fork=False, created_at=None, pushed_at=None,
+                                       user_commit_dates=[NOW - timedelta(days=300)])) == 0
 
 
 def test_unlinked_author_and_template_readme_notes(client, fake_net):

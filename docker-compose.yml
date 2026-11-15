@@ -36,6 +36,11 @@ services:
     environment:
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-dev-only-ai-service-token-change-me-0123456789}
       LLM_PROVIDER: ${LLM_PROVIDER:-none}
+      # Only read when LLM_PROVIDER is anthropic or openai_compatible (a provider without LLM_MODEL refuses to start).
+      LLM_MODEL: ${LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "8000:8000"
 
@@ -45,6 +50,13 @@ services:
       AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-dev-only-agent-service-token-change-me-0123456789}
       LLM_PROVIDER: ${AGENT_LLM_PROVIDER:-none}
       AGENT_DEMO_FIXTURES: ${AGENT_DEMO_FIXTURES:-true}
+      # Only read when AGENT_LLM_PROVIDER is not none (same model/keys as the AI service).
+      LLM_MODEL: ${LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Optional server token for GitHub API rate limits on real (non-demo) accounts.
+      GITHUB_TOKEN: ${AGENT_GITHUB_TOKEN:-}
     ports:
       - "8100:8100"
 
@@ -77,6 +89,18 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8080/api/v1/verification/oauth/github/callback}
+      # Staff single sign-on (optional; a provider is offered only when its client id and secret are set).
+      # Register <SSO_REDIRECT_BASE_URL>/api/v1/auth/sso/<google|microsoft|oidc>/callback with the identity provider.
+      SSO_REDIRECT_BASE_URL: ${SSO_REDIRECT_BASE_URL:-http://localhost:8080}
+      SSO_GOOGLE_CLIENT_ID: ${SSO_GOOGLE_CLIENT_ID:-}
+      SSO_GOOGLE_CLIENT_SECRET: ${SSO_GOOGLE_CLIENT_SECRET:-}
+      SSO_MICROSOFT_CLIENT_ID: ${SSO_MICROSOFT_CLIENT_ID:-}
+      SSO_MICROSOFT_CLIENT_SECRET: ${SSO_MICROSOFT_CLIENT_SECRET:-}
+      SSO_MICROSOFT_TENANT_ID: ${SSO_MICROSOFT_TENANT_ID:-organizations}
+      SSO_OIDC_NAME: ${SSO_OIDC_NAME:-Company SSO}
+      SSO_OIDC_CLIENT_ID: ${SSO_OIDC_CLIENT_ID:-}
+      SSO_OIDC_CLIENT_SECRET: ${SSO_OIDC_CLIENT_SECRET:-}
+      SSO_OIDC_ISSUER: ${SSO_OIDC_ISSUER:-}
       MAIL_HOST: mailpit
       MAIL_PORT: "1025"
       MAIL_ENABLED: "true"

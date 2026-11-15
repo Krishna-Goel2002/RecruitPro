@@ -194,6 +194,8 @@ export const OAUTH_ERROR_TEXT: Record<string, string> = {
   STATE_INVALID: 'The GitHub connection could not be matched to your request. Please start again from this page.',
   STATE_EXPIRED: 'The GitHub connection took more than 10 minutes and expired. Please try again.',
   STATE_USED: 'This GitHub connection link was already used. If GitHub is not in your list, please try again.',
+  BROWSER_MISMATCH:
+    'This GitHub connection was not started in this browser (or its cookie was blocked), so nothing was connected. Please start again from this page.',
   ACCESS_DENIED: 'You cancelled the GitHub authorisation, so nothing was connected.',
   CODE_MISSING: 'GitHub did not send back an authorisation code. Please try again.',
   CODE_REJECTED: 'GitHub did not accept the authorisation. Please try again.',

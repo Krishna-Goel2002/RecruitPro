@@ -33,6 +33,10 @@ export const authApi = {
   acceptInvite: (body: AcceptInviteRequest) => apiRequest<AuthResponse>('/auth/accept-invite', { method: 'POST', body, auth: false }),
   forgotPassword: (email: string) => apiRequest<null>('/auth/forgot-password', { method: 'POST', body: { email }, auth: false }),
   resetPassword: (body: ResetPasswordRequest) => apiRequest<null>('/auth/reset-password', { method: 'POST', body, auth: false }),
+  /** Confirms the e-mail address with the token from the verification e-mail (single use, 24 h). */
+  verifyEmail: (token: string) => apiRequest<AuthUser>('/auth/verify-email', { method: 'POST', body: { token }, auth: false }),
+  /** Sends a new verification e-mail to the signed-in user. */
+  resendVerification: () => apiRequest<null>('/auth/resend-verification', { method: 'POST' }),
   me: () => apiRequest<AuthUser>('/me'),
 }
 

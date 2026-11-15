@@ -59,6 +59,8 @@ public class VerificationEvidenceContributor implements EvidenceContributor {
                 candidates.add(verdict);
             }
         }
+        // Verdicts whose claim subject disappeared (fact of a replaced analysis, deleted or rejected claim) never lift.
+        candidates = support.withCurrentSubjects(candidates);
         if (candidates.isEmpty()) {
             return List.of();
         }

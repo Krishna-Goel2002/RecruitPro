@@ -2,7 +2,7 @@
 badges signed with keys generated at run time, references). Every case runs the real verifier and the shared
 verdict layer offline; the gold verdict is what a careful human reviewer would conclude from the same evidence.
 
-Adversarial cases are marked: forks only, bulk history, ownership unproven, injection text, hidden text, wrong badge
+Adversarial cases are marked: forks only, bulk history, backdated history, ownership unproven, injection text, hidden text, wrong badge
 recipient, tampered signatures, foreign keys, lookalike/free-mail referee domains, SSRF redirects.
 """
 from __future__ import annotations
@@ -66,6 +66,7 @@ REACT_PKG = {"package.json": package_json({"react": "^18.0.0", "react-dom": "^18
 def code_cases() -> list[Case]:
     strong = [repo("web-app", languages=TS, files=REACT_PKG), repo("admin-ui", languages=TS, files=REACT_PKG,
                                                                    user_dates=monthly(200, 4))]
+    backdated = [days_ago(400 - index * 30) for index in range(10)]  # a year of history in a repo created days ago
     base_claims = [("c1", "SKILL", "React", "VERIFIED"), ("c2", "SKILL", "TypeScript", "VERIFIED"),
                    ("c3", "SKILL", "Rust", "NOT_FOUND"), ("c4", "EDUCATION", "B.Sc. Computer Science", "NOT_CHECKABLE")]
     cases = [
@@ -91,6 +92,23 @@ def code_cases() -> list[Case]:
             repo("shop", languages={"Java": 50000}, created_days_ago=3,
                  user_dates=[days_ago(400 - i * 30) for i in range(10)]),
             repo("shop2", languages={"Java": 50000}, created_days_ago=2, user_dates=[days_ago(2)] * 15)],
+            [("c1", "SKILL", "Java", "PARTLY_VERIFIED")], adversarial=True),
+        _code_case("code-backdated-fresh-repos", [
+            repo("shop", languages={"Java": 50000}, created_days_ago=3, user_dates=backdated),
+            repo("shop2", languages={"Java": 50000}, created_days_ago=3, user_dates=backdated)],
+            [("c1", "SKILL", "Java", "PARTLY_VERIFIED")], adversarial=True),
+        _code_case("code-backdated-fresh-repos-gitlab", [
+            repo("shop", languages={"Java": 50000}, created_days_ago=3, user_dates=backdated),
+            repo("shop2", languages={"Java": 50000}, created_days_ago=5, user_dates=backdated)],
+            [("c1", "SKILL", "Java", "PARTLY_VERIFIED")], gitlab=True, adversarial=True),
+        _code_case("code-backdated-graphql", [
+            repo("shop", languages={"Java": 50000}, created_days_ago=20, user_dates=backdated),
+            repo("shop2", languages={"Java": 50000}, created_days_ago=10, user_dates=backdated)],
+            [("c1", "SKILL", "Java", "PARTLY_VERIFIED")], token="synthetic-token", adversarial=True),
+        _code_case("code-backdated-author-dates", [
+            repo("shop", languages={"Java": 50000}, created_days_ago=400, user_dates=backdated, committed=days_ago(3)),
+            repo("shop2", languages={"Java": 50000}, created_days_ago=400, user_dates=backdated,
+                 committed=days_ago(2))],
             [("c1", "SKILL", "Java", "PARTLY_VERIFIED")], adversarial=True),
         _code_case("code-bulk-one-day", [repo("x", languages=PY, created_days_ago=5, user_dates=[days_ago(4)] * 40),
                                          repo("y", languages=PY, created_days_ago=6, user_dates=[days_ago(6)] * 40)],

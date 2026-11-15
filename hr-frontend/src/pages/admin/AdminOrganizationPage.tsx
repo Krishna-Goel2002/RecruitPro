@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'
 import { qk } from '../../api/queryKeys'
 import type { Organization, OrganizationUpdate } from '../../api/types'
+import { ChipsInput } from '../../components/ChipsInput'
 import { Field, Toggle } from '../../components/Field'
 import { SaveIcon } from '../../components/Icons'
 import { PageHeader } from '../../components/Layout'
@@ -10,7 +11,7 @@ import { useNotices } from '../../components/Notices'
 import { ErrorPanel, FormError, LoadingPanel } from '../../components/States'
 import { usePageTitle } from '../../lib/hooks'
 
-/** /admin/organization — name, blind review and share-verification-status, each explained. */
+/** /admin/organization — name, blind review, share-verification-status, staff MFA requirement and SSO domains, each explained. */
 export function AdminOrganizationPage() {
   usePageTitle('Organisation settings')
   const organization = useQuery({ queryKey: qk.adminOrganization, queryFn: ({ signal }) => adminApi.organization(signal) })
@@ -30,12 +31,19 @@ function OrganizationForm({ organization }: { organization: Organization }) {
   const [name, setName] = useState(organization.name)
   const [blindReview, setBlindReview] = useState(organization.blindReview)
   const [share, setShare] = useState(organization.shareVerificationStatus)
+  const [requireMfa, setRequireMfa] = useState(organization.requireStaffMfa ?? false)
+  const [ssoDomains, setSsoDomains] = useState<string[]>(organization.ssoAllowedDomains ?? [])
   const [nameError, setNameError] = useState<string | null>(null)
 
   const changes: OrganizationUpdate = {}
   if (name.trim() !== organization.name) changes.name = name.trim()
   if (blindReview !== organization.blindReview) changes.blindReview = blindReview
   if (share !== organization.shareVerificationStatus) changes.shareVerificationStatus = share
+  if (requireMfa !== (organization.requireStaffMfa ?? false)) changes.requireStaffMfa = requireMfa
+  const savedDomains = organization.ssoAllowedDomains ?? []
+  if (ssoDomains.length !== savedDomains.length || ssoDomains.some((domain, index) => domain !== savedDomains[index])) {
+    changes.ssoAllowedDomains = ssoDomains.map(domain => domain.trim().toLowerCase().replace(/^@/, '')).filter(Boolean)
+  }
   const dirty = Object.keys(changes).length > 0
 
   const save = useMutation({
@@ -82,6 +90,29 @@ function OrganizationForm({ organization }: { organization: Organization }) {
           can add evidence. They never see scores, ranks, reviewer notes or other applicants.
         </>}
       />
+
+      <Toggle
+        checked={requireMfa}
+        onChange={setRequireMfa}
+        label="Require two-step verification for all staff"
+        description={<>
+          Every staff account (admins included) must use an authenticator-app code at sign-in. Staff who have not set it up are asked to
+          enrol at their next sign-in; sessions that are already open are not ended. Needs the server’s encryption key.
+        </>}
+      />
+
+      <ChipsInput
+        label="Single sign-on: allowed e-mail domains"
+        values={ssoDomains}
+        onChange={setSsoDomains}
+        placeholder="example.com, then Enter"
+        maxItems={20}
+        maxLength={253}
+      />
+      <p className="item-meta">
+        Staff can sign in with a configured identity provider only when their e-mail domain is listed here (exact domains, no wildcards).
+        No accounts are created automatically. Leave empty to turn single sign-on off.
+      </p>
 
       <FormError error={save.error} />
       <div className="editor-actions">

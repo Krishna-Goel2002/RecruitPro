@@ -99,8 +99,8 @@ public class StaffVerificationService {
         }
         Long candidateId = application.getCandidate().getId();
         List<ClaimVerdict> verdicts = new ArrayList<>();
-        List<ClaimVerdict> shared = verdictRepository.findAllByCandidateIdAndCurrentTrueAndCandidateStatusOrderByIdAsc(
-                candidateId, CandidateVerdictStatus.SHARED);
+        List<ClaimVerdict> shared = support.withCurrentSubjects(verdictRepository
+                .findAllByCandidateIdAndCurrentTrueAndCandidateStatusOrderByIdAsc(candidateId, CandidateVerdictStatus.SHARED));
         Map<Long, String> connectors = support.connectors(shared);
         for (ClaimVerdict verdict : shared) {
             if (settings.enabled(connectors.get(verdict.getId()))) {
@@ -147,7 +147,8 @@ public class StaffVerificationService {
         CurrentUser caller = jobAccess.requireJobReader();
         Long organizationId = caller.organizationId();
         ClaimVerdict verdict = verdictId == null ? null : verdictRepository.findById(verdictId).orElse(null);
-        if (verdict == null || !verdict.isCurrent() || verdict.getCandidateStatus() != CandidateVerdictStatus.SHARED) {
+        if (verdict == null || !verdict.isCurrent() || verdict.getCandidateStatus() != CandidateVerdictStatus.SHARED
+                || support.withCurrentSubjects(List.of(verdict)).isEmpty()) {
             throw new ResourceNotFoundException("Verdict not found");
         }
         List<Application> applications = lookupRepository.findByCandidateAndOrganization(verdict.getCandidateId(), organizationId);

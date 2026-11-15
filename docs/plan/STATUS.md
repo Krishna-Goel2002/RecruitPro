@@ -1,3 +1,88 @@
+# Plan v2 status, 16 Nov 2026
+
+Branch `Kshitij`, HEAD `2fedafb` plus uncommitted demo patches and the review fixes of 16 Nov evening (nothing
+committed). Plan: [IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md). How to run and click through everything:
+[RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md). Detailed explanations: [docs/handbook/](../handbook/).
+The older WP-INT status (audit findings C1–L13) follows further down and is still valid except where this section says
+otherwise.
+
+## A. What is built, per work package
+
+| WP | What exists | Notes |
+|---|---|---|
+| WP-AG | `agent-service/` (FastAPI, port 8100, `X-Internal-Service-Token`): ownership check (DNS TXT, well-known file, page code, profile bio), code (GitHub/GitLab), web, document, Open Badge (OB2 hosted, OB3 VC-JWT) and reference verifiers; SSRF-guarded fetching; ownership cap, probe questions, de-identification, citation validator; offline demo fixtures (`demo-*`); eval harness | [WP-AG-NOTES.md](WP-AG-NOTES.md) |
+| WP-VBE | Backend Claim Ledger (V21, V22): sources with consent, ownership checks, GitHub OAuth, runs via the job queue, evidence with SHA-256 and snapshots, append-only verdicts, candidate Share/Hide/Re-check, references with a public referee page, staff view (blind-first), per-organisation reviews and the CORROBORATED lift into matching, SHADOW/VISIBLE mode, connectors, shadow labelling queue and metrics, export/deletion, demo seed | [WP-VBE-NOTES.md](WP-VBE-NOTES.md) |
+| WP-PLAT | Staff MFA (TOTP, recovery codes, org requirement), OIDC SSO for staff (Google, Microsoft, generic; PKCE, nonce, JWKS), multi-instance safety (job dedupe key, notification row claims, database rate-limit store), `X-Request-Id`, Prometheus, structured logs, security headers and nginx CSP, ICS invitations, scorecard editing with revisions, work-sample file uploads and HR cancellation, fairness date range, demo assessment seed (V23, V24) | [WP-PLAT-NOTES.md](WP-PLAT-NOTES.md) |
+| WP-FE-CAND2 / WP-FE-HR2 | Candidate "Strengthen your application" (`/verification`) and referee page (`/reference/:token`); HR applicant Verification tab, admin Verification page, account security (MFA), MFA and SSO sign-in, `/sso/complete`, work-sample attachments and cancellation, fairness range | [WP-FE-FINISH-NOTES.md](WP-FE-FINISH-NOTES.md) |
+| Demo patches (uncommitted) | Demo assessment seed in its own transaction; scorecard **Edit** button; require-MFA and SSO-domain controls on the organisation page; compose passes SSO/LLM/`AGENT_GITHUB_TOKEN`; `.env.example` key fix; `tools/totp.py` | [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md) section 0.2 |
+
+## B. Review fixes, 16 Nov 2026 (evening)
+
+| # | Finding | Fix | Tests |
+|---|---|---|---|
+| 1 | GitHub OAuth state not bound to the browser (login-CSRF / account linking), no PKCE | `start` sets an httpOnly, `SameSite=Lax`, `Secure` (per `app.auth.cookie-secure`) cookie `rp_oauth_github` scoped to the callback path, holding a random nonce; its SHA-256 is stored with the state (V25). The public callback requires the cookie, compares in constant time, refuses with `?error=BROWSER_MISMATCH` (state not consumed) and always clears the cookie. PKCE S256: the verifier is stored encrypted with SecretCipher (context `voauth:<stateHash>`) and sent as `code_verifier` | `GitHubOAuthIntegrationTest` (cookie attributes, hash stored, challenge = S256(verifier), no cookie / wrong cookie refused, attacker's state in the victim's browser refused, cookie cleared) |
+| 2 | Backdated commits in fresh repositories reached VERIFIED | agent-service counts committer dates (author dates only when absent), each clamped to [repository `created_at`, now]; a repository created < 30 days ago cannot supply a 30-day span. New integrity note `BACKDATED_HISTORY` | `tests/test_code.py` (+6), `test_demo.py`; eval cases `code-backdated-*` (4, gold PARTLY_VERIFIED) |
+| 3 | `/ownership/check` PROFILE_BIO_CODE without `provider:` gave HTTP 500 | 422 `{detail:{code:"BAD_TARGET", message}}` for a missing/unknown provider or invalid login | `tests/test_ownership.py` |
+| 4 | Sign-up verification e-mail links to the HR portal's `/verify-email`, which had no route | `hr-frontend/src/pages/auth/VerifyEmailPage.tsx` (same endpoint and behaviour as the candidate portal) and the route | HR build |
+| 5 | Shadow queue ignored disabled connectors | `ShadowEvaluationService.queue` leaves them out (as the staff view does) | `AdminVerificationIntegrationTest.theShadowQueueLeavesOutDisabledConnectors` |
+| 6 | Referee consent says "first name", e-mail used the full name | The REFERENCE_REQUEST e-mail now uses the first name only (privacy-preserving; the referee page already did) | `ReferenceIntegrationTest` |
+| 7 | Verdicts of a disappeared subject stayed in use | Deleting a claim, replacing it with the extracted value, or changing its value marks that claim's current verdicts WITHDRAWN (`ClaimVerdictWithdrawal`). Verdicts whose subject is no longer current (fact of a re-analysed resume, claim rejected by a recruiter) are left out of the staff view, reviews, the shadow queue and matching (`VerificationStaffSupport.withCurrentSubjects`) | `StaffVerificationIntegrationTest.verdictsOfSubjectsThatDisappearedAreWithdrawnOrLeftOut` |
+| 8 | Org requires MFA but `APP_ENCRYPTION_KEY` missing: MFA silently skipped | Staff sign-in now fails closed with 503 `MFA_NOT_CONFIGURED` | `MfaNotConfiguredIntegrationTest` |
+
+## C. What has been verified, and how
+
+| Check | Command | Result (16 Nov 2026, after the review fixes) |
+|---|---|---|
+| Java syntax, imports, types (static) | `python3 tools/java_static_check.py backend/src` | 577 files, 0 errors |
+| Entity ↔ schema | `python3 tools/check_entity_schema.py` | 476 columns of 41 entities vs V1–V25, 0 errors, 0 warnings |
+| Migrations on PostgreSQL 16 | `python3 tools/check_migrations_pg.py` | V1–V25 applied |
+| agent-service | `cd agent-service && python3 -m pytest -q` / `python3 -m eval.run --check` | 176 passed / exit 0: 83 cases (30 adversarial), false-corroboration rate 0.0, kappa 1.0 |
+| ai-service | `cd ai-service && python3 -m pytest -q` / `python3 -m eval.run --check` | 178 passed / CHECK PASSED |
+| Candidate portal | clean copy, `npx --yes pnpm@10 install --frozen-lockfile && npx --yes pnpm@10 build` | passed |
+| HR portal | same | passed |
+| Java logic | read-through reviews by independent agents during WP-VBE and WP-PLAT | 2 test bugs (WP-VBE) and 4 minor runtime issues (WP-PLAT) found and fixed |
+| Core platform `9ad341a` | `./mvnw verify` on JDK 21 + `docker compose up --build` (teammate, 15 Nov) | 239 tests, 0 failures, 6 skipped; stack started |
+
+Python ran on 3.10 in the sandbox (CI uses 3.12). All tests are offline (no network).
+
+## D. Not compiled or not run yet
+
+- **No Java written after `9ad341a` has been compiled**: `2fedafb` (WP-VBE, WP-PLAT), the demo patches and the review
+  fixes above. The sandbox has JDK 11 and no Maven Central. First step on a JDK 21 machine: `cd backend && ./mvnw verify`
+  (RUN_AND_TEST_GUIDE 4.1). Expect a few small compile or test fixes.
+- The Docker images of agent-service and of the new backend have not been built.
+- No flow of plan v2 has been clicked through against a live stack; flows were traced through the code and the agent
+  fixtures were run in-process.
+- Real GitHub OAuth, real identity providers (Google, Entra), real SMTP with ICS in mail clients and a Prometheus scrape
+  were not exercised.
+
+## E. Known limitations (design limits, not fixed)
+
+- **Referee employer domain is typed by the candidate.** A referee mailbox on a domain the candidate controls, entered as
+  the employer domain, anchors a reference to `VERIFIED` (free-mail domains never count). Recruiters see the employer
+  name/domain and must review before confirming; independent domain evidence is future work.
+- **Badge issuer trust is not established.** An OB2 hosted badge or an OB3 `did:web`/JWKS issuer on a domain the candidate
+  controls verifies (signatures and recipients are checked; `did:key` issuers are capped at PARTLY_VERIFIED). An issuer
+  allow-list is future work.
+- **No data-retention purge.** Evidence snapshots, verdicts, audit events and match runs are kept until the candidate
+  deletes the account; there is no time-based purge. Snapshot deletion on revoke is after-commit and best-effort.
+- **ai-service Docker image has no LibreOffice or OCR.** `.doc` falls back to the olefile reader; scanned PDFs return
+  NEEDS_OCR. OCR exists only as an optional extra (`requirements-ocr.txt`, `OCR_ENABLED=true`).
+- **MFA and the encryption key.** Without `APP_ENCRYPTION_KEY`, MFA enrolment, SSO and GitHub OAuth are unavailable; an
+  organisation that requires MFA now refuses staff sign-in (503 `MFA_NOT_CONFIGURED`) instead of skipping MFA. SSO
+  sign-ins count as MFA-satisfied by the identity provider.
+- **GitHub OAuth binding cookie needs the API and the portal on one site** (like the refresh cookies), and the callback
+  host must be the API host the portal calls (`GITHUB_OAUTH_REDIRECT_URI`). A cookie blocked by the browser gives
+  `BROWSER_MISMATCH`. The OAuth token is deleted on revoke but not revoked at GitHub.
+- **Accuracy figures are synthetic.** The agent eval (kappa 1.0) is near-tautological; real numbers must come from shadow
+  labelling (≥ 150 labels, FCR ≤ 2 %, kappa ≥ 0.70). Readiness for VISIBLE is shown, not enforced.
+- **Re-check un-shares:** a new verdict starts as AWAITING_CANDIDATE and the earlier review does not carry over.
+- Public verification rate limits are per instance (memory); the shadow queue is paged in memory; REFERENCE_REQUEST
+  e-mails survive account deletion; uploaded documents are stored unencrypted (like resumes); de-identification is
+  lexical; no QR code for MFA enrolment (secret and `otpauth://` URI as text); no candidate resume-delete endpoint.
+
+---
+
 # RecruitPro status after the audit remediation (WP-INT)
 
 Date: 2026-11-08 · Scope: all work packages of [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) (WP-PY, WP-BE-A, WP-BE-B, WP-BE-C, WP-FE-CAND, WP-FE-HR) plus the integration package WP-INT.
@@ -142,7 +227,6 @@ Organisations and invitations; hardened auth (rotation, lockout, rate limits, ve
 | PostgreSQL row-level security | Service-layer scoping first; RLS needs per-request `SET` plumbing | Add once tenancy tests are green |
 | pgvector semantic matching | Needs an embedding model download | Embedding provider behind the AI-service interface |
 | ESCO import | Bulk ESCO download unreachable here | `ai-service/app/taxonomy/import_esco.py` with the official CSV |
-| SSO (Google, Microsoft) and MFA | Need OAuth credentials and real IdP testing | Spring Security OAuth2 login + TOTP for staff |
 | Calendar, HRMS and job-board connectors | Need partner credentials | Interview emails carry time and place today (UTC) |
 | WhatsApp notifications | Needs a provider account | `NotificationChannel` interface is ready |
 | Outcome data (90-day performance) | Too little data | Capture fields when the first pilot hires |
@@ -150,8 +234,7 @@ Organisations and invitations; hardened auth (rotation, lockout, rate limits, ve
 
 ### 4.3 Known gaps and risks
 
-- Not built: work-sample file uploads (URL only), HR cancellation of work-sample assignments, scorecard editing, fairness by date range or intersectional groups, demo seed for work samples/kits/interviews, per-question interviewer notes visible to other interviewers.
-- Single-instance assumptions: in-memory rate limiter, notification sender without row claims; concurrent match triggers can create a duplicate PENDING job (extra AI call only).
+- Not built: fairness by intersectional groups, per-question interviewer notes visible to other interviewers. (Work-sample file uploads, HR cancellation, scorecard editing, fairness by date range, the demo seed for work samples/kits/interviews, staff MFA and SSO, and the multi-instance safeguards were added in plan v2; see the top of this file.)
 - A deleted candidate's match runs keep the AI's de-identified evidence quotes for audit; the equal-opportunity survey is not versioned, so one answer applies to all of a candidate's applications.
 - After this change, users signed in before the deployment have only the old `rp_refresh` cookie and must sign in once more on each portal.
 - No automated UI test runner is committed for either portal (the WP-FE smoke harnesses lived outside the repository).

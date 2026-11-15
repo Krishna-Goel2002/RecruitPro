@@ -39,7 +39,28 @@ def test_profile_bio(client, fake_net):
     fake_net.accounts.append(FakeAccount(login="dev", bio=f"Builder. {CODE}"))
     assert _check(client, "PROFILE_BIO_CODE", "github:dev")["proven"]
     assert not _check(client, "PROFILE_BIO_CODE", "github:nobody")["proven"]
-    assert not _check(client, "PROFILE_BIO_CODE", "bitbucket:dev")["proven"]
+
+
+@pytest.mark.parametrize("target", ["octocat", "github:", "github:   ", "bitbucket:dev", ":dev", "github:a/b"])
+def test_profile_bio_target_must_be_provider_and_login(client, fake_net, target):
+    response = client.post("/api/v1/ownership/check", headers=HEADERS,
+                           json={"method": "PROFILE_BIO_CODE", "target": target, "code": CODE})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "BAD_TARGET" and response.json()["detail"]["message"]
+    assert fake_net.calls == []
+
+
+def test_profile_bio_demo_target_still_works(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    monkeypatch.setenv("AGENT_DEMO_FIXTURES", "true")
+    with TestClient(create_app()) as demo:
+        for target in ("github:demo-asha", "GitHub: demo-asha "):
+            response = demo.post("/api/v1/ownership/check", headers=HEADERS,
+                                 json={"method": "PROFILE_BIO_CODE", "target": target, "code": CODE})
+            assert response.status_code == 200 and response.json()["proven"], target
 
 
 def test_private_targets_are_never_fetched(client, fake_net):

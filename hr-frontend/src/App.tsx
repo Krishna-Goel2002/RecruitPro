@@ -18,6 +18,7 @@ import { LoginPage } from './pages/auth/LoginPage'
 import { ForgotPasswordPage, ResetPasswordPage } from './pages/auth/PasswordPages'
 import { SignupPage } from './pages/auth/SignupPage'
 import { SsoCompletePage } from './pages/auth/SsoCompletePage'
+import { VerifyEmailPage } from './pages/auth/VerifyEmailPage'
 import { InterviewDetailPage } from './pages/interviews/InterviewDetailPage'
 import { InterviewsPage } from './pages/interviews/InterviewsPage'
 import { JobDetailPage } from './pages/jobs/JobDetailPage'
@@ -39,6 +40,7 @@ export default function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/accept-invite" element={<AcceptInvitePage />} />
       <Route path="/sso/complete" element={<SsoCompletePage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
 
       <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route index element={<HomeRedirect />} />

@@ -15,7 +15,10 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
 
-/** OAuth {@code state} of a pending connection: SHA-256 hex of 32 random bytes, 10-minute expiry, single use. */
+/**
+ * OAuth {@code state} of a pending connection: SHA-256 hex of 32 random bytes, 10-minute expiry, single use, bound
+ * to the starting browser (hashed cookie nonce) and carrying the encrypted PKCE verifier.
+ */
 @Entity
 @Table(name = "verification_oauth_states")
 @EntityListeners(AuditingEntityListener.class)
@@ -42,6 +45,14 @@ public class VerificationOAuthState {
 
     @Column(name = "used_at")
     private LocalDateTime usedAt;
+
+    /** SHA-256 hex of the browser-binding nonce kept in the httpOnly cookie set by {@code start} (V25). */
+    @Column(name = "browser_binding_hash", length = 64)
+    private String browserBindingHash;
+
+    /** PKCE (S256) code verifier, encrypted with SecretCipher, context {@code voauth:<stateHash>} (V25). */
+    @Column(name = "code_verifier_enc", length = 500)
+    private String codeVerifierEnc;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)

@@ -4,7 +4,9 @@ Requests per account: profile, repository list (REST, or one GraphQL query that 
 README.md and the root file list), then per repository in pushed-at order until the budget runs out: latest commits
 (100), languages + root listing + README (REST only), up to 4 manifests, contributor statistics (non-forks).
 Only repositories the login owns are listed (``type=owner`` / ``ownerAffiliations: OWNER``); forks count only with
-the user's own commits after the fork was created.
+the user's own commits after the fork was created. Commit history comes from REST only; both the author date
+(``user_commit_dates``) and the committer date (``user_committer_dates``) are kept, and the code verifier counts the
+committer date (see ``app.verifiers.code.counted_commit_dates``).
 """
 from __future__ import annotations
 

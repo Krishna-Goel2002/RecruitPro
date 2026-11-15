@@ -24,6 +24,10 @@ public interface ClaimVerdictRepository extends JpaRepository<ClaimVerdict, Long
     List<ClaimVerdict> findAllByCandidateIdInAndCurrentTrueAndCandidateStatusOrderByIdDesc(Collection<Long> candidateIds,
                                                                                             CandidateVerdictStatus status);
 
+    /** Current verdicts of one claim subject (any source or reference): withdrawn when the subject disappears. */
+    List<ClaimVerdict> findAllByCandidateIdAndSubjectTypeAndSubjectIdAndCurrentTrue(Long candidateId, SubjectType subjectType,
+                                                                                     Long subjectId);
+
     List<ClaimVerdict> findAllByCandidateIdAndSubjectTypeAndSubjectIdAndSourceIdAndCurrentTrue(
             Long candidateId, SubjectType subjectType, Long subjectId, Long sourceId);
 

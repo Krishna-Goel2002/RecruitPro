@@ -12,11 +12,14 @@ import com.recruitpro.verification.dto.SourceResponse;
 import com.recruitpro.verification.dto.VerdictDetail;
 import com.recruitpro.verification.dto.VerdictResponseRequest;
 import com.recruitpro.verification.service.CandidateLedgerService;
+import com.recruitpro.verification.service.GitHubOAuthBindingCookie;
 import com.recruitpro.verification.service.GitHubOAuthService;
 import com.recruitpro.verification.service.ReferenceService;
 import com.recruitpro.verification.service.VerificationRunService;
 import com.recruitpro.verification.service.VerificationSourceService;
 import io.swagger.v3.oas.annotations.Operation;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -43,15 +46,17 @@ public class CandidateVerificationController {
     private final GitHubOAuthService gitHubOAuthService;
     private final CandidateLedgerService ledgerService;
     private final ReferenceService referenceService;
+    private final GitHubOAuthBindingCookie oauthCookie;
 
     public CandidateVerificationController(VerificationSourceService sourceService, VerificationRunService runService,
                                            GitHubOAuthService gitHubOAuthService, CandidateLedgerService ledgerService,
-                                           ReferenceService referenceService) {
+                                           ReferenceService referenceService, GitHubOAuthBindingCookie oauthCookie) {
         this.sourceService = sourceService;
         this.runService = runService;
         this.gitHubOAuthService = gitHubOAuthService;
         this.ledgerService = ledgerService;
         this.referenceService = referenceService;
+        this.oauthCookie = oauthCookie;
     }
 
     // ---- sources ----
@@ -103,8 +108,12 @@ public class CandidateVerificationController {
 
     @GetMapping("/oauth/github/start")
     @Operation(summary = "Start connecting GitHub (503 OAUTH_NOT_CONFIGURED when unavailable)")
-    public ApiResponse<OAuthStartResponse> startGitHub() {
-        return ApiResponse.success(gitHubOAuthService.start());
+    public ApiResponse<OAuthStartResponse> startGitHub(HttpServletResponse response) {
+        GitHubOAuthService.StartResult started = gitHubOAuthService.start();
+        // Binds the state to this browser: the public callback requires this httpOnly cookie.
+        response.addHeader(HttpHeaders.SET_COOKIE,
+                oauthCookie.issue(started.browserNonce(), GitHubOAuthService.STATE_TTL).toString());
+        return ApiResponse.success(started.response());
     }
 
     // ---- ledger ----

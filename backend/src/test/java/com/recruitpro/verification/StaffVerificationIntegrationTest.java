@@ -10,6 +10,7 @@ import com.recruitpro.candidate.entity.ResumeAnalysis;
 import com.recruitpro.candidate.entity.ResumeAnalysisFact;
 import com.recruitpro.candidate.entity.ResumeAnalysisStatus;
 import com.recruitpro.candidate.entity.ResumeFactType;
+import com.recruitpro.candidate.repository.ResumeAnalysisFactRepository;
 import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.evidence.entity.CandidateClaim;
 import com.recruitpro.evidence.entity.ClaimType;
@@ -51,6 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -69,6 +71,7 @@ class StaffVerificationIntegrationTest extends VerificationIntegrationTestBase {
     @Autowired AuditEventRepository audit;
     @Autowired BackgroundJobRepository jobs;
     @Autowired MatchingService matchingService;
+    @Autowired ResumeAnalysisFactRepository facts;
 
     Organization visibleOrg;
     Organization otherOrg;
@@ -76,6 +79,9 @@ class StaffVerificationIntegrationTest extends VerificationIntegrationTestBase {
     Application otherApplication;
     ClaimVerdict shared;
     ClaimVerdict awaiting;
+    ResumeAnalysisFact javaFact;
+    CandidateClaim react;
+    VerificationSource source;
 
     @BeforeEach
     void setUp() {
@@ -91,8 +97,8 @@ class StaffVerificationIntegrationTest extends VerificationIntegrationTestBase {
         CandidateProfile candidate = fixtures.candidate("staffview@cand.test");
         Resume resume = screening.resume(candidate, "cv.pdf");
         ResumeAnalysis analysis = screening.analysis(resume, ResumeAnalysisStatus.COMPLETED);
-        ResumeAnalysisFact javaFact = screening.fact(analysis, ResumeFactType.SKILL, "Java");
-        CandidateClaim react = verification.claim(candidate, ClaimType.SKILL, "React");
+        javaFact = screening.fact(analysis, ResumeFactType.SKILL, "Java");
+        react = verification.claim(candidate, ClaimType.SKILL, "React");
 
         Job job = fixtures.job(owner, "Frontend Engineer", JobStatus.PUBLISHED);
         screening.requirement(job, RequirementType.SKILL, "React", true, false);
@@ -101,7 +107,7 @@ class StaffVerificationIntegrationTest extends VerificationIntegrationTestBase {
         application = screening.application(candidate, job, resume, UtcTime.now());
         otherApplication = screening.application(candidate, otherJob, resume, UtcTime.now());
 
-        VerificationSource source = verification.source(candidate, VerificationSourceKind.GITHUB, "staff-view", true);
+        source = verification.source(candidate, VerificationSourceKind.GITHUB, "staff-view", true);
         EvidenceItem item = new EvidenceItem();
         item.setSourceId(source.getId());
         item.setCandidateId(candidate.getId());
@@ -227,6 +233,43 @@ class StaffVerificationIntegrationTest extends VerificationIntegrationTestBase {
         verification.mode(visibleOrg.getId(), VerificationMode.SHADOW);
         assertEquals(null, vf(matchingService.prepare(application.getId())));
         assertFalse(verdicts.findById(awaiting.getId()).orElseThrow().getCandidateStatus() == CandidateVerdictStatus.SHARED);
+    }
+
+    @Test
+    void verdictsOfSubjectsThatDisappearedAreWithdrawnOrLeftOut() throws Exception {
+        verification.mode(visibleOrg.getId(), VerificationMode.VISIBLE);
+        String path = "/api/v1/hr/applications/{id}/verification";
+        ClaimVerdict factVerdict = verification.verdict(source, react, VerdictValue.VERIFIED, true, CandidateVerdictStatus.SHARED);
+        factVerdict.setSubjectType(SubjectType.RESUME_FACT);
+        factVerdict.setSubjectId(javaFact.getId());
+        factVerdict.setClaimValue("Java");
+        factVerdict = verdicts.save(factVerdict);
+        mvc.perform(get(path, application.getId()).with(staff("hr@visible.test", "HR_MANAGER")))
+                .andExpect(jsonPath("$.data.claims", hasSize(2)));
+
+        // The resume is re-analysed: the parser result replaces the analysis's facts (ResumeIntelligenceService.complete
+        // deletes them), so the fact's verdict is orphaned and left out.
+        facts.deleteById(javaFact.getId());
+        mvc.perform(get(path, application.getId()).with(staff("hr@visible.test", "HR_MANAGER")))
+                .andExpect(jsonPath("$.data.claims", hasSize(1)))
+                .andExpect(jsonPath("$.data.claims[0].value", is("React")));
+        mvc.perform(post("/api/v1/hr/verdicts/{id}/review", factVerdict.getId()).with(staff("hr@visible.test", "HR_MANAGER"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"CONFIRM\"}")).andExpect(status().isNotFound());
+
+        // A confirmed claim lifts matching until the candidate deletes the claim: its verdicts are then WITHDRAWN.
+        mvc.perform(post("/api/v1/hr/verdicts/{id}/review", shared.getId()).with(staff("hr@visible.test", "HR_MANAGER"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"CONFIRM\"}")).andExpect(status().isOk());
+        assertNotNull(vf(matchingService.prepare(application.getId())));
+        mvc.perform(delete("/api/v1/candidates/me/claims/{id}", react.getId()).with(candidate("staffview@cand.test")))
+                .andExpect(status().is2xxSuccessful());
+        ClaimVerdict withdrawn = verdicts.findById(shared.getId()).orElseThrow();
+        assertEquals(CandidateVerdictStatus.WITHDRAWN, withdrawn.getCandidateStatus());
+        assertFalse(withdrawn.isCurrent());
+        mvc.perform(get(path, application.getId()).with(staff("hr@visible.test", "HR_MANAGER")))
+                .andExpect(jsonPath("$.data.claims", hasSize(0)));
+        assertEquals(null, vf(matchingService.prepare(application.getId())), "a withdrawn verdict never lifts matching");
+        mvc.perform(post("/api/v1/hr/verdicts/{id}/review", shared.getId()).with(staff("hr@visible.test", "HR_MANAGER"))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"CONFIRM\"}")).andExpect(status().isNotFound());
     }
 
     private static AiMatchRequest.Fact vf(PreparedMatch prepared) {

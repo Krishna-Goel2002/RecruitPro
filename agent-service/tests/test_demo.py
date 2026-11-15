@@ -51,6 +51,20 @@ def test_demo_code_web_badge_and_ownership(demo_client):
         assert result["proven"], method
 
 
+def test_demo_code_verdicts_are_unchanged(demo_client):
+    def verdicts(login, skills):
+        data = demo_client.post("/api/v1/verify/code", headers=HEADERS, json={
+            "provider": "github", "login": login, "ownershipProven": True,
+            "claims": [{"id": f"fact:{index}", "type": "SKILL", "value": value}
+                       for index, value in enumerate(skills, start=1)]}).json()
+        assert not any(note["code"] == "BACKDATED_HISTORY" for verdict in data["verdicts"]
+                       for note in verdict["integrityNotes"])
+        return [verdict["verdict"] for verdict in data["verdicts"]]
+
+    assert verdicts("demo-asha", ["React", "TypeScript", "Python"]) == ["VERIFIED", "VERIFIED", "PARTLY_VERIFIED"]
+    assert verdicts("demo-ravi", ["Java", "TensorFlow"]) == ["PARTLY_VERIFIED", "NOT_FOUND"]
+
+
 def test_demo_fixtures_are_only_for_demo_identifiers():
     on = load_settings({"AGENT_SERVICE_TOKEN": "x", "AGENT_DEMO_FIXTURES": "true"})
     off = load_settings({"AGENT_SERVICE_TOKEN": "x"})

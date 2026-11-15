@@ -123,9 +123,10 @@ public class MfaService {
         }
         if (organizationRequiresMfa(user.getOrganizationId())) {
             if (!cipher.isConfigured()) {
-                log.warn("Organisation {} requires staff MFA but app.encryption.key is not configured; MFA not enforced",
+                // Fail closed (review fix 16 Nov 2026): a required second factor is never silently skipped.
+                log.error("Organisation {} requires staff MFA but app.encryption.key is not configured; sign-in refused",
                         user.getOrganizationId());
-                return Optional.empty();
+                throw notConfigured();
             }
             return Optional.of(new MfaChallengeResponse(true, true, tokens.issue(user, UserTokenPurpose.MFA_ENROLL),
                     MfaTokenService.TTL.toSeconds()));

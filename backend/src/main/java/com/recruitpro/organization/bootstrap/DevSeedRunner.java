@@ -41,5 +41,10 @@ public class DevSeedRunner implements ApplicationRunner {
             return;
         }
         seeder.seed(password);
+        try {
+            seeder.seedAssessments();
+        } catch (RuntimeException ex) {
+            log.warn("Demo assessments (kit, work sample, interviews) could not be seeded: {}", ex.getClass().getSimpleName(), ex);
+        }
     }
 }

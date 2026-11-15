@@ -191,6 +191,10 @@ class ReferenceIntegrationTest extends VerificationIntegrationTestBase {
         List<Notification> sent = notifications.findAllByRecipientEmailAndTemplateOrderByIdAsc(refereeEmail,
                 NotificationTemplate.REFERENCE_REQUEST);
         assertEquals(1, sent.size(), "one e-mail, no inbox copy");
+        // The consent text promises the referee sees the candidate's first name only.
+        assertTrue(sent.get(0).getSubject().startsWith("Test asked you"), sent.get(0).getSubject());
+        assertFalse(sent.get(0).getSubject().contains("Test Candidate"));
+        assertFalse(sent.get(0).getBody().contains("Test Candidate"), "no last name in the referee e-mail");
         Matcher matcher = LINK.matcher(sent.get(0).getBody());
         assertTrue(matcher.find(), "the e-mail carries the referee link");
         return matcher.group(1);
