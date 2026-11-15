@@ -5,13 +5,7 @@ Evidence-based hiring for small and mid-sized teams. Organisations publish jobs 
 - Plan, decisions and API contracts: [docs/plan/IMPLEMENTATION_PLAN.md](docs/plan/IMPLEMENTATION_PLAN.md)
 - What was fixed, what is new, what remains, and the verification evidence: [docs/plan/STATUS.md](docs/plan/STATUS.md)
 
-> **Important: the Java backend has not been compiled yet.** The code in this repository was written in an environment without a JDK or Maven Central. It passed a static check (syntax, imports, types), an entity/schema check and a line-by-line review, but **no `javac` run and no backend test run has happened.** Before merging or deploying, run on a machine with JDK 21 (or let CI do it):
->
-> ```bash
-> cd backend && ./mvnw verify        # Windows: mvnw.cmd verify
-> ```
->
-> Fix whatever it reports before relying on the backend. Everything else (AI service, migrations, both portals) was built and tested here.
+> **Verification status (15 Nov 2026).** On a Windows machine with JDK 21, `./mvnw verify` passed: 239 backend tests, 0 failures, 0 errors, 6 skipped (the AI-service end-to-end test runs only with `RECRUITPRO_AI_IT=true`). The AI-service tests, migrations, both portal builds and the full Docker Compose stack also passed. One backend change was made after that run (legacy `.doc` resumes are now sent to the AI service instead of being marked unsupported), so run `./mvnw verify` once more before relying on it. Step-by-step instructions: [docs/guides/RUN_AND_TEST_GUIDE.md](docs/guides/RUN_AND_TEST_GUIDE.md).
 
 ## Quick start (Docker Compose)
 
@@ -135,7 +129,7 @@ Run all of these before merging; CI (`.github/workflows/ci.yml`) runs the same s
 
 | Gate | Command | Status in the build environment |
 |---|---|---|
-| **G-JAVA-REAL** backend compile + unit and integration tests (H2 in PostgreSQL mode) | `cd backend && ./mvnw verify` | **not run: no JDK available. Must be run.** |
+| **G-JAVA-REAL** backend compile + unit and integration tests (H2 in PostgreSQL mode) | `cd backend && ./mvnw verify` | passed on 15 Nov 2026 (239 tests, 6 skipped); re-run after the `.doc` change |
 | G-PY AI service tests | `cd ai-service && python -m pytest -q` | passed |
 | G-PY evaluation thresholds (synthetic data) | `cd ai-service && python -m eval.run --check` | passed |
 | G-SQL migrations on a real PostgreSQL 16 | `pip install pgserver psycopg2-binary && python tools/check_migrations_pg.py` | passed |

@@ -253,13 +253,16 @@ class AiLifecycleIntegrationTest {
         assertEquals(ResumeAnalysisStatus.FAILED, pdfAnalysis.getStatus());
         assertEquals("MALFORMED_PDF", pdfAnalysis.getErrorCode());
 
-        // 2. Legacy .doc format (immediately categorized by service as UNSUPPORTED_FORMAT)
+        // 2. Legacy .doc format is queued for the AI service, which parses it (LibreOffice or olefile)
         byte[] legacyDoc = loadFixture("sample-legacy.doc");
         long docId = uploadResume(candidateEmail, "legacy.doc", "application/msword", legacyDoc);
 
         ResumeAnalysis docAnalysis = analyses.findByResumeId(docId).orElseThrow();
-        assertEquals(ResumeAnalysisStatus.UNSUPPORTED_FORMAT, docAnalysis.getStatus());
-        assertEquals("UNSUPPORTED_FORMAT", docAnalysis.getErrorCode());
+        assertEquals(ResumeAnalysisStatus.PENDING, docAnalysis.getStatus());
+        worker.runOnce();
+        docAnalysis = awaitTerminalStatus(docAnalysis.getId(), 5000);
+        assertTrue(docAnalysis.getStatus() != ResumeAnalysisStatus.UNSUPPORTED_FORMAT,
+                "legacy .doc must be sent to the AI service, not rejected by the backend");
     }
 
     @Test

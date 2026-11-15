@@ -2,7 +2,7 @@
 
 Date: 2026-11-08 · Scope: all work packages of [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) (WP-PY, WP-BE-A, WP-BE-B, WP-BE-C, WP-FE-CAND, WP-FE-HR) plus the integration package WP-INT.
 
-> **The Java backend has never been compiled.** The build environment had no JDK and no Maven Central. Every backend item marked *Fixed* below is fixed in source, covered by tests that were written but not run, and checked by the static gates only. `cd backend && ./mvnw verify` (JDK 21) must pass before any of it is relied on. The AI service, the migrations and both portals were built and tested here.
+> **Update 15 Nov 2026:** the backend now compiles and `./mvnw verify` passed on a teammate's Windows machine (JDK 21): 239 tests, 0 failures, 0 errors, 6 skipped; the Docker Compose stack started with all services up. Two test fixtures were adjusted to get there (`ScreeningFixtures`, a pytest id list). After that run, legacy `.doc` resumes were changed to be queued for parsing (M8), so re-run `./mvnw verify` once.
 
 Status values: **Fixed** (implemented end to end), **Partly** (implemented with a stated limitation), **Deferred** (not done, with the reason in Section 4).
 
@@ -50,7 +50,7 @@ Status values: **Fixed** (implemented end to end), **Partly** (implemented with 
 | M5 | Cover letter supported by the API but has no input | Fixed | Apply dialog with resume picker and cover letter (WP-FE-CAND `pages/jobs/ApplyDialog.tsx`) |
 | M6 | Two tabs refreshing wipe each other's tokens; a failed refresh leaves the UI "signed in" | Fixed | Single-flight refresh + one retry, sign-out on refused refresh (both portals' `api/client.ts`), server grace window |
 | M7 | A brief AI outage marks resumes FAILED for good | Fixed | `background_jobs` queue: retries with exponential backoff, attempt cap, dead letter, stale-lock recovery (WP-BE-A `jobs/*`, PARSE_RESUME handler) |
-| M8 | DOC uploads never parsed; scanned PDFs need OCR and sort last with an empty score | Partly | DOC parsed via LibreOffice or the olefile reader; scans return NEEDS_OCR and are grouped as UNSCORED / ANALYSIS_UNAVAILABLE instead of silently sorting last (WP-PY, WP-BE-B). OCR exists only as the optional extra (`requirements-ocr.txt`, `OCR_ENABLED=true`) and was tested with a fake engine, not real scans |
+| M8 | DOC uploads never parsed; scanned PDFs need OCR and sort last with an empty score | Partly | DOC parsed via LibreOffice or the olefile reader (the backend queued only PDF/DOCX until 15 Nov 2026; `ResumeIntelligenceService.createFor` now queues `.doc` too); scans return NEEDS_OCR and are grouped as UNSCORED / ANALYSIS_UNAVAILABLE instead of silently sorting last (WP-PY, WP-BE-B). OCR exists only as the optional extra (`requirements-ocr.txt`, `OCR_ENABLED=true`) and was tested with a fake engine, not real scans |
 | M9 | Match results overwritten; decisions do not record the evidence shown | Fixed | Append-only `job_match_runs` with `is_current`; `application_decision_history.match_run_id`; job audit CSV shows the run's algorithm and coverages |
 | M10 | Admin audit log is an in-memory buffer lost on restart | Fixed | `audit_events` table, `AuditService`, organisation CSV export (WP-BE-A) and per-job CSV (WP-BE-C) |
 | M11 | Dashboard health hard-coded "UP" | Fixed | `SystemHealthService`: `SELECT 1`, AI `/health` with 2 s timeout, queue counts; shown on `/admin` |
@@ -77,7 +77,7 @@ Status values: **Fixed** (implemented end to end), **Partly** (implemented with 
 | L12 | A non-dictionary requirement matches only when it shares a line with a known skill and cites that other fact | Fixed | Own-type lexical fallback that cites the fact containing the terms: WP-PY `matching/engine.py`; probes P6/P6b in `audit/probe_matching.py` and `tests/test_audit_probes.py` |
 | L13 | Provisioning zeroes the password array after converting it to a String | Fixed | Console provisioners removed; first accounts come from sign-up, bootstrap, invitations or the seed |
 
-Totals: 44 findings; 42 Fixed (backend ones pending the first `mvn verify`), 1 Fixed but not measured (L2), 1 Partly (M8), 0 Deferred.
+Totals: 44 findings; 42 Fixed (backend verified by `mvn verify` on 15 Nov 2026), 1 Fixed but not measured (L2), 1 Partly (M8), 0 Deferred.
 
 ## 2. Integration (WP-INT) changes
 
@@ -169,4 +169,4 @@ Organisations and invitations; hardened auth (rotation, lockout, rate limits, ve
 | G-FE HR | same | passed |
 | WP-INT UI smoke (not committed) | esbuild IIFE bundles of both portals in jsdom against a mocked API | HR 12/12: portal header on every request, inbox + header/sidebar badge, mark read, INTERVIEW_CANCELLED label, change password body + notice, reschedule PATCH with only changed fields, fairness "N reached", no console errors. Candidate 9/9: portal header, late submit → expired state with the unsent text, refetch, account deletion → `/login` notice and no `/auth/refresh` afterwards, no console errors |
 | G-JAVA-REVIEW | cross-package review (Section 2.4) | no defects found |
-| **G-JAVA-REAL** | `cd backend && ./mvnw verify` | **not run (no JDK)** |
+| **G-JAVA-REAL** | `cd backend && ./mvnw verify` | passed 15 Nov 2026 (239 tests, 6 skipped); re-run after the `.doc` change |

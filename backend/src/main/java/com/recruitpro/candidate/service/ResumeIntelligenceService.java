@@ -51,11 +51,15 @@ public class ResumeIntelligenceService {
     private final MatchTriggerService matchTriggerService;
     private final ObjectMapper objectMapper;
 
+    /** Formats the AI service can parse; legacy .doc is handled there via LibreOffice or the olefile reader. */
+    private static final Set<String> PARSEABLE_EXTENSIONS = Set.of("pdf", "docx", "doc");
+
     /** Creates the analysis row for a new resume and queues a PARSE_RESUME job for parseable formats. */
     public ResumeAnalysis createFor(Resume resume) {
         ResumeAnalysis analysis = new ResumeAnalysis();
         analysis.setResume(resume);
-        if ("pdf".equalsIgnoreCase(resume.getFileExtension()) || "docx".equalsIgnoreCase(resume.getFileExtension())) {
+        String extension = resume.getFileExtension() == null ? "" : resume.getFileExtension().toLowerCase(Locale.ROOT);
+        if (PARSEABLE_EXTENSIONS.contains(extension)) {
             analysis.setStatus(ResumeAnalysisStatus.PENDING);
         } else {
             analysis.setStatus(ResumeAnalysisStatus.UNSUPPORTED_FORMAT);
