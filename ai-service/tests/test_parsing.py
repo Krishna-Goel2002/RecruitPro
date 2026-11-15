@@ -200,7 +200,7 @@ class TestLegacyDocOcrAndFailures:
         ("notes.txt", b"Java", "UNSUPPORTED_FORMAT"),
         ("legacy.doc", b"\xd0\xcf\x11\xe0 not an ole file", "MALFORMED_DOC"),
         ("empty.pdf", b"", "EMPTY_DOCUMENT"),
-    ])
+    ], ids=["broken.pdf", "fake.pdf", "empty.docx", "fake.docx", "large.pdf", "notes.txt", "legacy.doc", "empty.pdf"])
     def test_failures_are_explicit(self, filename, content, code):
         result = parse(filename, content)
         assert (result.status, result.errorCode, result.facts) == ("FAILED", code, [])

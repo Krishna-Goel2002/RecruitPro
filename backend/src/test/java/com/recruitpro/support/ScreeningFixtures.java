@@ -22,6 +22,7 @@ import com.recruitpro.hr.entity.JobMatchRun;
 import com.recruitpro.hr.entity.JobRequirement;
 import com.recruitpro.hr.entity.RequirementType;
 import com.recruitpro.hr.repository.JobMatchRunRepository;
+import com.recruitpro.hr.repository.JobRepository;
 import com.recruitpro.hr.repository.JobRequirementRepository;
 import org.springframework.stereotype.Component;
 
@@ -41,17 +42,19 @@ public class ScreeningFixtures {
     private final ApplicationRepository applications;
     private final JobRequirementRepository requirements;
     private final JobMatchRunRepository matchRuns;
+    private final JobRepository jobs;
     private final ObjectMapper objectMapper;
 
     public ScreeningFixtures(ResumeRepository resumes, ResumeAnalysisRepository analyses, ResumeAnalysisFactRepository facts,
                              ApplicationRepository applications, JobRequirementRepository requirements,
-                             JobMatchRunRepository matchRuns, ObjectMapper objectMapper) {
+                             JobMatchRunRepository matchRuns, JobRepository jobs, ObjectMapper objectMapper) {
         this.resumes = resumes;
         this.analyses = analyses;
         this.facts = facts;
         this.applications = applications;
         this.requirements = requirements;
         this.matchRuns = matchRuns;
+        this.jobs = jobs;
         this.objectMapper = objectMapper;
     }
 
@@ -107,8 +110,21 @@ public class ScreeningFixtures {
     }
 
     public Application withStatus(Application application, ApplicationStatus status) {
+        Job job = application.getJob();
+        CandidateProfile candidate = application.getCandidate();
+        Resume resume = application.getResume();
         application.setStatus(status);
-        return applications.saveAndFlush(application);
+        Application saved = applications.saveAndFlush(application);
+        if (job != null) {
+            saved.setJob(job);
+        }
+        if (candidate != null) {
+            saved.setCandidate(candidate);
+        }
+        if (resume != null) {
+            saved.setResume(resume);
+        }
+        return saved;
     }
 
     public JobRequirement requirement(Job job, RequirementType type, String description, boolean mandatory, boolean knockout) {
@@ -127,7 +143,11 @@ public class ScreeningFixtures {
                                   List<Long> unverifiedKnockouts) {
         JobMatchRun run = new JobMatchRun();
         run.setApplication(application);
-        run.setJob(application.getJob());
+        Job job = application.getJob();
+        if (job != null && jobs != null) {
+            job = jobs.findById(job.getId()).orElse(job);
+        }
+        run.setJob(job);
         run.setResumeAnalysis(analysis);
         run.setInputFingerprint("f".repeat(64));
         run.setAlgorithmVersion("evidence-ladder-3");
@@ -139,7 +159,7 @@ public class ScreeningFixtures {
         run.setRequirementResultsJson(new StoredMatchResults(results, unverifiedKnockouts).write(objectMapper));
         run.setCalculatedAt(UtcTime.now());
         run.setCurrentRun(true);
-        run.setRequirementsVersion(application.getJob().getRequirementsVersion());
+        run.setRequirementsVersion(job.getRequirementsVersion());
         run.setTriggerReason("INITIAL");
         return matchRuns.save(run);
     }

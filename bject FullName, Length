@@ -1,0 +1,79 @@
+warning: in the working copy of 'backend/src/test/java/com/recruitpro/support/ScreeningFixtures.java', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/backend/src/test/java/com/recruitpro/support/ScreeningFixtures.java b/backend/src/test/java/com/recruitpro/support/ScreeningFixtures.java[m
+[1mindex b883698..e9c2996 100644[m
+[1m--- a/backend/src/test/java/com/recruitpro/support/ScreeningFixtures.java[m
+[1m+++ b/backend/src/test/java/com/recruitpro/support/ScreeningFixtures.java[m
+[36m@@ -22,6 +22,7 @@[m [mimport com.recruitpro.hr.entity.JobMatchRun;[m
+ import com.recruitpro.hr.entity.JobRequirement;[m
+ import com.recruitpro.hr.entity.RequirementType;[m
+ import com.recruitpro.hr.repository.JobMatchRunRepository;[m
+[32m+[m[32mimport com.recruitpro.hr.repository.JobRepository;[m
+ import com.recruitpro.hr.repository.JobRequirementRepository;[m
+ import org.springframework.stereotype.Component;[m
+ [m
+[36m@@ -41,17 +42,19 @@[m [mpublic class ScreeningFixtures {[m
+     private final ApplicationRepository applications;[m
+     private final JobRequirementRepository requirements;[m
+     private final JobMatchRunRepository matchRuns;[m
+[32m+[m[32m    private final JobRepository jobs;[m
+     private final ObjectMapper objectMapper;[m
+ [m
+     public ScreeningFixtures(ResumeRepository resumes, ResumeAnalysisRepository analyses, ResumeAnalysisFactRepository facts,[m
+                              ApplicationRepository applications, JobRequirementRepository requirements,[m
+[31m-                             JobMatchRunRepository matchRuns, ObjectMapper objectMapper) {[m
+[32m+[m[32m                             JobMatchRunRepository matchRuns, JobRepository jobs, ObjectMapper objectMapper) {[m
+         this.resumes = resumes;[m
+         this.analyses = analyses;[m
+         this.facts = facts;[m
+         this.applications = applications;[m
+         this.requirements = requirements;[m
+         this.matchRuns = matchRuns;[m
+[32m+[m[32m        this.jobs = jobs;[m
+         this.objectMapper = objectMapper;[m
+     }[m
+ [m
+[36m@@ -107,8 +110,21 @@[m [mpublic class ScreeningFixtures {[m
+     }[m
+ [m
+     public Application withStatus(Application application, ApplicationStatus status) {[m
+[32m+[m[32m        Job job = application.getJob();[m
+[32m+[m[32m        CandidateProfile candidate = application.getCandidate();[m
+[32m+[m[32m        Resume resume = application.getResume();[m
+         application.setStatus(status);[m
+[31m-        return applications.saveAndFlush(application);[m
+[32m+[m[32m        Application saved = applications.saveAndFlush(application);[m
+[32m+[m[32m        if (job != null) {[m
+[32m+[m[32m            saved.setJob(job);[m
+[32m+[m[32m        }[m
+[32m+[m[32m        if (candidate != null) {[m
+[32m+[m[32m            saved.setCandidate(candidate);[m
+[32m+[m[32m        }[m
+[32m+[m[32m        if (resume != null) {[m
+[32m+[m[32m            saved.setResume(resume);[m
+[32m+[m[32m        }[m
+[32m+[m[32m        return saved;[m
+     }[m
+ [m
+     public JobRequirement requirement(Job job, RequirementType type, String description, boolean mandatory, boolean knockout) {[m
+[36m@@ -127,7 +143,11 @@[m [mpublic class ScreeningFixtures {[m
+                                   List<Long> unverifiedKnockouts) {[m
+         JobMatchRun run = new JobMatchRun();[m
+         run.setApplication(application);[m
+[31m-        run.setJob(application.getJob());[m
+[32m+[m[32m        Job job = application.getJob();[m
+[32m+[m[32m        if (job != null && jobs != null) {[m
+[32m+[m[32m            job = jobs.findById(job.getId()).orElse(job);[m
+[32m+[m[32m        }[m
+[32m+[m[32m        run.setJob(job);[m
+         run.setResumeAnalysis(analysis);[m
+         run.setInputFingerprint("f".repeat(64));[m
+         run.setAlgorithmVersion("evidence-ladder-3");[m
+[36m@@ -139,7 +159,7 @@[m [mpublic class ScreeningFixtures {[m
+         run.setRequirementResultsJson(new StoredMatchResults(results, unverifiedKnockouts).write(objectMapper));[m
+         run.setCalculatedAt(UtcTime.now());[m
+         run.setCurrentRun(true);[m
+[31m-        run.setRequirementsVersion(application.getJob().getRequirementsVersion());[m
+[32m+[m[32m        run.setRequirementsVersion(job.getRequirementsVersion());[m
+         run.setTriggerReason("INITIAL");[m
+         return matchRuns.save(run);[m
+     }[m
