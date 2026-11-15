@@ -35,14 +35,20 @@ export function SourcesSection({ onCheckOwnership }: { onCheckOwnership: (source
   const [toRevoke, setToRevoke] = useState<VerificationSource | null>(null)
   const [runError, setRunError] = useState<{ sourceId: number; message: string } | null>(null)
 
+  // React Query may call refetchInterval while useQuery runs, before `polling` exists, so it reads a ref.
+  const pollingRef = useRef<ReturnType<typeof usePollingWindow> | null>(null)
   const sources = useQuery({
     queryKey: queryKeys.verificationSources,
     queryFn: verificationApi.sources,
-    refetchInterval: query => polling.nextInterval(anyRunActive(query.state.data)),
+    refetchInterval: query => {
+      const running = anyRunActive(query.state.data)
+      return pollingRef.current ? pollingRef.current.nextInterval(running) : running ? POLL_INTERVAL_MS : false
+    },
     refetchIntervalInBackground: false,
   })
   const active = anyRunActive(sources.data)
   const polling = usePollingWindow({ active, intervalMs: POLL_INTERVAL_MS, backoff: 1.3, maxIntervalMs: POLL_MAX_INTERVAL_MS })
+  pollingRef.current = polling
 
   // When a run finishes, the Claim Ledger has new results.
   const wasActive = useRef(active)

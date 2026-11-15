@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { resumesApi } from '../../api/endpoints'
 import { queryKeys } from '../../api/queryKeys'
@@ -19,15 +19,21 @@ export function isInProgress(status: ResumeAnalysisStatus | undefined): boolean 
  */
 export function useResumeAnalysis(resumeId: number) {
   // `active` is known only after the first response; the window effect reads it from the query result below.
+  // React Query may call refetchInterval while useQuery runs, before `polling` exists, so it reads a ref.
+  const pollingRef = useRef<ReturnType<typeof usePollingWindow> | null>(null)
   const query = useQuery({
     queryKey: queryKeys.resumeAnalysis(resumeId),
     queryFn: () => resumesApi.analysis(resumeId),
-    refetchInterval: current => polling.nextInterval(isInProgress(current.state.data?.status)),
+    refetchInterval: current => {
+      const active = isInProgress(current.state.data?.status)
+      return pollingRef.current ? pollingRef.current.nextInterval(active) : active ? POLL_INTERVAL_MS : false
+    },
     refetchIntervalInBackground: false,
   })
 
   const inProgress = isInProgress(query.data?.status)
   const polling = usePollingWindow({ active: inProgress, intervalMs: POLL_INTERVAL_MS, limitMs: POLL_LIMIT_MS })
+  pollingRef.current = polling
 
   const { refetch } = query
   const { restart } = polling
