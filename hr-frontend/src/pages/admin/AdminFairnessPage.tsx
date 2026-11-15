@@ -4,15 +4,17 @@ import { qk } from '../../api/queryKeys'
 import { PageHeader } from '../../components/Layout'
 import { ErrorPanel, LoadingPanel } from '../../components/States'
 import { usePageTitle } from '../../lib/hooks'
-import { FairnessReportView } from '../jobs/FairnessReportView'
+import { FairnessReportView, useFairnessRange } from '../jobs/FairnessReportView'
 
 /** /admin/fairness — organisation-wide adverse-impact report. */
 export function AdminFairnessPage() {
   usePageTitle('Fairness')
-  const report = useQuery({ queryKey: qk.adminFairness, queryFn: ({ signal }) => adminApi.fairness(signal) })
+  const { range, filter } = useFairnessRange()
+  const report = useQuery({ queryKey: qk.adminFairness(range), queryFn: ({ signal }) => adminApi.fairness(range, signal) })
   return (
     <>
       <PageHeader eyebrow="ADMINISTRATION" title="Fairness across the organisation" subtitle="Selection rates by group at each stage, from voluntary equal-opportunity answers. Per-job reports are on each job’s Fairness tab." />
+      <section className="detail-card form-card" aria-label="Report period">{filter}</section>
       {report.isPending ? <LoadingPanel label="Calculating selection rates…" /> : report.isError ? (
         <ErrorPanel error={report.error} title="We couldn’t load the fairness report" onRetry={() => void report.refetch()} />
       ) : <FairnessReportView report={report.data} />}

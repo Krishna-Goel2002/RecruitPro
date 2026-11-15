@@ -83,6 +83,39 @@ export type AuthResponse = {
 }
 
 export type LoginRequest = { email: string; password: string }
+
+/**
+ * WP-PLAT: staff with MFA (or whose organisation requires it) get this instead of an AuthResponse: no access token and
+ * no cookie yet. `mfaEnrollmentRequired` → enrol with the token (`/me/mfa/enroll` + `/me/mfa/confirm`), otherwise
+ * `/auth/mfa/verify`. Tell the two login answers apart with `mfaRequired === true`.
+ */
+export type MfaChallenge = { mfaRequired: true; mfaEnrollmentRequired: boolean; mfaToken: string; expiresInSeconds: number }
+export type LoginResult = AuthResponse | MfaChallenge
+
+export function isMfaChallenge(value: LoginResult | null | undefined): value is MfaChallenge {
+  return value != null && (value as MfaChallenge).mfaRequired === true
+}
+
+/** Exactly one of `code` (6-digit TOTP) and `recoveryCode`. */
+export type MfaVerifyRequest = { mfaToken: string; code?: string; recoveryCode?: string }
+
+export type MfaStatus = {
+  enabled: boolean
+  enabledAt: string | null
+  pendingEnrollment: boolean
+  recoveryCodesRemaining: number
+  requiredByOrganization: boolean
+  /** false when the server has no encryption key: MFA cannot be set up. */
+  available: boolean
+}
+
+export type MfaEnrollment = { secret: string; otpauthUri: string }
+/** `session` is present only when confirming with an enrolment `mfaToken` (first enrolment during sign-in). */
+export type MfaConfirmResult = { recoveryCodes: string[]; session?: AuthResponse | null }
+export type RecoveryCodes = { recoveryCodes: string[] }
+export type MfaDisableRequest = { password: string; code: string }
+
+export type SsoProvider = { id: string; name: string }
 export type OrganizationSignupRequest = { organizationName: string; firstName: string; lastName: string; email: string; password: string }
 export type InvitationPreview = { organizationName: string; email: string; role: StaffRole; expiresAt: string }
 export type AcceptInviteRequest = { token: string; firstName: string; lastName: string; password: string }
@@ -344,7 +377,18 @@ export type WorkSampleAssignment = {
   totalScore: number | null
   scoredAt: string | null
   scoredByName: string | null
+  /** WP-PLAT extras (explicit null / [] from the server; optional here for older payloads). */
+  files?: WorkSampleFile[]
+  cancelledAt?: string | null
+  cancelReason?: string | null
+  cancelledByName?: string | null
 }
+
+/** A candidate's submission file. Download with GET /hr/work-sample-assignments/{id}/files/{fileId} (raw bytes). */
+export type WorkSampleFile = { id: number; originalName: string; contentType: string; sizeBytes: number; sha256: string; uploadedAt: string }
+
+/** Assignments in these states can be cancelled (ADMIN, HR_MANAGER); CANCELLED/EXPIRED cannot. */
+export const CANCELLABLE_ASSIGNMENT_STATUSES: AssignmentStatus[] = ['ASSIGNED', 'STARTED', 'SUBMITTED', 'SCORED']
 
 export type AssignWorkSampleRequest = { workSampleId: number; dueAt?: string }
 export type ScoreRequest = { scores: { requirementId: number | null; criterion: string; score: number; note?: string }[] }
@@ -369,9 +413,13 @@ export type Scorecard = {
   recommendation: Recommendation
   summary: string | null
   submittedAt: string
+  /** WP-PLAT extras: scorecards can be edited by their author until the application is decided. */
+  id?: number
+  updatedAt?: string | null
+  revisionCount?: number
 }
 
-export type ScorecardInput = Omit<Scorecard, 'submittedAt'>
+export type ScorecardInput = Pick<Scorecard, 'ratings' | 'recommendation' | 'summary'>
 
 export type InterviewStatus = 'SCHEDULED' | 'COMPLETED' | 'CANCELLED'
 
@@ -419,8 +467,27 @@ export type FairnessReport = {
   note: string
 }
 
-export type Organization = { id: number; name: string; slug: string; blindReview: boolean; shareVerificationStatus: boolean }
-export type OrganizationUpdate = { name?: string; blindReview?: boolean; shareVerificationStatus?: boolean }
+/** WP-PLAT adds requireStaffMfa and ssoAllowedDomains (optional here so older payloads still render). */
+export type Organization = {
+  id: number
+  name: string
+  slug: string
+  blindReview: boolean
+  shareVerificationStatus: boolean
+  requireStaffMfa?: boolean
+  ssoAllowedDomains?: string[]
+}
+export type OrganizationUpdate = {
+  name?: string
+  blindReview?: boolean
+  shareVerificationStatus?: boolean
+  requireStaffMfa?: boolean
+  /** Exact domains, lower-cased by the server; [] turns SSO off. At most 20. */
+  ssoAllowedDomains?: string[]
+}
+
+/** Inclusive ISO dates (YYYY-MM-DD, UTC days) for the fairness report. */
+export type FairnessRange = { from?: string; to?: string }
 
 export type HealthValue = 'UP' | 'DOWN' | 'UNCONFIGURED' | string
 
@@ -437,7 +504,14 @@ export type AdminDashboard = {
   backendHealth?: HealthValue
   databaseHealth?: HealthValue
   aiServiceHealth?: HealthValue
-  health?: { backend: HealthValue; database: HealthValue; aiService: HealthValue; queue: { pending: number; failed: number; dead: number } }
+  health?: {
+    backend: HealthValue
+    database: HealthValue
+    aiService: HealthValue
+    queue: { pending: number; failed: number; dead: number }
+    /** WP-VBE: verification agent service (UP / DOWN / UNCONFIGURED); absent on older servers. */
+    agentService?: HealthValue | null
+  }
 }
 
 export type AdminUser = {
@@ -507,3 +581,115 @@ export const AUDIT_ACTIONS = [
   'ORGANIZATION_CREATED', 'ORGANIZATION_UPDATED', 'AUDIT_EXPORTED', 'CANDIDATE_ACCOUNT_DELETED', 'LOGIN_LOCKED',
   'PASSWORD_CHANGED', 'PASSWORD_RESET', 'REFRESH_TOKEN_REUSE_DETECTED',
 ] as const
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Claim verification (plan v2 Section 5, as built in WP-VBE: docs/plan/WP-VBE-NOTES.md 2.3)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type Verdict = 'VERIFIED' | 'PARTLY_VERIFIED' | 'NOT_FOUND' | 'CONTRADICTED' | 'NOT_CHECKABLE'
+export const VERDICTS: Verdict[] = ['VERIFIED', 'PARTLY_VERIFIED', 'NOT_FOUND', 'CONTRADICTED', 'NOT_CHECKABLE']
+
+export type VerificationMode = 'SHADOW' | 'VISIBLE'
+export type VerificationSourceKind = 'GITHUB' | 'GITLAB' | 'WEBSITE' | 'DOCUMENT' | 'OPEN_BADGE' | 'REFERENCE'
+export const CONNECTOR_KINDS: VerificationSourceKind[] = ['GITHUB', 'GITLAB', 'WEBSITE', 'DOCUMENT', 'OPEN_BADGE', 'REFERENCE']
+export type ReviewDecision = 'CONFIRM' | 'OVERRULE'
+
+/** De-identified reason; `evidenceKeys` point at EvidenceItem.key. */
+export type VerdictReason = { text: string; evidenceKeys: string[]; quote: string | null }
+export type IntegrityNote = { code: string; text: string; evidenceKeys: string[] }
+export type VerificationEvidence = {
+  id: number
+  key: string
+  kind: string
+  url: string | null
+  title: string | null
+  retrievedAt: string
+  /** `sha256:<hex>` of the stored snapshot. */
+  contentHash: string
+  excerpt: string | null
+  attributes: Record<string, unknown> | null
+}
+
+export type OrgReview = { decision: ReviewDecision; note: string | null; reviewerName: string | null; at: string }
+
+export type StaffVerdict = {
+  id: number
+  verifier: string
+  verdict: Verdict
+  ownershipProven: boolean
+  reasons: VerdictReason[]
+  integrityNotes: IntegrityNote[]
+  probeQuestion: string | null
+  /** null before reveal (blind-first). */
+  candidateNote: string | null
+  myOrgReview: OrgReview | null
+  /** null before reveal: show `evidenceCount` instead. */
+  evidence: VerificationEvidence[] | null
+  evidenceCount: number
+  sourceKind: VerificationSourceKind | string | null
+  createdAt: string
+}
+
+export type StaffClaim = {
+  subjectType: 'RESUME_FACT' | 'CANDIDATE_CLAIM' | string
+  subjectId: number
+  claimType: string
+  value: string
+  /** The claim's tier for the caller's organisation (CORROBORATED once a VERIFIED verdict is confirmed). */
+  tier: EvidenceTier | string | null
+  verdicts: StaffVerdict[]
+}
+
+/** SHADOW → `claims: []`. */
+export type StaffVerification = { mode: VerificationMode; revealed: boolean; claims: StaffClaim[] }
+
+export type VerdictReviewRequest = { decision: ReviewDecision; note?: string }
+
+export type VerificationSettings = {
+  mode: VerificationMode
+  connectors: Record<VerificationSourceKind, boolean>
+  updatedAt: string | null
+  updatedByName: string | null
+}
+
+/** `mode` is always sent; connectors left out keep their value. */
+export type VerificationSettingsUpdate = { mode: VerificationMode; connectors?: Partial<Record<VerificationSourceKind, boolean>> }
+
+export type VerdictLabel = { verdictId: number; labelVerdict: Verdict; note: string | null; at: string }
+export type VerdictLabelRequest = { labelVerdict: Verdict; note?: string }
+
+export type ShadowQueueItem = {
+  verdictId: number
+  applicationId: number | null
+  revealed: boolean
+  subjectType: string
+  subjectId: number
+  claimType: string
+  value: string
+  sourceKind: VerificationSourceKind | string | null
+  verifier: string
+  verdict: Verdict
+  ownershipProven: boolean
+  reasons: VerdictReason[]
+  integrityNotes: IntegrityNote[]
+  probeQuestion: string | null
+  evidence: VerificationEvidence[] | null
+  evidenceCount: number
+  createdAt: string
+  myLabel: VerdictLabel | null
+  labelCount: number
+}
+
+export type VerifierMetrics = { verifier: string; labelled: number; agreement: number | null; falseCorroborationRate: number | null; kappa: number | null }
+export type VerdictClassMetrics = { verdict: Verdict; predicted: number; gold: number; agreed: number; precision: number | null; recall: number | null }
+
+export type VerificationMetrics = {
+  labelled: number
+  agreement: number | null
+  falseCorroborationRate: number | null
+  kappa: number | null
+  byVerifier: VerifierMetrics[]
+  byVerdict: VerdictClassMetrics[]
+  /** labelled >= 150 && falseCorroborationRate <= 0.02 && kappa >= 0.70 */
+  readyForVisible: boolean
+}

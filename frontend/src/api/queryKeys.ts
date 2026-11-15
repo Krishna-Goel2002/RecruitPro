@@ -17,4 +17,12 @@ export const queryKeys = {
   notificationsAll: ['notifications'] as const,
   unreadCount: ['unread-count'] as const,
   survey: ['equal-opportunity'] as const,
+  /** Everything under /candidates/me/verification starts with 'verification'. */
+  verificationAll: ['verification'] as const,
+  verificationSources: ['verification', 'sources'] as const,
+  verificationRun: (id: number) => ['verification', 'run', id] as const,
+  verificationLedger: ['verification', 'ledger'] as const,
+  verdict: (id: number) => ['verification', 'verdict', id] as const,
+  references: ['verification', 'references'] as const,
+  publicReference: (token: string) => ['public-reference', token] as const,
 }

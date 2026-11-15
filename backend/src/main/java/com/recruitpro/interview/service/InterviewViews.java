@@ -15,6 +15,8 @@ import com.recruitpro.interview.dto.ScorecardResponse;
 import com.recruitpro.interview.entity.Interview;
 import com.recruitpro.interview.entity.InterviewScorecard;
 import com.recruitpro.interview.repository.InterviewScorecardRepository;
+import com.recruitpro.interview.repository.InterviewScorecardRevisionRepository;
+import com.recruitpro.interview.repository.RevisionCountRow;
 import com.recruitpro.organization.entity.Organization;
 import com.recruitpro.organization.repository.OrganizationRepository;
 import com.recruitpro.user.entity.User;
@@ -44,13 +46,16 @@ public class InterviewViews {
     private final UserRepository userRepository;
     private final OrganizationRepository organizationRepository;
     private final InterviewScorecardRepository scorecardRepository;
+    private final InterviewScorecardRevisionRepository revisionRepository;
 
     public InterviewViews(ObjectMapper objectMapper, UserRepository userRepository,
-                          OrganizationRepository organizationRepository, InterviewScorecardRepository scorecardRepository) {
+                          OrganizationRepository organizationRepository, InterviewScorecardRepository scorecardRepository,
+                          InterviewScorecardRevisionRepository revisionRepository) {
         this.objectMapper = objectMapper;
         this.userRepository = userRepository;
         this.organizationRepository = organizationRepository;
         this.scorecardRepository = scorecardRepository;
+        this.revisionRepository = revisionRepository;
     }
 
     public InterviewResponse staffView(Interview interview) {
@@ -73,8 +78,16 @@ public class InterviewViews {
             names.put(user.getId(), user.getFullName());
         }
         Map<Long, InterviewScorecard> scorecards = new HashMap<>();
+        List<Long> scorecardIds = new ArrayList<>();
         for (InterviewScorecard scorecard : scorecardRepository.findAllByInterviewIdIn(interviewIds)) {
             scorecards.put(scorecard.getInterviewId(), scorecard);
+            scorecardIds.add(scorecard.getId());
+        }
+        Map<Long, Long> revisionCounts = new HashMap<>();
+        if (!scorecardIds.isEmpty()) {
+            for (RevisionCountRow row : revisionRepository.countByScorecardIds(scorecardIds)) {
+                revisionCounts.put(row.scorecardId(), row.count());
+            }
         }
         Map<Long, Boolean> blindByOrganization = new HashMap<>();
         List<InterviewResponse> responses = new ArrayList<>(interviews.size());
@@ -86,7 +99,8 @@ public class InterviewViews {
                     candidateName(application, job, blindByOrganization), interview.getInterviewerUserId(),
                     names.getOrDefault(interview.getInterviewerUserId(), "Former staff member"),
                     interview.getScheduledAt(), interview.getDurationMinutes(), interview.getLocation(),
-                    interview.getStatus(), scorecard == null ? null : scorecard(scorecard)));
+                    interview.getStatus(), scorecard == null ? null
+                    : scorecard(scorecard, revisionCounts.getOrDefault(scorecard.getId(), 0L))));
         }
         return responses;
     }
@@ -98,8 +112,24 @@ public class InterviewViews {
     }
 
     public ScorecardResponse scorecard(InterviewScorecard scorecard) {
-        return new ScorecardResponse(ratings(scorecard.getRatingsJson()), scorecard.getRecommendation(),
-                scorecard.getSummary(), scorecard.getSubmittedAt());
+        return scorecard(scorecard, revisionRepository.countByScorecardId(scorecard.getId()));
+    }
+
+    public ScorecardResponse scorecard(InterviewScorecard scorecard, long revisionCount) {
+        return new ScorecardResponse(scorecard.getId(), ratings(scorecard.getRatingsJson()), scorecard.getRecommendation(),
+                scorecard.getSummary(), scorecard.getSubmittedAt(), scorecard.getUpdatedAt(), (int) revisionCount);
+    }
+
+    /** A stored revision snapshot (a ScorecardResponse as JSON); null when unreadable. */
+    public ScorecardResponse readScorecardSnapshot(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, ScorecardResponse.class);
+        } catch (IOException ex) {
+            return null;
+        }
     }
 
     /** Blind label until the identity is revealed (D4), then the full name. */

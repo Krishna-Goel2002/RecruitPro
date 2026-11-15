@@ -1,4 +1,8 @@
-import type { FairnessReport } from '../../api/types'
+import { FormEvent, ReactNode, useState } from 'react'
+import type { FairnessRange, FairnessReport } from '../../api/types'
+import { Field } from '../../components/Field'
+import { DateRangeErrors, hasErrors, validateDateRange } from '../../lib/dateRange'
+import { useSearchState } from '../../lib/useSearchState'
 import { DIMENSION_LABELS, formatRate, groupLabel, humanize } from '../../lib/format'
 
 /**
@@ -91,5 +95,52 @@ export function FairnessReportView({ report }: { report: FairnessReport }) {
         )
       })}
     </div>
+  )
+}
+
+/**
+ * The report's date range (inclusive ISO days, UTC), kept in the URL as `?from&to` so a shared link shows the same
+ * period. Invalid input is reported inline and never sent (the server answers 400 for it).
+ */
+export function useFairnessRange(): {
+  range: FairnessRange
+  filter: ReactNode
+} {
+  const search = useSearchState()
+  const appliedFrom = search.get('from')
+  const appliedTo = search.get('to')
+  const appliedErrors = validateDateRange(appliedFrom, appliedTo)
+  // A hand-edited URL with a bad range falls back to "all time" rather than a 400.
+  const range: FairnessRange = hasErrors(appliedErrors) ? {} : { from: appliedFrom || undefined, to: appliedTo || undefined }
+  return { range, filter: <FairnessRangeForm key={`${appliedFrom}|${appliedTo}`} initialFrom={appliedFrom} initialTo={appliedTo} onApply={(from, to) => search.set({ from, to }, { replace: true })} /> }
+}
+
+function FairnessRangeForm({ initialFrom, initialTo, onApply }: { initialFrom: string; initialTo: string; onApply: (from: string | null, to: string | null) => void }) {
+  const [from, setFrom] = useState(initialFrom)
+  const [to, setTo] = useState(initialTo)
+  const [errors, setErrors] = useState<DateRangeErrors>(() => validateDateRange(initialFrom, initialTo))
+
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    const next = validateDateRange(from, to)
+    setErrors(next)
+    if (!hasErrors(next)) onApply(from || null, to || null)
+  }
+
+  return (
+    <form className="export-form fairness-range" onSubmit={submit} noValidate aria-label="Report period">
+      <Field label="From" hint="First day included (UTC)" error={errors.from}>
+        <input type="date" value={from} max={to || undefined} onChange={event => setFrom(event.target.value)} />
+      </Field>
+      <Field label="To" hint="Last day included (UTC)" error={errors.to}>
+        <input type="date" value={to} min={from || undefined} onChange={event => setTo(event.target.value)} />
+      </Field>
+      <div className="invite-submit">
+        <button type="submit" className="outline-button">Apply</button>
+        {(initialFrom || initialTo) && (
+          <button type="button" className="secondary-button" onClick={() => onApply(null, null)}>All time</button>
+        )}
+      </div>
+    </form>
   )
 }

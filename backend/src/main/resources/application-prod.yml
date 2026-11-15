@@ -51,6 +51,10 @@ springdoc:
     enabled: false
 
 logging:
+  # WP-PLAT: one JSON (Elastic Common Schema) object per line; the MDC requestId is included.
+  structured:
+    format:
+      console: ecs
   level:
     root: WARN
     com.recruitpro: INFO

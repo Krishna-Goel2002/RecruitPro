@@ -42,13 +42,26 @@ public class NotificationService {
 
     @Transactional
     public List<Notification> notify(NotificationRecipient recipient, NotificationTemplate template, Map<String, String> params) {
+        return notify(recipient, template, params, null);
+    }
+
+    /** As {@link #notify(NotificationRecipient, NotificationTemplate, Map)} with an attachment on the e-mail (WP-PLAT). */
+    @Transactional
+    public List<Notification> notify(NotificationRecipient recipient, NotificationTemplate template, Map<String, String> params,
+                                     NotificationAttachment attachment) {
         if (recipient == null || recipient.email() == null || recipient.email().isBlank() || template == null) {
             throw new IllegalArgumentException("A recipient email and template are required");
         }
         String subject = template.renderSubject(params);
         String body = template.renderBody(params);
         List<Notification> created = new ArrayList<>(2);
-        created.add(repository.save(build(recipient, template, NotificationChannel.EMAIL, NotificationStatus.PENDING, subject, body)));
+        Notification email = build(recipient, template, NotificationChannel.EMAIL, NotificationStatus.PENDING, subject, body);
+        if (attachment != null) {
+            email.setAttachmentName(attachment.fileName());
+            email.setAttachmentContentType(attachment.contentType());
+            email.setAttachmentContent(attachment.content());
+        }
+        created.add(repository.save(email));
         if (template.isInApp() && recipient.userId() != null) {
             Notification inApp = build(recipient, template, NotificationChannel.IN_APP, NotificationStatus.SENT, subject, body);
             inApp.setSentAt(UtcTime.now());

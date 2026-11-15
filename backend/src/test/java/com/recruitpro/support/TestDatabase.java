@@ -12,6 +12,24 @@ import java.util.List;
 public final class TestDatabase {
 
     private static final List<String> TABLES_CHILDREN_FIRST = List.of(
+            // WP-VBE verification tables (children first).
+            "claim_verdict_labels",
+            "claim_verdict_reviews",
+            "claim_verdicts",
+            "evidence_items",
+            "verification_runs",
+            "verification_sources",
+            "verification_reference_requests",
+            "verification_oauth_states",
+            "organization_verification_settings",
+            // WP-PLAT tables (children first).
+            "user_recovery_codes",
+            "user_mfa",
+            "user_identities",
+            "sso_login_states",
+            "rate_limit_buckets",
+            "work_sample_submission_files",
+            "interview_scorecard_revisions",
             "background_jobs",
             "notifications",
             "interview_scorecards",

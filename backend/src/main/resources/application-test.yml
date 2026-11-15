@@ -60,6 +60,11 @@ app:
     admin-password: ""
   file-storage:
     upload-dir: ./target/test-uploads
+  # WP-VBE: no sweeps in tests; snapshots under target/. The agent service is mocked in tests.
+  verification:
+    storage-dir: ./target/test-uploads/verification
+    reference-expiry:
+      enabled: false
 
 logging:
   level:

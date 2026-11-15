@@ -17,11 +17,17 @@ export type Capability =
   | 'applicants.rematch'
   | 'workSamples.manage'
   | 'workSamples.score'
+  | 'workSamples.cancel'
+  | 'workSamples.downloadFiles'
   | 'interviewKit.manage'
   | 'interviews.schedule'
   | 'interviews.view'
   | 'fairness.job'
   | 'audit.jobExport'
+  | 'verification.view'
+  | 'verification.review'
+  | 'verification.queue'
+  | 'verification.settings'
   | 'admin'
   | 'account'
 
@@ -41,11 +47,20 @@ const matrix: Record<Capability, Role[]> = {
   'applicants.rematch': MANAGERS,
   'workSamples.manage': MANAGERS,
   'workSamples.score': READERS,
+  // WP-PLAT: cancel is ADMIN/HR_MANAGER (RECRUITER 403); file download ADMIN/HR_MANAGER/RECRUITER.
+  'workSamples.cancel': MANAGERS,
+  'workSamples.downloadFiles': READERS,
   'interviewKit.manage': MANAGERS,
   'interviews.schedule': MANAGERS,
   'interviews.view': STAFF,
   'fairness.job': MANAGERS,
   'audit.jobExport': MANAGERS,
+  // WP-VBE: the applicant Verification tab and Confirm/Overrule are ADMIN, HR_MANAGER, RECRUITER (INTERVIEWER 403).
+  'verification.view': READERS,
+  'verification.review': READERS,
+  // Shadow queue, labels and metrics: ADMIN and HR_MANAGER. Mode and connector settings: ADMIN only.
+  'verification.queue': MANAGERS,
+  'verification.settings': ['ADMIN'],
   admin: ['ADMIN'],
   account: STAFF,
 }

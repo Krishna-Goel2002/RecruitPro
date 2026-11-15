@@ -49,8 +49,10 @@ spring:
   # ---- Servlet / Multipart ----
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 11MB
+      # Resumes keep their own 10 MB check (app.file-storage.max-size-mb); work-sample files may be 20 MB each, three
+      # per submission (WP-PLAT), so the request limit allows 3 x 20 MB plus form fields.
+      max-file-size: 20MB
+      max-request-size: 62MB
 
   # ---- Mail (Mailpit in development; app.mail.enabled switches real sending on) ----
   mail:
@@ -99,6 +101,53 @@ app:
 
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
+    # memory (one instance) or database (shared rate_limit_buckets table, several instances) - WP-PLAT
+    store: ${RATE_LIMIT_STORE:memory}
+
+  # Encrypts TOTP secrets, SSO PKCE verifiers and connector tokens (AES-256-GCM, 32 random bytes, Base64:
+  # openssl rand -base64 32). Without it MFA, SSO and OAuth connectors are unavailable (503).
+  encryption:
+    key: ${APP_ENCRYPTION_KEY:}
+
+  # Staff TOTP MFA (WP-PLAT): issuer shown in authenticator apps.
+  mfa:
+    issuer: ${MFA_ISSUER:RecruitPro}
+
+  # Staff OIDC single sign-on (WP-PLAT). A provider is offered only with client id and secret. Endpoints are read
+  # from <issuer>/.well-known/openid-configuration unless authorization-uri, token-uri and jwks-uri are all set.
+  # Register the redirect URI <redirect-base-url>/api/v1/auth/sso/<id>/callback with the provider.
+  sso:
+    redirect-base-url: ${SSO_REDIRECT_BASE_URL:http://localhost:8080}
+    state-ttl-minutes: 10
+    clock-skew-seconds: 60
+    max-token-age-seconds: 600
+    providers:
+      google:
+        name: Google
+        client-id: ${SSO_GOOGLE_CLIENT_ID:}
+        client-secret: ${SSO_GOOGLE_CLIENT_SECRET:}
+        issuer: https://accounts.google.com
+        scopes: openid email profile
+      microsoft:
+        name: Microsoft
+        client-id: ${SSO_MICROSOFT_CLIENT_ID:}
+        client-secret: ${SSO_MICROSOFT_CLIENT_SECRET:}
+        # Use your tenant id (single-tenant app); "organizations" also works (issuer validated with the token's tid).
+        issuer: https://login.microsoftonline.com/${SSO_MICROSOFT_TENANT_ID:organizations}/v2.0
+        scopes: openid email profile
+      oidc:
+        name: ${SSO_OIDC_NAME:Company SSO}
+        client-id: ${SSO_OIDC_CLIENT_ID:}
+        client-secret: ${SSO_OIDC_CLIENT_SECRET:}
+        issuer: ${SSO_OIDC_ISSUER:}
+        scopes: ${SSO_OIDC_SCOPES:openid email profile}
+
+  # /actuator/prometheus without authentication (keep it off the public network); otherwise ADMIN only.
+  metrics:
+    public: ${METRICS_PUBLIC:false}
+
+  # Id of this backend instance in notification row claims (default: host name + random suffix).
+  instance-id: ${APP_INSTANCE_ID:}
 
   organizations:
     self-signup-enabled: ${ORG_SELF_SIGNUP_ENABLED:true}
@@ -145,6 +194,9 @@ app:
       enabled: ${WORK_SAMPLE_EXPIRY_SWEEP_ENABLED:true}
       interval-ms: 60000
       initial-delay-ms: 45000
+    # Submission attachments (WP-PLAT): pdf, zip, docx, pptx, png, jpg; at most 3 per assignment.
+    files:
+      max-size-mb: 20
 
   mail:
     enabled: ${MAIL_ENABLED:false}
@@ -163,10 +215,41 @@ app:
     health-timeout-ms: 2000
     service-token: ${AI_SERVICE_TOKEN:}
 
+  # Verification agent service (plan v2 section 4, WP-AG): fetches evidence and drafts verdicts; the backend stores
+  # them. Called only by the VERIFY_SOURCE / VERIFY_REFERENCE jobs and the candidate's ownership check.
+  agent-service:
+    base-url: ${AGENT_SERVICE_URL:http://localhost:8100}
+    service-token: ${AGENT_SERVICE_TOKEN:}
+    timeout-ms: 60000           # the agent's own deadline is 50 s
+    connect-timeout-ms: 5000
+    health-timeout-ms: 2000
+
+  # Claim Ledger and verification (plan v2 sections 3 and 5, WP-VBE).
+  verification:
+    # Version of the consent text the candidate accepts when connecting a source (stored per source).
+    consent-version: ${VERIFICATION_CONSENT_VERSION:2026-11-v1}
+    # Evidence snapshots and uploaded verification documents.
+    storage-dir: ${VERIFICATION_STORAGE_PATH:${FILE_STORAGE_PATH:./uploads}/verification}
+    # Runs per candidate in 24 hours (429 above).
+    max-runs-per-day: 10
+    # GitHub OAuth app (scope read:user). Register <backend>/api/v1/verification/oauth/github/callback as the
+    # callback URL. Needs app.encryption.key as well; otherwise GET .../oauth/github/start answers 503.
+    github:
+      client-id: ${GITHUB_CLIENT_ID:}
+      client-secret: ${GITHUB_CLIENT_SECRET:}
+      redirect-uri: ${GITHUB_OAUTH_REDIRECT_URI:}
+    # Marks SENT reference requests past their 14-day expiry EXPIRED and deletes stale OAuth states.
+    reference-expiry:
+      enabled: ${VERIFICATION_REFERENCE_EXPIRY_ENABLED:true}
+      interval-ms: 900000
+      initial-delay-ms: 60000
+
   file-storage:
     upload-dir: ${FILE_STORAGE_PATH:./uploads}
     allowed-types: pdf,doc,docx
     max-size-mb: 10
+    # Work-sample submission files, separate from resumes (WP-PLAT).
+    work-sample-dir: ${WORK_SAMPLE_STORAGE_PATH:${app.file-storage.upload-dir}/work-samples}
 
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:5174}
@@ -178,7 +261,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: never
@@ -202,4 +285,5 @@ logging:
     org.springframework.web: INFO
     org.flywaydb: INFO
   pattern:
-    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} [%thread] %-5level %logger{36} - %msg%n"
+    # requestId: MDC key set by observability.RequestIdFilter and per background job (WP-PLAT)
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} [%thread] [%X{requestId:-}] %-5level %logger{36} - %msg%n"

@@ -34,6 +34,7 @@ import com.recruitpro.notification.repository.NotificationRepository;
 import com.recruitpro.organization.entity.Organization;
 import com.recruitpro.organization.repository.OrganizationRepository;
 import com.recruitpro.user.entity.User;
+import com.recruitpro.verification.service.VerificationPrivacyService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -67,6 +68,7 @@ public class CandidateDataExportService {
     private final EeoResponseRepository eeoRepository;
     private final NotificationRepository notificationRepository;
     private final ObjectMapper objectMapper;
+    private final VerificationPrivacyService verificationPrivacyService;
 
     public CandidateDataExportService(CandidateProfileService profileService, ResumeRepository resumeRepository,
                                       ResumeAnalysisRepository analysisRepository, ResumeAnalysisFactRepository factRepository,
@@ -76,7 +78,7 @@ public class CandidateDataExportService {
                                       WorkSampleAssignmentRepository assignmentRepository,
                                       InterviewRepository interviewRepository, InterviewViews interviewViews,
                                       EeoResponseRepository eeoRepository, NotificationRepository notificationRepository,
-                                      ObjectMapper objectMapper) {
+                                      ObjectMapper objectMapper, VerificationPrivacyService verificationPrivacyService) {
         this.profileService = profileService;
         this.resumeRepository = resumeRepository;
         this.analysisRepository = analysisRepository;
@@ -91,6 +93,7 @@ public class CandidateDataExportService {
         this.eeoRepository = eeoRepository;
         this.notificationRepository = notificationRepository;
         this.objectMapper = objectMapper;
+        this.verificationPrivacyService = verificationPrivacyService;
     }
 
     public CandidateDataExport exportMine() {
@@ -175,7 +178,7 @@ public class CandidateDataExportService {
         }
 
         return new CandidateDataExport(CandidateDataExport.FORMAT, UtcTime.now(), account, CandidateProfileResponse.from(profile),
-                resumes, facts, claims, applicationExports, workSamples, interviews, survey, notifications);
+                resumes, facts, claims, applicationExports, workSamples, interviews, survey, notifications, verificationPrivacyService.export(profile.getId()));
     }
 
     /** Submission plus every status change, as in the candidate's ApplicationDetail. */

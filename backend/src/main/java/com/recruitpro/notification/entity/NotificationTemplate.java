@@ -60,6 +60,14 @@ public enum NotificationTemplate {
             {{link}}
             """, true),
 
+    /** WP-PLAT: HR cancelled a work-sample assignment. */
+    WORK_SAMPLE_CANCELLED("Work sample cancelled: {{title}}", """
+            Hello {{firstName}},
+
+            The work sample "{{title}}" for your application for {{jobTitle}} has been cancelled by the hiring team, so you do not need to complete it.
+            Reason: {{reason}}
+            """, true),
+
     INTERVIEW_SCHEDULED("Interview scheduled for {{jobTitle}}", """
             Hello {{firstName}},
 
@@ -79,6 +87,36 @@ public enum NotificationTemplate {
 
             The interview for {{jobTitle}} planned for {{scheduledAt}} (UTC) has been cancelled.
             {{message}}
+            """, true),
+
+    // ---- Verification (WP-VBE) ----
+
+    VERIFICATION_READY("Your verification results are ready", """
+            Hello {{firstName}},
+
+            We checked your claims against {{sourceLabel}}: {{count}} result(s) are ready.
+            Nothing is shown to employers until you review each result and choose to share it.
+            {{link}}
+            """, true),
+
+    /** Sent to a referee (no account); carries a one-time link, so never an inbox copy. */
+    REFERENCE_REQUEST("{{candidateName}} asked you for a reference", """
+            Hello {{refereeName}},
+
+            {{candidateName}} named you as a reference ({{relationship}}) and asked you to confirm a few statements \
+            about their work. It takes about two minutes and needs no account. You can also decline.
+            Open this link before {{expiresAt}} (UTC):
+            {{link}}
+
+            If you do not know {{candidateName}}, you can ignore this message.
+            """, false),
+
+    REFERENCE_ANSWERED("{{refereeName}} responded to your reference request", """
+            Hello {{firstName}},
+
+            {{refereeName}} responded to your reference request.
+            {{message}}
+            {{link}}
             """, true);
 
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{\\{([A-Za-z0-9_]+)}}");

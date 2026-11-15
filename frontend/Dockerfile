@@ -13,6 +13,10 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN pnpm build
 
 FROM nginx:1.27-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# nginx.conf is a template: ${API_ORIGIN} (backend origin for the CSP connect-src) is filled in by envsubst at start-up.
+# Override at run time with -e API_ORIGIN=https://api.example.com (or "environment:" in docker compose).
+ARG API_ORIGIN=http://localhost:8080
+ENV API_ORIGIN=${API_ORIGIN}
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

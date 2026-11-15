@@ -21,7 +21,9 @@ import { NotFoundPage } from './pages/NotFoundPage'
 import { NotificationsPage } from './pages/NotificationsPage'
 import { PrivacyPage } from './pages/PrivacyPage'
 import { ProfilePage } from './pages/ProfilePage'
+import { RefereePage } from './pages/RefereePage'
 import { ResumesPage } from './pages/ResumesPage'
+import { VerificationPage } from './pages/VerificationPage'
 import { WorkSampleResponsePage } from './pages/WorkSampleResponsePage'
 import { WorkSamplesPage } from './pages/WorkSamplesPage'
 
@@ -55,6 +57,9 @@ export default function App() {
                 <Route path="/verify-email" element={<VerifyEmailPage />} />
               </Route>
 
+              {/* The referee's page: no sign-in, outside the candidate layout. */}
+              <Route path="/reference/:token" element={<RefereePage />} />
+
               <Route element={<RequireAuth />}>
                 <Route element={<Layout />}>
                   <Route path="/" element={<Navigate to="/jobs" replace />} />
@@ -64,6 +69,7 @@ export default function App() {
                   <Route path="/applications/:id" element={<ApplicationDetailPage />} />
                   <Route path="/resumes" element={<ResumesPage />} />
                   <Route path="/evidence" element={<EvidencePage />} />
+                  <Route path="/verification" element={<VerificationPage />} />
                   <Route path="/work-samples" element={<WorkSamplesPage />} />
                   <Route path="/work-samples/:assignmentId" element={<WorkSampleResponsePage />} />
                   <Route path="/interviews" element={<InterviewsPage />} />

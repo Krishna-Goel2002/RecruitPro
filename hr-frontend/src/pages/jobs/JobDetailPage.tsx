@@ -17,7 +17,7 @@ import { formatDate, formatDateTime, formatNumber, humanize } from '../../lib/fo
 import { usePageTitle } from '../../lib/hooks'
 import { useSearchState } from '../../lib/useSearchState'
 import { ApplicantsTab } from './ApplicantsTab'
-import { FairnessReportView } from './FairnessReportView'
+import { FairnessReportView, useFairnessRange } from './FairnessReportView'
 import { InterviewKitTab } from './InterviewKitTab'
 import { WorkSamplesTab } from './WorkSamplesTab'
 
@@ -169,10 +169,16 @@ function JobDetail({ job }: { job: JobStaff }) {
 }
 
 function JobFairness({ jobId }: { jobId: number }) {
-  const report = useQuery({ queryKey: qk.jobFairness(jobId), queryFn: ({ signal }) => reviewApi.fairness(jobId, signal) })
-  if (report.isPending) return <LoadingPanel label="Calculating selection rates…" />
-  if (report.isError) return <ErrorPanel error={report.error} title="We couldn’t load the fairness report" onRetry={() => void report.refetch()} />
-  return <FairnessReportView report={report.data} />
+  const { range, filter } = useFairnessRange()
+  const report = useQuery({ queryKey: qk.jobFairness(jobId, range), queryFn: ({ signal }) => reviewApi.fairness(jobId, range, signal) })
+  return (
+    <>
+      <section className="detail-card form-card" aria-label="Report period">{filter}</section>
+      {report.isPending ? <LoadingPanel label="Calculating selection rates…" />
+        : report.isError ? <ErrorPanel error={report.error} title="We couldn’t load the fairness report" onRetry={() => void report.refetch()} />
+          : <FairnessReportView report={report.data} />}
+    </>
+  )
 }
 
 function JobDetails({ job }: { job: JobStaff }) {

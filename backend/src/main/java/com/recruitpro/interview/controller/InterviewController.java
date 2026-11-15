@@ -4,6 +4,7 @@ import com.recruitpro.common.dto.ApiResponse;
 import com.recruitpro.interview.dto.InterviewDetailResponse;
 import com.recruitpro.interview.dto.InterviewResponse;
 import com.recruitpro.interview.dto.ScorecardRequest;
+import com.recruitpro.interview.dto.ScorecardRevisionResponse;
 import com.recruitpro.interview.dto.UpdateInterviewRequest;
 import com.recruitpro.interview.service.InterviewService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -61,5 +63,18 @@ public class InterviewController {
     public ApiResponse<InterviewResponse> submitScorecard(@PathVariable Long interviewId,
                                                           @Valid @RequestBody ScorecardRequest request) {
         return ApiResponse.success(service.submitScorecard(interviewId, request), "Scorecard submitted");
+    }
+
+    @PutMapping("/{interviewId}/scorecard")
+    @Operation(summary = "Edit the submitted scorecard (its author only, until the application is SELECTED, REJECTED or WITHDRAWN); keeps the earlier version and queues re-matching")
+    public ApiResponse<InterviewResponse> updateScorecard(@PathVariable Long interviewId,
+                                                          @Valid @RequestBody ScorecardRequest request) {
+        return ApiResponse.success(service.updateScorecard(interviewId, null, request), "Scorecard updated");
+    }
+
+    @GetMapping("/{interviewId}/scorecard/revisions")
+    @Operation(summary = "Earlier versions of the scorecard, newest first (author, ADMIN, HR_MANAGER)")
+    public ApiResponse<List<ScorecardRevisionResponse>> scorecardRevisions(@PathVariable Long interviewId) {
+        return ApiResponse.success(service.scorecardRevisions(interviewId));
     }
 }

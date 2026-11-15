@@ -12,7 +12,9 @@ import { Field } from '../components/Form'
 import { useNotify } from '../components/Notices'
 import { PageHeader } from '../components/PageHeader'
 import { focusPageHeading } from '../lib/focus'
-import { describeDuration, formatDuration, formatLongDateTime, formatTime } from '../lib/format'
+import { saveBlob, safeFilename } from '../lib/download'
+import { WORK_SAMPLE_ACCEPT, WORK_SAMPLE_MAX_FILES, validateWorkSampleFiles } from '../lib/files'
+import { describeDuration, formatDuration, formatFileSize, formatLongDateTime, formatTime } from '../lib/format'
 import { useBeforeUnload, useNow } from '../lib/hooks'
 import { workSampleStatusLabel } from '../lib/labels'
 
@@ -79,15 +81,56 @@ export function WorkSampleResponsePage() {
             Submitted {sample.submittedAt ? formatLongDateTime(sample.submittedAt) : ''}. The employer reviews every response
             against the same scoring guide.
           </p>
+          <SubmittedFiles sample={sample} />
         </div>
       )}
       {sample.status === 'EXPIRED' && <ExpiredPanel sample={sample} unsent={unsent} />}
       {sample.status === 'CANCELLED' && (
         <div className="panel">
-          <p className="alert info">The employer cancelled this work sample. Nothing more is needed from you.</p>
+          <p className="alert info">
+            The employer cancelled this work sample{sample.cancelledAt ? ` on ${formatLongDateTime(sample.cancelledAt)}` : ''}. Nothing more is
+            needed from you.
+          </p>
+          {sample.cancelReason && <p className="muted">Reason given: {sample.cancelReason}</p>}
         </div>
       )}
     </>
+  )
+}
+
+/** Files attached to a submitted response, downloadable by the candidate (raw bytes, server file name). */
+export function SubmittedFiles({ sample }: { sample: CandidateWorkSample }) {
+  const download = useMutation({
+    mutationFn: (fileId: number) => workSamplesApi.downloadFile(sample.assignmentId, fileId),
+    onSuccess: (file, fileId) => {
+      const original = sample.files.find(item => item.id === fileId)?.originalName ?? 'attachment'
+      saveBlob(file.blob, safeFilename(file.filename ?? original, original))
+    },
+  })
+  if (sample.files.length === 0) return null
+  return (
+    <div>
+      <h3 className="subheading">Attached files</h3>
+      <ul className="plain-list compact-list">
+        {sample.files.map(file => (
+          <li key={file.id} className="file-row">
+            <span className="break-anywhere">
+              {file.originalName} <span className="muted">· {formatFileSize(file.sizeBytes)}</span>
+            </span>
+            <button
+              type="button"
+              className="quiet-button"
+              onClick={() => download.mutate(file.id)}
+              disabled={download.isPending && download.variables === file.id}
+              aria-label={`Download ${file.originalName}`}
+            >
+              {download.isPending && download.variables === file.id ? 'Downloading…' : 'Download'}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <FormError error={download.error} />
+    </div>
   )
 }
 
@@ -178,6 +221,8 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
   const remaining = deadline === null ? null : Math.round((deadline - now) / 1000)
   const [responseText, setResponseText] = useState('')
   const [responseUrl, setResponseUrl] = useState('')
+  const [files, setFiles] = useState<File[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [confirming, setConfirming] = useState(false)
   const [announcement, setAnnouncement] = useState('')
@@ -200,10 +245,11 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
 
   const submit = useMutation({
     mutationFn: () =>
-      workSamplesApi.submit(sample.assignmentId, { responseText: responseText.trim(), responseUrl: responseUrl.trim() || null }),
+      workSamplesApi.submit(sample.assignmentId, { responseText: responseText.trim(), responseUrl: responseUrl.trim() || null, files }),
     onSuccess: submitted => {
       setConfirming(false)
       setResponseText('')
+      setFiles([])
       notify('success', 'Your response was submitted.')
       queryClient.setQueryData<CandidateWorkSample[]>(queryKeys.workSamples, current =>
         current?.map(item => (item.assignmentId === submitted.assignmentId ? submitted : item)),
@@ -242,7 +288,9 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
   function review(event: FormEvent) {
     event.preventDefault()
     const next: Record<string, string> = {}
-    if (!responseText.trim()) next.responseText = 'Write your response before submitting.'
+    if (!responseText.trim() && files.length === 0) next.responseText = 'Write your response or attach a file before submitting.'
+    const fileProblems = validateWorkSampleFiles(files)
+    if (fileProblems.length > 0) next.files = fileProblems.join(' ')
     if (responseUrl.trim() && !isHttpUrl(responseUrl.trim())) next.responseUrl = 'Enter a full link starting with https:// or http://.'
     setErrors(next)
     if (Object.keys(next).length === 0) setConfirming(true)
@@ -295,7 +343,7 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
         <form className="stack-form" onSubmit={review} noValidate>
           <Field
             label="Response"
-            required
+            required={files.length === 0}
             error={errors.responseText}
             hint={`${responseText.length.toLocaleString()} / ${RESPONSE_MAX.toLocaleString()} characters. Leaving or reloading the page loses unsaved text.`}
           >
@@ -316,6 +364,54 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
               />
             )}
           </Field>
+          <Field
+            label="Attach files"
+            optional
+            error={errors.files}
+            hint={`Up to ${WORK_SAMPLE_MAX_FILES} files: PDF, ZIP, DOCX, PPTX, PNG or JPG, at most 20 MB each.`}
+          >
+            {control => (
+              <input
+                {...control}
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={WORK_SAMPLE_ACCEPT}
+                disabled={files.length >= WORK_SAMPLE_MAX_FILES}
+                onChange={event => {
+                  const chosen = Array.from(event.target.files ?? [])
+                  const next = [...files, ...chosen].slice(0, WORK_SAMPLE_MAX_FILES + 2)
+                  setFiles(next)
+                  const problems = validateWorkSampleFiles(next)
+                  setErrors(current => ({ ...current, files: problems.join(' ') }))
+                  if (fileInputRef.current) fileInputRef.current.value = ''
+                }}
+              />
+            )}
+          </Field>
+          {files.length > 0 && (
+            <ul className="plain-list compact-list" aria-label="Files to attach">
+              {files.map((file, index) => (
+                <li key={`${file.name}-${index}`} className="file-row">
+                  <span className="break-anywhere">
+                    {file.name} <span className="muted">· {formatFileSize(file.size)}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="text-button"
+                    aria-label={`Remove ${file.name}`}
+                    onClick={() => {
+                      const next = files.filter((_, position) => position !== index)
+                      setFiles(next)
+                      setErrors(current => ({ ...current, files: validateWorkSampleFiles(next).join(' ') }))
+                    }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="form-actions">
             <span className="muted">You cannot change your response after submitting.</span>
             <button type="submit" className="primary" disabled={submit.isPending}>
@@ -338,7 +434,10 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
         onConfirm={() => submit.mutate()}
         error={<FormError error={submit.error} />}
       >
-        <p>You cannot edit it afterwards.</p>
+        <p>
+          You cannot edit it afterwards.
+          {files.length > 0 ? ` ${files.length} file${files.length === 1 ? '' : 's'} will be attached.` : ''}
+        </p>
       </ConfirmDialog>
     </>
   )

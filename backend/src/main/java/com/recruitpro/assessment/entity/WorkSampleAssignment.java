@@ -73,4 +73,14 @@ public class WorkSampleAssignment extends BaseEntity {
 
     @Column(name = "scored_at")
     private LocalDateTime scoredAt;
+
+    /** HR cancellation (WP-PLAT): status CANCELLED, the assignment no longer counts as evidence. */
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    @Column(name = "cancelled_by_user_id")
+    private Long cancelledByUserId;
+
+    @Column(name = "cancel_reason", length = 1000)
+    private String cancelReason;
 }

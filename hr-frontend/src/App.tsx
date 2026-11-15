@@ -8,13 +8,16 @@ import { AdminInvitationsPage } from './pages/admin/AdminInvitationsPage'
 import { AdminJobsPage } from './pages/admin/AdminJobsPage'
 import { AdminOrganizationPage } from './pages/admin/AdminOrganizationPage'
 import { AdminUsersPage } from './pages/admin/AdminUsersPage'
+import { AdminVerificationPage } from './pages/admin/AdminVerificationPage'
 import { ApplicantDetailPage } from './pages/applicants/ApplicantDetailPage'
 import { ChangePasswordPage } from './pages/account/ChangePasswordPage'
 import { NotificationsPage } from './pages/account/NotificationsPage'
+import { SecurityPage } from './pages/account/SecurityPage'
 import { AcceptInvitePage } from './pages/auth/AcceptInvitePage'
 import { LoginPage } from './pages/auth/LoginPage'
 import { ForgotPasswordPage, ResetPasswordPage } from './pages/auth/PasswordPages'
 import { SignupPage } from './pages/auth/SignupPage'
+import { SsoCompletePage } from './pages/auth/SsoCompletePage'
 import { InterviewDetailPage } from './pages/interviews/InterviewDetailPage'
 import { InterviewsPage } from './pages/interviews/InterviewsPage'
 import { JobDetailPage } from './pages/jobs/JobDetailPage'
@@ -35,6 +38,7 @@ export default function App() {
       <Route path="/forgot-password" element={<PublicOnly><ForgotPasswordPage /></PublicOnly>} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/accept-invite" element={<AcceptInvitePage />} />
+      <Route path="/sso/complete" element={<SsoCompletePage />} />
 
       <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route index element={<HomeRedirect />} />
@@ -50,6 +54,7 @@ export default function App() {
 
         <Route path="notifications" element={<RequireAuth capability="account"><NotificationsPage /></RequireAuth>} />
         <Route path="account/password" element={<RequireAuth capability="account"><ChangePasswordPage /></RequireAuth>} />
+        <Route path="account/security" element={<RequireAuth capability="account"><SecurityPage /></RequireAuth>} />
 
         <Route path="admin" element={<RequireAuth capability="admin"><AdminDashboardPage /></RequireAuth>} />
         <Route path="admin/users" element={<RequireAuth capability="admin"><AdminUsersPage /></RequireAuth>} />
@@ -59,6 +64,7 @@ export default function App() {
         <Route path="admin/jobs" element={<RequireAuth capability="admin"><AdminJobsPage /></RequireAuth>} />
         <Route path="admin/audit" element={<RequireAuth capability="admin"><AdminAuditPage /></RequireAuth>} />
         <Route path="admin/fairness" element={<RequireAuth capability="admin"><AdminFairnessPage /></RequireAuth>} />
+        <Route path="admin/verification" element={<RequireAuth capability="verification.queue"><AdminVerificationPage /></RequireAuth>} />
 
         <Route path="*" element={<NotFoundPage />} />
       </Route>

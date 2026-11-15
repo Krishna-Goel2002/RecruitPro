@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,6 +37,19 @@ public interface EeoResponseRepository extends JpaRepository<EeoResponse, Long> 
     @Query("select new com.recruitpro.fairness.repository.ApplicantStageRow(a.id, a.candidate.id, a.status) "
             + "from Application a where a.job.organizationId = :organizationId")
     List<ApplicantStageRow> findApplicantsOfOrganization(@Param("organizationId") Long organizationId);
+
+    /** Applicants of a job whose application was created in [from, toExclusive) (WP-PLAT date filter). */
+    @Query("select new com.recruitpro.fairness.repository.ApplicantStageRow(a.id, a.candidate.id, a.status) "
+            + "from Application a where a.job.id = :jobId and a.createdAt >= :from and a.createdAt < :toExclusive")
+    List<ApplicantStageRow> findApplicantsOfJobCreatedBetween(@Param("jobId") Long jobId, @Param("from") LocalDateTime from,
+                                                              @Param("toExclusive") LocalDateTime toExclusive);
+
+    @Query("select new com.recruitpro.fairness.repository.ApplicantStageRow(a.id, a.candidate.id, a.status) "
+            + "from Application a where a.job.organizationId = :organizationId and a.createdAt >= :from "
+            + "and a.createdAt < :toExclusive")
+    List<ApplicantStageRow> findApplicantsOfOrganizationCreatedBetween(@Param("organizationId") Long organizationId,
+                                                                       @Param("from") LocalDateTime from,
+                                                                       @Param("toExclusive") LocalDateTime toExclusive);
 
     @Query("select new com.recruitpro.fairness.repository.StatusEventRow(h.application.id, h.previousStatus, h.newStatus) "
             + "from ApplicationDecisionHistory h where h.application.job.id = :jobId")

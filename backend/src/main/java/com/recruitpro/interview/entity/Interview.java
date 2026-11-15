@@ -49,4 +49,8 @@ public class Interview extends BaseEntity {
 
     @Column(name = "created_by_user_id")
     private Long createdByUserId;
+
+    /** ICS SEQUENCE of the calendar event; incremented on every reschedule and on cancellation (WP-PLAT). */
+    @Column(name = "ics_sequence", nullable = false)
+    private int icsSequence = 0;
 }

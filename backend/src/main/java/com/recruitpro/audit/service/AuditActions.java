@@ -27,6 +27,18 @@ public final class AuditActions {
     public static final String PASSWORD_CHANGED = "PASSWORD_CHANGED";
     public static final String PASSWORD_RESET = "PASSWORD_RESET";
     public static final String REFRESH_TOKEN_REUSE_DETECTED = "REFRESH_TOKEN_REUSE_DETECTED";
+    // WP-PLAT (plan v2, Section 6)
+    public static final String MFA_ENABLED = "MFA_ENABLED";
+    public static final String MFA_DISABLED = "MFA_DISABLED";
+    public static final String MFA_RECOVERY_CODES_REGENERATED = "MFA_RECOVERY_CODES_REGENERATED";
+    public static final String MFA_RECOVERY_CODE_USED = "MFA_RECOVERY_CODE_USED";
+    public static final String MFA_VERIFICATION_FAILED = "MFA_VERIFICATION_FAILED";
+    public static final String SSO_LOGIN = "SSO_LOGIN";
+    public static final String SSO_IDENTITY_LINKED = "SSO_IDENTITY_LINKED";
+    public static final String SSO_LOGIN_REFUSED = "SSO_LOGIN_REFUSED";
+    public static final String WORK_SAMPLE_CANCELLED = "WORK_SAMPLE_CANCELLED";
+    public static final String WORK_SAMPLE_FILE_DOWNLOADED = "WORK_SAMPLE_FILE_DOWNLOADED";
+    public static final String SCORECARD_UPDATED = "SCORECARD_UPDATED";
 
     private AuditActions() {
     }

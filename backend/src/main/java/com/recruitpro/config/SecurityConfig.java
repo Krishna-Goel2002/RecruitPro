@@ -4,6 +4,7 @@ import com.recruitpro.security.config.CustomAuthenticationEntryPoint;
 import com.recruitpro.security.filter.JwtAuthenticationFilter;
 import com.recruitpro.security.filter.RateLimitFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -52,8 +53,20 @@ public class SecurityConfig {
             "/api/v1/auth/reset-password",
             "/api/v1/auth/invitations/**",
             "/api/v1/auth/accept-invite",
-            "/api/v1/organizations/signup"
+            "/api/v1/organizations/signup",
+            // WP-PLAT: second sign-in step, staff SSO, and MFA enrolment with the login's mfaToken.
+            "/api/v1/auth/mfa/verify",
+            "/api/v1/auth/sso/**",
+            "/api/v1/me/mfa/enroll",
+            "/api/v1/me/mfa/confirm",
+            // WP-VBE: the referee's page (one-time token, rate-limited) and the GitHub OAuth redirect target.
+            "/api/v1/public/references/**",
+            "/api/v1/verification/oauth/github/callback"
     };
+
+    /** WP-PLAT: {@code /actuator/prometheus} without authentication (protect it at the network level instead). */
+    @Value("${app.metrics.public:false}")
+    private boolean metricsPublic;
 
     /** API documentation; springdoc switches these off in the prod profile. */
     private static final String[] API_DOCUMENTATION = {
@@ -73,7 +86,7 @@ public class SecurityConfig {
                         .accessDeniedHandler(customAuthenticationEntryPoint)
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
+                .authorizeHttpRequests(auth -> (metricsPublic ? auth.requestMatchers("/actuator/prometheus").permitAll() : auth)
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/actuator/**").hasRole("ADMIN")

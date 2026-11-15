@@ -7,6 +7,7 @@ import com.recruitpro.candidate.dto.CandidateProfileResponse;
 import com.recruitpro.evidence.dto.CandidateClaimResponse;
 import com.recruitpro.fairness.dto.EqualOpportunityResponse;
 import com.recruitpro.interview.dto.CandidateInterviewResponse;
+import com.recruitpro.verification.dto.VerificationExport;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -14,14 +15,15 @@ import java.util.List;
 /**
  * GET /api/v1/candidates/me/export: every record RecruitPro keeps about the candidate (DPDP / GDPR access right).
  * Staff-only material (review comments, scores, rubrics, interviewer notes, match evidence) is not part of it;
- * decisions appear as the status timeline the candidate already sees. Nulls are written explicitly.
+ * decisions appear as the status timeline the candidate already sees. Nulls are written explicitly. {@code verification}
+ * (plan v2, WP-VBE): sources (never tokens), runs, evidence metadata, verdicts and reference requests.
  */
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public record CandidateDataExport(String format, LocalDateTime exportedAt, Account account, CandidateProfileResponse profile,
                                   List<ResumeExport> resumes, List<FactExport> facts, List<CandidateClaimResponse> claims,
                                   List<ApplicationExport> applications, List<WorkSampleExport> workSamples,
                                   List<CandidateInterviewResponse> interviews, EqualOpportunityResponse equalOpportunity,
-                                  List<NotificationExport> notifications) {
+                                  List<NotificationExport> notifications, VerificationExport verification) {
 
     public static final String FORMAT = "recruitpro-candidate-export-1";
 

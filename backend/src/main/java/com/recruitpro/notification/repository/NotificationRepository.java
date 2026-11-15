@@ -31,6 +31,22 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     List<Notification> findAllByChannelAndStatusOrderByCreatedAtAscIdAsc(NotificationChannel channel, NotificationStatus status,
                                                                          Pageable pageable);
 
+    /** Pending outbox rows that no sender instance currently holds (claim absent or expired), oldest first. */
+    @Query("select n.id from Notification n where n.channel = :channel and n.status = :status "
+            + "and (n.claimedUntil is null or n.claimedUntil < :now) order by n.createdAt asc, n.id asc")
+    List<Long> findUnclaimedIds(@Param("channel") NotificationChannel channel, @Param("status") NotificationStatus status,
+                                @Param("now") LocalDateTime now, Pageable pageable);
+
+    /**
+     * Row claim (WP-PLAT): only one sender instance can hold a pending row until {@code until}; returns 1 when this
+     * instance won it.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update Notification n set n.claimedBy = :instance, n.claimedUntil = :until "
+            + "where n.id = :id and n.status = :status and (n.claimedUntil is null or n.claimedUntil < :now)")
+    int claim(@Param("id") Long id, @Param("status") NotificationStatus status, @Param("instance") String instance,
+              @Param("until") LocalDateTime until, @Param("now") LocalDateTime now);
+
     List<Notification> findAllByRecipientEmailAndTemplateOrderByIdAsc(String recipientEmail, NotificationTemplate template);
 
     /** Every notification (email outbox and inbox) of a user, oldest first (candidate data export). */

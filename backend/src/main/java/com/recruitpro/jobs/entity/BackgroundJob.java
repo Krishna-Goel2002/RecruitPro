@@ -50,4 +50,11 @@ public class BackgroundJob extends BaseEntity {
 
     @Column(name = "last_error", length = 500)
     private String lastError;
+
+    /**
+     * {@code <TYPE>:<entityId>} while the job is a freshly queued PENDING job, null otherwise (unique; WP-PLAT). A
+     * concurrent duplicate enqueue fails on the unique constraint and becomes a no-op.
+     */
+    @Column(name = "dedupe_key", length = 120, unique = true)
+    private String dedupeKey;
 }

@@ -1,6 +1,7 @@
 package com.recruitpro.assessment.controller;
 
 import com.recruitpro.assessment.dto.AssignWorkSampleRequest;
+import com.recruitpro.assessment.dto.CancelAssignmentRequest;
 import com.recruitpro.assessment.dto.ScoreRequest;
 import com.recruitpro.assessment.dto.WorkSampleAssignmentResponse;
 import com.recruitpro.assessment.dto.WorkSampleResponse;
@@ -12,6 +13,7 @@ import com.recruitpro.common.dto.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -88,5 +90,20 @@ public class WorkSampleController {
     public ApiResponse<WorkSampleAssignmentResponse> score(@PathVariable Long assignmentId,
                                                            @Valid @RequestBody ScoreRequest request) {
         return ApiResponse.success(service.score(assignmentId, request), "Work sample scored");
+    }
+
+    @PostMapping("/work-sample-assignments/{assignmentId}/cancel")
+    @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER')")
+    @Operation(summary = "Cancel an assignment with a reason (candidate notified; no longer counts as evidence)")
+    public ApiResponse<WorkSampleAssignmentResponse> cancel(@PathVariable Long assignmentId,
+                                                            @Valid @RequestBody CancelAssignmentRequest request) {
+        return ApiResponse.success(service.cancel(assignmentId, request), "Work sample assignment cancelled");
+    }
+
+    @GetMapping("/work-sample-assignments/{assignmentId}/files/{fileId}")
+    @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER','RECRUITER')")
+    @Operation(summary = "Download a file the candidate submitted (audited)")
+    public ResponseEntity<byte[]> downloadFile(@PathVariable Long assignmentId, @PathVariable Long fileId) {
+        return WorkSampleFileResponses.of(service.downloadFile(assignmentId, fileId));
     }
 }

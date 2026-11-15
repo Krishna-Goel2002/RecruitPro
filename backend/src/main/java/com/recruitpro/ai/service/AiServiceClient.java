@@ -9,6 +9,11 @@ import com.recruitpro.ai.dto.AiMatchResponse;
 import com.recruitpro.ai.dto.AiResumeParseResponse;
 import com.recruitpro.ai.dto.AiWorkSampleRequest;
 import com.recruitpro.ai.dto.AiWorkSampleResponse;
+import com.recruitpro.observability.ObservabilityConfig;
+import com.recruitpro.observability.RequestIdClientInterceptor;
+import com.recruitpro.observability.TimedClientInterceptor;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -32,6 +37,8 @@ public class AiServiceClient {
 
     private final RestClient restClient;
     private final String serviceToken;
+    /** Set by Spring when Micrometer is present (timer recruitpro.ai.call); null in plain unit tests. */
+    private volatile MeterRegistry meterRegistry;
 
     public AiServiceClient(RestClient.Builder builder,
                            @Value("${app.ai-service.base-url}") String baseUrl,
@@ -40,8 +47,17 @@ public class AiServiceClient {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofMillis(timeoutMs));
         factory.setReadTimeout(Duration.ofMillis(timeoutMs));
-        this.restClient = builder.baseUrl(baseUrl).requestFactory(factory).build();
+        // WP-PLAT: X-Request-Id propagation (MDC "requestId") and the recruitpro.ai.call timer.
+        this.restClient = builder.baseUrl(baseUrl).requestFactory(factory)
+                .requestInterceptor(new RequestIdClientInterceptor())
+                .requestInterceptor(new TimedClientInterceptor(ObservabilityConfig.AI_TIMER, () -> this.meterRegistry))
+                .build();
         this.serviceToken = serviceToken;
+    }
+
+    @Autowired(required = false)
+    public void setMeterRegistry(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
     }
 
     public AiResumeParseResponse parse(String filename, String contentType, byte[] bytes) {

@@ -6,9 +6,23 @@ import com.recruitpro.jobs.entity.BackgroundJobStatus;
 import com.recruitpro.jobs.entity.BackgroundJobType;
 import com.recruitpro.jobs.repository.BackgroundJobRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Savepoint;
+import java.sql.Timestamp;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -31,13 +45,17 @@ public class BackgroundJobService {
     private static final int MAX_ERROR_LENGTH = 500;
 
     private final BackgroundJobRepository repository;
+    private final JdbcTemplate jdbcTemplate;
+    private final DataSource dataSource;
     private final int defaultMaxAttempts;
     private final long staleAfterMinutes;
 
-    public BackgroundJobService(BackgroundJobRepository repository,
+    public BackgroundJobService(BackgroundJobRepository repository, JdbcTemplate jdbcTemplate, DataSource dataSource,
                                 @Value("${app.background-jobs.max-attempts:5}") int defaultMaxAttempts,
                                 @Value("${app.background-jobs.stale-after-minutes:10}") long staleAfterMinutes) {
         this.repository = repository;
+        this.jdbcTemplate = jdbcTemplate;
+        this.dataSource = dataSource;
         this.defaultMaxAttempts = Math.max(1, defaultMaxAttempts);
         this.staleAfterMinutes = Math.max(1, staleAfterMinutes);
     }
@@ -49,21 +67,7 @@ public class BackgroundJobService {
      */
     @Transactional
     public boolean enqueue(BackgroundJobType type, long entityId) {
-        if (type == null) {
-            throw new IllegalArgumentException("Background job type is required");
-        }
-        if (repository.existsByJobTypeAndEntityIdAndStatusIn(type, entityId, ACTIVE)) {
-            return false;
-        }
-        BackgroundJob job = new BackgroundJob();
-        job.setJobType(type);
-        job.setEntityId(entityId);
-        job.setStatus(BackgroundJobStatus.PENDING);
-        job.setAttempts(0);
-        job.setMaxAttempts(defaultMaxAttempts);
-        job.setRunAfter(UtcTime.now());
-        repository.save(job);
-        return true;
+        return enqueueJob(type, entityId, ACTIVE).created();
     }
 
     /**
@@ -75,21 +79,94 @@ public class BackgroundJobService {
      */
     @Transactional
     public boolean enqueueFollowUp(BackgroundJobType type, long entityId) {
+        return enqueueJob(type, entityId, EnumSet.of(BackgroundJobStatus.PENDING)).created();
+    }
+
+    /**
+     * Queues a job unless one in {@code duplicateStatuses} exists; returns the new job or the existing one
+     * ({@code created=false}). Multi-instance safe (WP-PLAT): a new PENDING job carries the unique dedupe key
+     * {@code <TYPE>:<entityId>}, so two instances enqueueing at the same moment cannot both insert one; the loser's
+     * insert is rolled back to a savepoint (the caller's transaction stays usable on PostgreSQL) and the winner's job
+     * is returned.
+     */
+    @Transactional
+    public EnqueueResult enqueueJob(BackgroundJobType type, long entityId, Set<BackgroundJobStatus> duplicateStatuses) {
         if (type == null) {
             throw new IllegalArgumentException("Background job type is required");
         }
-        if (repository.existsByJobTypeAndEntityIdAndStatusIn(type, entityId, EnumSet.of(BackgroundJobStatus.PENDING))) {
-            return false;
+        String key = dedupeKey(type, entityId);
+        BackgroundJob pending = repository.findByDedupeKey(key).orElse(null);
+        if (pending != null) {
+            return new EnqueueResult(pending, false);
         }
-        BackgroundJob job = new BackgroundJob();
-        job.setJobType(type);
-        job.setEntityId(entityId);
-        job.setStatus(BackgroundJobStatus.PENDING);
-        job.setAttempts(0);
-        job.setMaxAttempts(defaultMaxAttempts);
-        job.setRunAfter(UtcTime.now());
-        repository.save(job);
-        return true;
+        // Jobs waiting for a retry and RUNNING jobs carry no key; they are found by status.
+        List<BackgroundJob> active = repository.findAllByJobTypeAndEntityIdAndStatusInOrderByIdAsc(type, entityId,
+                duplicateStatuses == null || duplicateStatuses.isEmpty() ? ACTIVE : duplicateStatuses);
+        if (!active.isEmpty()) {
+            return new EnqueueResult(active.get(0), false);
+        }
+        Long id = insertPending(type, entityId, key);
+        if (id == null) {
+            return new EnqueueResult(repository.findByDedupeKey(key).orElse(null), false);
+        }
+        return new EnqueueResult(repository.findById(id).orElse(null), true);
+    }
+
+    /** {@code <TYPE>:<entityId>}. */
+    public static String dedupeKey(BackgroundJobType type, long entityId) {
+        return type.name() + ":" + entityId;
+    }
+
+    /**
+     * Inserts a PENDING job with its dedupe key inside a savepoint of the current transaction. Returns the new id, or
+     * null when another transaction holds the key (unique violation, rolled back to the savepoint).
+     */
+    public Long insertPending(BackgroundJobType type, long entityId, String key) {
+        LocalDateTime now = UtcTime.now();
+        Connection connection = DataSourceUtils.getConnection(dataSource);
+        Savepoint savepoint = null;
+        try {
+            if (TransactionSynchronizationManager.isActualTransactionActive() && !connection.getAutoCommit()) {
+                savepoint = connection.setSavepoint();
+            }
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            jdbcTemplate.update(con -> {
+                PreparedStatement statement = con.prepareStatement("INSERT INTO background_jobs (job_type, entity_id, "
+                        + "status, attempts, max_attempts, run_after, dedupe_key, created_at, updated_at) "
+                        + "VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)", new String[] {"id"});
+                statement.setString(1, type.name());
+                statement.setLong(2, entityId);
+                statement.setString(3, BackgroundJobStatus.PENDING.name());
+                statement.setInt(4, defaultMaxAttempts);
+                statement.setTimestamp(5, Timestamp.valueOf(now));
+                statement.setString(6, key);
+                statement.setTimestamp(7, Timestamp.valueOf(now));
+                statement.setTimestamp(8, Timestamp.valueOf(now));
+                return statement;
+            }, keyHolder);
+            if (savepoint != null) {
+                connection.releaseSavepoint(savepoint);
+            }
+            Number id = keyHolder.getKey();
+            return id == null ? null : id.longValue();
+        } catch (DataIntegrityViolationException ex) {
+            if (savepoint != null) {
+                try {
+                    connection.rollback(savepoint);
+                } catch (SQLException rollbackFailure) {
+                    throw new IllegalStateException("Could not roll back to the enqueue savepoint", rollbackFailure);
+                }
+            }
+            if (ex instanceof DuplicateKeyException) {
+                // Another transaction holds the dedupe key: the duplicate enqueue is a no-op.
+                return null;
+            }
+            throw ex;
+        } catch (SQLException ex) {
+            throw new IllegalStateException("Could not enqueue a background job", ex);
+        } finally {
+            DataSourceUtils.releaseConnection(connection, dataSource);
+        }
     }
 
     /** Claims up to {@code limit} due jobs (PENDING with run_after in the past) with a conditional update. */
@@ -197,5 +274,9 @@ public class BackgroundJobService {
             return null;
         }
         return error.length() > MAX_ERROR_LENGTH ? error.substring(0, MAX_ERROR_LENGTH) : error;
+    }
+
+    /** The queued job (or the existing duplicate) and whether this call created it. */
+    public record EnqueueResult(BackgroundJob job, boolean created) {
     }
 }

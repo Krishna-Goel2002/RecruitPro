@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { resumesApi } from '../../api/endpoints'
 import { queryKeys } from '../../api/queryKeys'
 import type { ResumeAnalysisStatus } from '../../api/types'
+import { POLL_LIMIT_MS, usePollingWindow } from '../../lib/polling'
 
 export const POLL_INTERVAL_MS = 3000
 /** Stop polling after about two minutes; the candidate can check again manually (audit L8). */
-export const POLL_LIMIT_MS = 120_000
+export { POLL_LIMIT_MS }
 
 export function isInProgress(status: ResumeAnalysisStatus | undefined): boolean {
   return status === 'PENDING' || status === 'PROCESSING'
@@ -17,31 +18,23 @@ export function isInProgress(status: ResumeAnalysisStatus | undefined): boolean 
  * `checkAgain()` refetches and restarts the polling window (manual refresh, retry, new upload).
  */
 export function useResumeAnalysis(resumeId: number) {
-  const [pollingSince, setPollingSince] = useState(() => Date.now())
-  const [stalled, setStalled] = useState(false)
-
+  // `active` is known only after the first response; the window effect reads it from the query result below.
   const query = useQuery({
     queryKey: queryKeys.resumeAnalysis(resumeId),
     queryFn: () => resumesApi.analysis(resumeId),
-    refetchInterval: current => (!stalled && isInProgress(current.state.data?.status) ? POLL_INTERVAL_MS : false),
+    refetchInterval: current => polling.nextInterval(isInProgress(current.state.data?.status)),
     refetchIntervalInBackground: false,
   })
 
   const inProgress = isInProgress(query.data?.status)
-
-  useEffect(() => {
-    if (!inProgress || stalled) return
-    const remaining = POLL_LIMIT_MS - (Date.now() - pollingSince)
-    const timer = window.setTimeout(() => setStalled(true), Math.max(0, remaining))
-    return () => window.clearTimeout(timer)
-  }, [inProgress, stalled, pollingSince])
+  const polling = usePollingWindow({ active: inProgress, intervalMs: POLL_INTERVAL_MS, limitMs: POLL_LIMIT_MS })
 
   const { refetch } = query
+  const { restart } = polling
   const checkAgain = useCallback(() => {
-    setStalled(false)
-    setPollingSince(Date.now())
+    restart()
     void refetch()
-  }, [refetch])
+  }, [restart, refetch])
 
-  return { query, inProgress, stalled: inProgress && stalled, checkAgain }
+  return { query, inProgress, stalled: polling.stalled, checkAgain }
 }

@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { to: '/applications', label: 'Applications', icon: '▣' },
   { to: '/resumes', label: 'Resumes', icon: '▤' },
   { to: '/evidence', label: 'Evidence', icon: '✓' },
+  { to: '/verification', label: 'Strengthen your application', icon: '◆' },
   { to: '/work-samples', label: 'Work samples', icon: '✎' },
   { to: '/interviews', label: 'Interviews', icon: '◷' },
   { to: '/notifications', label: 'Notifications', icon: 'bell' },

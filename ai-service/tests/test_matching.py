@@ -83,6 +83,16 @@ class TestEvidenceLadder:
         assert (result.requirements[1].tier, result.requirements[1].provenance) == ("INTERVIEW_VERIFIED", "INTERVIEW")
         assert result.requirements[2].status == "NOT_OBSERVED"  # linked evidence counts only for its own requirement
 
+    def test_recruiter_confirmed_verification_facts_are_corroborated_general_facts(self):
+        # WP-VBE: the backend sends a confirmed verdict as "vf:<verdictId>" at tier CORROBORATED (plan v2 3.5).
+        facts = [fact("fact:1", "SKILL", "React"), fact("vf:42", "SKILL", "React", tier="CORROBORATED",
+                                                          evidence="Verified by code; confirmed by a recruiter",
+                                                          section="verification")]
+        result = run([requirement(1, "SKILL", "React"), requirement(2, "SKILL", "Go")], facts)
+        assert (result.requirements[0].tier, result.requirements[0].provenance) == ("CORROBORATED", "CORROBORATED")
+        assert result.requirements[0].factIds == ["vf:42"]
+        assert result.requirements[1].status == "NOT_OBSERVED"  # not linked to a requirement: a general fact
+
     def test_knockouts_are_gates_not_rejections(self):
         reqs = [requirement(1, "SKILL", "Java", knockout=True), requirement(2, "OTHER", "Night shifts", knockout=True)]
         result = run(reqs, [fact("fact:1", "SKILL", "Java")])

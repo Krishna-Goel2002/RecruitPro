@@ -21,6 +21,7 @@ import com.recruitpro.user.repository.UserRepository;
 import com.recruitpro.user.service.UserAccountService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,6 +55,13 @@ public class DemoDataSeeder {
     private final HrProfileService hrProfileService;
     private final JobRepository jobRepository;
     private final JobRequirementRepository requirementRepository;
+    /** WP-PLAT demo assessments (setter-injected to keep the constructor stable for other packages). */
+    private DemoAssessmentSeeder assessmentSeeder;
+
+    @Autowired
+    public void setAssessmentSeeder(DemoAssessmentSeeder assessmentSeeder) {
+        this.assessmentSeeder = assessmentSeeder;
+    }
 
     public DemoDataSeeder(OrganizationRepository organizationRepository, OrganizationService organizationService,
                           UserRepository userRepository, UserAccountService userAccountService,
@@ -113,6 +121,10 @@ public class DemoDataSeeder {
                         requirement(RequirementType.SKILL, "Python", true, null),
                         requirement(RequirementType.SKILL, "Tableau or Power BI", false, null),
                         requirement(RequirementType.EXPERIENCE, "Data analysis", true, 1)));
+        if (assessmentSeeder != null) {
+            // WP-PLAT: kit, work sample (scored), completed + scheduled interview with a scorecard.
+            assessmentSeeder.seed(organizationId);
+        }
         log.info("Demo data ready: organisation '{}' with {}, {}, {}, {} and candidate {} (password from app.seed.password)",
                 ORGANIZATION_NAME, ADMIN_EMAIL, HR_EMAIL, RECRUITER_EMAIL, INTERVIEWER_EMAIL, CANDIDATE_EMAIL);
     }

@@ -9,6 +9,7 @@ import com.recruitpro.auth.dto.ResetPasswordRequest;
 import com.recruitpro.auth.dto.UserResponse;
 import com.recruitpro.auth.dto.VerifyEmailRequest;
 import com.recruitpro.auth.service.AuthService;
+import com.recruitpro.auth.service.AuthSession;
 import com.recruitpro.auth.web.Portal;
 import com.recruitpro.auth.web.RefreshTokenCookies;
 import com.recruitpro.common.dto.ApiResponse;
@@ -55,11 +56,16 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Authenticate a user; returns a 15-minute access token and sets the portal's refresh cookie (403 for an account of the other portal)")
-    public ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request,
-                                           HttpServletRequest httpRequest, HttpServletResponse response) {
+    @Operation(summary = "Authenticate a user; returns a 15-minute access token and sets the portal's refresh cookie (403 for an account of the other portal), or {mfaRequired, mfaEnrollmentRequired, mfaToken} for staff with MFA")
+    public ApiResponse<Object> login(@Valid @RequestBody LoginRequest request,
+                                     HttpServletRequest httpRequest, HttpServletResponse response) {
         Portal portal = Portal.from(httpRequest);
-        return ApiResponse.success(refreshTokenCookies.complete(authService.login(request, portal), portal, response));
+        AuthSession session = authService.login(request, portal);
+        if (session.requiresMfa()) {
+            // WP-PLAT: {mfaRequired, mfaEnrollmentRequired, mfaToken, expiresInSeconds}; no cookie, no access token.
+            return ApiResponse.success(session.mfaChallenge(), "Second sign-in step required");
+        }
+        return ApiResponse.success(refreshTokenCookies.complete(session, portal, response));
     }
 
     @PostMapping("/refresh")

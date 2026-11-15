@@ -6,6 +6,7 @@ import com.recruitpro.assessment.dto.CandidateWorkSampleResponse;
 import com.recruitpro.assessment.dto.CriterionScore;
 import com.recruitpro.assessment.dto.RubricCriterion;
 import com.recruitpro.assessment.dto.WorkSampleAssignmentResponse;
+import com.recruitpro.assessment.dto.WorkSampleFileResponse;
 import com.recruitpro.assessment.dto.WorkSampleResponse;
 import com.recruitpro.assessment.entity.WorkSample;
 import com.recruitpro.assessment.entity.WorkSampleAssignment;
@@ -37,10 +38,12 @@ public class WorkSampleViews {
 
     private final ObjectMapper objectMapper;
     private final UserRepository userRepository;
+    private final WorkSampleFileService fileService;
 
-    public WorkSampleViews(ObjectMapper objectMapper, UserRepository userRepository) {
+    public WorkSampleViews(ObjectMapper objectMapper, UserRepository userRepository, WorkSampleFileService fileService) {
         this.objectMapper = objectMapper;
         this.userRepository = userRepository;
+        this.fileService = fileService;
     }
 
     public WorkSampleResponse workSample(WorkSample sample) {
@@ -56,11 +59,17 @@ public class WorkSampleViews {
     /** Staff views of several assignments; scorer names are loaded in one query. */
     public List<WorkSampleAssignmentResponse> assignments(List<WorkSampleAssignment> assignments) {
         Set<Long> scorerIds = new HashSet<>();
+        List<Long> assignmentIds = new ArrayList<>(assignments.size());
         for (WorkSampleAssignment assignment : assignments) {
+            assignmentIds.add(assignment.getId());
             if (assignment.getScoredByUserId() != null) {
                 scorerIds.add(assignment.getScoredByUserId());
             }
+            if (assignment.getCancelledByUserId() != null) {
+                scorerIds.add(assignment.getCancelledByUserId());
+            }
         }
+        Map<Long, List<WorkSampleFileResponse>> files = fileService.listFor(assignmentIds);
         Map<Long, String> names = new HashMap<>();
         if (!scorerIds.isEmpty()) {
             for (User user : userRepository.findAllById(scorerIds)) {
@@ -75,7 +84,10 @@ public class WorkSampleViews {
                     assignment.getDueAt(), assignment.getStartedAt(), assignment.getSubmittedAt(),
                     assignment.getResponseText(), assignment.getResponseUrl(), scores(assignment.getScoresJson()),
                     assignment.getTotalScore(), assignment.getScoredAt(),
-                    assignment.getScoredByUserId() == null ? null : names.get(assignment.getScoredByUserId())));
+                    assignment.getScoredByUserId() == null ? null : names.get(assignment.getScoredByUserId()),
+                    files.getOrDefault(assignment.getId(), List.of()), assignment.getCancelledAt(),
+                    assignment.getCancelReason(),
+                    assignment.getCancelledByUserId() == null ? null : names.get(assignment.getCancelledByUserId())));
         }
         return responses;
     }
@@ -87,7 +99,8 @@ public class WorkSampleViews {
         LocalDateTime deadline = started ? assignment.getStartedAt().plusMinutes(sample.getTimeLimitMinutes()) : null;
         return new CandidateWorkSampleResponse(assignment.getId(), sample.getJob().getTitle(), sample.getTitle(),
                 started ? sample.getInstructions() : null, sample.getTimeLimitMinutes(), assignment.getStatus(),
-                assignment.getDueAt(), assignment.getStartedAt(), assignment.getSubmittedAt(), deadline);
+                assignment.getDueAt(), assignment.getStartedAt(), assignment.getSubmittedAt(), deadline,
+                fileService.list(assignment.getId()), assignment.getCancelledAt(), assignment.getCancelReason());
     }
 
     // ---- stored JSON ----

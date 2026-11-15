@@ -7,6 +7,7 @@ import type {
   AdminUserParams,
   AuditEvent,
   AuditParams,
+  FairnessRange,
   FairnessReport,
   Invitation,
   JobStatus,
@@ -31,5 +32,6 @@ export const adminApi = {
   overrideJobStatus: (id: number, status: JobStatus, reason: string) => api.patch<AdminJob>(`/admin/jobs/${id}/status`, { status, reason }),
   audit: (params: AuditParams, signal?: AbortSignal) => api.get<Page<AuditEvent>>('/admin/audit-logs', params, signal),
   exportAudit: (from: string | undefined, to: string | undefined) => downloadFile('/admin/audit-export', 'audit.csv', { from, to }),
-  fairness: (signal?: AbortSignal) => api.get<FairnessReport>('/admin/fairness', undefined, signal),
+  /** `from`/`to`: inclusive ISO dates (UTC days); `from > to` or a malformed date is 400. */
+  fairness: (range: FairnessRange, signal?: AbortSignal) => api.get<FairnessReport>('/admin/fairness', { from: range.from, to: range.to }, signal),
 }

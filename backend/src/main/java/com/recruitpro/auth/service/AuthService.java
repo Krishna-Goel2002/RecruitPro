@@ -7,6 +7,8 @@ import com.recruitpro.auth.dto.LoginRequest;
 import com.recruitpro.auth.dto.RegisterRequest;
 import com.recruitpro.auth.dto.UserResponse;
 import com.recruitpro.auth.entity.UserTokenPurpose;
+import com.recruitpro.auth.mfa.MfaService;
+import com.recruitpro.auth.mfa.dto.MfaChallengeResponse;
 import com.recruitpro.auth.validation.PasswordPolicy;
 import com.recruitpro.auth.web.Portal;
 import com.recruitpro.common.exception.BadRequestException;
@@ -38,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Accounts and sessions: registration, sign-in with lockout, refresh-token rotation, logout, email
@@ -58,6 +61,7 @@ public class AuthService {
     private final OrganizationRepository organizationRepository;
     private final AuditService auditService;
     private final SecurityUtils securityUtils;
+    private final MfaService mfaService;
 
     @Value("${app.frontend.candidate-url:http://localhost:5173}")
     private String candidatePortalUrl;
@@ -91,7 +95,8 @@ public class AuthService {
     /**
      * Sign-in from a portal. An account whose role does not belong to the portal (a candidate on the staff
      * portal, staff on the candidate portal) gets 403 after the password check and before any session is
-     * created; failure counters are left unchanged.
+     * created; failure counters are left unchanged. A staff user who must pass MFA gets
+     * {@link AuthSession#challenge} instead of a session.
      */
     public AuthSession login(LoginRequest request, Portal portal) {
         String email = UserAccountService.normalizeEmail(request.getEmail());
@@ -108,6 +113,12 @@ public class AuthService {
         CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
         User user = userDetails.getUser();
         Portal.requireAllowed(portal, user.getRole());
+        // WP-PLAT: staff with MFA (or whose organisation requires it) stop here with a single-use mfaToken. The
+        // failure counter is reset only after the second step, so MFA guesses cannot be reset by re-entering the password.
+        Optional<MfaChallengeResponse> challenge = mfaService.challengeFor(user);
+        if (challenge.isPresent()) {
+            return AuthSession.challenge(challenge.get());
+        }
         userAccountService.recordSuccessfulLogin(user.getId());
         return createSession(user);
     }

@@ -60,4 +60,21 @@ public class Notification extends BaseEntity {
 
     @Column(name = "read_at")
     private LocalDateTime readAt;
+
+    /** Sender instance that is delivering the row (WP-PLAT row claim; several backend instances). */
+    @Column(name = "claimed_by", length = 80)
+    private String claimedBy;
+
+    @Column(name = "claimed_until")
+    private LocalDateTime claimedUntil;
+
+    /** Optional e-mail attachment (e.g. {@code invite.ics}); EMAIL rows only. */
+    @Column(name = "attachment_name", length = 120)
+    private String attachmentName;
+
+    @Column(name = "attachment_content_type", length = 120)
+    private String attachmentContentType;
+
+    @Column(name = "attachment_content", columnDefinition = "TEXT")
+    private String attachmentContent;
 }

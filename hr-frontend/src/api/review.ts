@@ -7,6 +7,7 @@ import type {
   ClaimVerificationRequest,
   DecisionEvent,
   DecisionRequest,
+  FairnessRange,
   FairnessReport,
   Interviewer,
   Page,
@@ -33,6 +34,7 @@ export const reviewApi = {
     api.post<CandidateClaim>(`${applicant(jobId, applicationId)}/claims/${claimId}/verification`, body),
   rematch: (jobId: number) => api.post<{ enqueued: number }>(`${base(jobId)}/rematch`),
   exportAudit: (jobId: number) => downloadFile(`${base(jobId)}/audit-export`, `job-${jobId}-audit.csv`),
-  fairness: (jobId: number, signal?: AbortSignal) => api.get<FairnessReport>(`${base(jobId)}/fairness`, undefined, signal),
+  fairness: (jobId: number, range: FairnessRange, signal?: AbortSignal) =>
+    api.get<FairnessReport>(`${base(jobId)}/fairness`, { from: range.from, to: range.to }, signal),
   interviewers: (signal?: AbortSignal) => api.get<Interviewer[]>('/hr/interviewers', undefined, signal),
 }

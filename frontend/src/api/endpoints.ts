@@ -27,15 +27,27 @@ import type {
   FactCorrectionRequest,
   JobPublic,
   JobSearchParams,
+  LedgerClaim,
   LoginRequest,
+  OAuthStartResponse,
+  OwnershipCheckMethod,
   Page,
+  PublicReference,
+  PublicReferenceSubmit,
+  ReferenceCreateRequest,
+  ReferenceRequest,
   RegisterRequest,
   Requirement,
   ResetPasswordRequest,
   Resume,
   ResumeAnalysis,
   ResumeFact,
+  SourceCreateRequest,
   UnreadCount,
+  VerdictDetail,
+  VerdictResponseRequest,
+  VerificationRun,
+  VerificationSource,
   WorkSampleSubmitRequest,
 } from './types'
 
@@ -84,8 +96,23 @@ function normalizeApplicationDetail(detail: ApplicationDetail): ApplicationDetai
     ...base,
     timeline: detail.timeline && detail.timeline.length > 0 ? detail.timeline : derivedTimeline,
     requirements: detail.requirements === undefined ? null : detail.requirements,
-    workSamples: detail.workSamples ?? [],
+    workSamples: (detail.workSamples ?? []).map(normalizeWorkSample),
     interviews: detail.interviews ?? [],
+  }
+}
+
+/** WP-PLAT fields; older payloads (or the application detail) may omit them. */
+function normalizeWorkSample(sample: CandidateWorkSample): CandidateWorkSample {
+  return {
+    ...sample,
+    instructions: sample.instructions ?? null,
+    dueAt: sample.dueAt ?? null,
+    startedAt: sample.startedAt ?? null,
+    submittedAt: sample.submittedAt ?? null,
+    deadlineAt: sample.deadlineAt ?? null,
+    files: sample.files ?? [],
+    cancelledAt: sample.cancelledAt ?? null,
+    cancelReason: sample.cancelReason ?? null,
   }
 }
 
@@ -235,11 +262,27 @@ export const applicationsApi = {
 }
 
 export const workSamplesApi = {
-  list: () => apiRequest<CandidateWorkSample[]>('/candidates/me/work-samples'),
-  start: (assignmentId: number) =>
-    apiRequest<CandidateWorkSample>(`/candidates/me/work-samples/${assignmentId}/start`, { method: 'POST' }),
-  submit: (assignmentId: number, body: WorkSampleSubmitRequest) =>
-    apiRequest<CandidateWorkSample>(`/candidates/me/work-samples/${assignmentId}/submit`, { method: 'POST', body }),
+  list: async () => (await apiRequest<CandidateWorkSample[]>('/candidates/me/work-samples')).map(normalizeWorkSample),
+  start: async (assignmentId: number) =>
+    normalizeWorkSample(
+      await apiRequest<CandidateWorkSample>(`/candidates/me/work-samples/${assignmentId}/start`, { method: 'POST' }),
+    ),
+  /**
+   * WP-PLAT multipart submission: `responseText`, `responseUrl` and up to three `files` parts. The browser sets the
+   * multipart Content-Type with its boundary (the client only sets JSON content types).
+   */
+  submit: async (assignmentId: number, body: WorkSampleSubmitRequest) => {
+    const form = new FormData()
+    if (body.responseText) form.append('responseText', body.responseText)
+    if (body.responseUrl) form.append('responseUrl', body.responseUrl)
+    for (const file of body.files ?? []) form.append('files', file, file.name)
+    return normalizeWorkSample(
+      await apiRequest<CandidateWorkSample>(`/candidates/me/work-samples/${assignmentId}/submit`, { method: 'POST', body: form }),
+    )
+  },
+  /** Raw bytes with Content-Disposition (not the JSON envelope). */
+  downloadFile: (assignmentId: number, fileId: number): Promise<DownloadedFile> =>
+    apiDownload(`/candidates/me/work-samples/${assignmentId}/files/${fileId}`),
 }
 
 export const interviewsApi = {
@@ -261,4 +304,49 @@ export const privacyApi = {
   deleteSurvey: () => apiRequest<null>('/candidates/me/equal-opportunity', { method: 'DELETE' }),
   exportData: (): Promise<DownloadedFile> => apiDownload('/candidates/me/export'),
   deleteAccount: (body: DeleteAccountRequest) => apiRequest<null>('/candidates/me', { method: 'DELETE', body }),
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Verification (plan v2 Section 5; WP-VBE notes 2.1)
+// ---------------------------------------------------------------------------------------------------------------------
+
+const VERIFICATION = '/candidates/me/verification'
+
+export const verificationApi = {
+  sources: () => apiRequest<VerificationSource[]>(`${VERIFICATION}/sources`),
+  createSource: (body: SourceCreateRequest) =>
+    apiRequest<VerificationSource>(`${VERIFICATION}/sources`, { method: 'POST', body }),
+  /** Multipart `file` plus the form field `consent=true`. */
+  uploadDocument: (file: File) => {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    form.append('consent', 'true')
+    return apiRequest<VerificationSource>(`${VERIFICATION}/sources/documents`, { method: 'POST', body: form })
+  },
+  checkOwnership: (sourceId: number, method: OwnershipCheckMethod) =>
+    apiRequest<VerificationSource>(`${VERIFICATION}/sources/${sourceId}/ownership-check`, { method: 'POST', body: { method } }),
+  revoke: (sourceId: number) => apiRequest<null>(`${VERIFICATION}/sources/${sourceId}`, { method: 'DELETE' }),
+  startRun: (sourceId: number) => apiRequest<VerificationRun>(`${VERIFICATION}/sources/${sourceId}/runs`, { method: 'POST' }),
+  run: (runId: number) => apiRequest<VerificationRun>(`${VERIFICATION}/runs/${runId}`),
+  /** 503 with a message starting `OAUTH_NOT_CONFIGURED` when GitHub sign-in is not set up on the server. */
+  startGitHubOAuth: () => apiRequest<OAuthStartResponse>(`${VERIFICATION}/oauth/github/start`),
+  ledger: () => apiRequest<LedgerClaim[]>(`${VERIFICATION}/ledger`),
+  verdict: (verdictId: number) => apiRequest<VerdictDetail>(`${VERIFICATION}/verdicts/${verdictId}`),
+  respond: (verdictId: number, body: VerdictResponseRequest) =>
+    apiRequest<VerdictDetail>(`${VERIFICATION}/verdicts/${verdictId}/response`, { method: 'POST', body }),
+  references: () => apiRequest<ReferenceRequest[]>(`${VERIFICATION}/references`),
+  createReference: (body: ReferenceCreateRequest) =>
+    apiRequest<ReferenceRequest>(`${VERIFICATION}/references`, { method: 'POST', body }),
+  cancelReference: (referenceId: number) =>
+    apiRequest<ReferenceRequest>(`${VERIFICATION}/references/${referenceId}/cancel`, { method: 'POST' }),
+}
+
+/**
+ * The referee's page. No sign-in: `auth: false` sends no bearer token and never triggers a refresh, so a 401 (which
+ * the public endpoints do not return) could not sign anybody out either.
+ */
+export const publicReferenceApi = {
+  get: (token: string) => apiRequest<PublicReference>(`/public/references/${encodeURIComponent(token)}`, { auth: false }),
+  submit: (token: string, body: PublicReferenceSubmit) =>
+    apiRequest<null>(`/public/references/${encodeURIComponent(token)}`, { method: 'POST', body, auth: false }),
 }

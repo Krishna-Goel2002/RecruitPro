@@ -1,4 +1,4 @@
-import { api } from './client'
+import { api, downloadFile } from './client'
 import type {
   AssignmentStatus,
   AssignWorkSampleRequest,
@@ -28,6 +28,12 @@ export const workSamplesApi = {
   assignments: (jobId: number, status: AssignmentStatus | undefined, signal?: AbortSignal) =>
     api.get<WorkSampleAssignment[]>(`/hr/jobs/${jobId}/work-sample-assignments`, { status }, signal),
   score: (assignmentId: number, body: ScoreRequest) => api.post<WorkSampleAssignment>(`/hr/work-sample-assignments/${assignmentId}/score`, body),
+  /** ADMIN, HR_MANAGER; reason 1..1000 characters. CANCELLED/EXPIRED → 400, RECRUITER → 403. */
+  cancel: (assignmentId: number, reason: string) =>
+    api.post<WorkSampleAssignment>(`/hr/work-sample-assignments/${assignmentId}/cancel`, { reason }),
+  /** Raw bytes (not the JSON envelope), saved with the server's file name; audited. */
+  downloadFile: (assignmentId: number, fileId: number, fallbackName: string) =>
+    downloadFile(`/hr/work-sample-assignments/${assignmentId}/files/${fileId}`, fallbackName),
 }
 
 /** Interview kits, interviews and scorecards (plan Section 5.6). */
@@ -43,4 +49,6 @@ export const interviewsApi = {
   mine: (signal?: AbortSignal) => api.get<Interview[]>('/interviews/mine', undefined, signal),
   detail: (id: number, signal?: AbortSignal) => api.get<InterviewDetail>(`/interviews/${id}`, undefined, signal),
   submitScorecard: (id: number, body: ScorecardInput) => api.post<Interview>(`/interviews/${id}/scorecard`, body),
+  /** Author only, until the application is decided: 403 other users, 400 decided/cancelled, 404 no scorecard yet. */
+  updateScorecard: (id: number, body: ScorecardInput) => api.put<Interview>(`/interviews/${id}/scorecard`, body),
 }

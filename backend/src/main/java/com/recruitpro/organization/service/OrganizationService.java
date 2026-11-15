@@ -4,6 +4,7 @@ import com.recruitpro.audit.service.AuditActions;
 import com.recruitpro.audit.service.AuditService;
 import com.recruitpro.auth.service.AuthService;
 import com.recruitpro.auth.service.AuthSession;
+import com.recruitpro.common.crypto.SecretCipher;
 import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.common.exception.ForbiddenException;
@@ -11,6 +12,7 @@ import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.organization.dto.OrganizationResponse;
 import com.recruitpro.organization.dto.OrganizationSignupRequest;
 import com.recruitpro.organization.dto.OrganizationUpdateRequest;
+import com.recruitpro.organization.dto.SsoDomains;
 import com.recruitpro.organization.entity.Organization;
 import com.recruitpro.organization.repository.OrganizationRepository;
 import com.recruitpro.security.SecurityUtils;
@@ -21,13 +23,16 @@ import com.recruitpro.user.service.UserAccountService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * D3: organisations. Self-service sign-up ({@code app.organizations.self-signup-enabled}), first-run
@@ -45,11 +50,12 @@ public class OrganizationService {
     private final AuthService authService;
     private final AuditService auditService;
     private final SecurityUtils securityUtils;
+    private final SecretCipher secretCipher;
     private final boolean selfSignupEnabled;
 
     public OrganizationService(OrganizationRepository organizationRepository, UserRepository userRepository,
                                UserAccountService userAccountService, AuthService authService,
-                               AuditService auditService, SecurityUtils securityUtils,
+                               AuditService auditService, SecurityUtils securityUtils, SecretCipher secretCipher,
                                @Value("${app.organizations.self-signup-enabled:true}") boolean selfSignupEnabled) {
         this.organizationRepository = organizationRepository;
         this.userRepository = userRepository;
@@ -57,6 +63,7 @@ public class OrganizationService {
         this.authService = authService;
         this.auditService = auditService;
         this.securityUtils = securityUtils;
+        this.secretCipher = secretCipher;
         this.selfSignupEnabled = selfSignupEnabled;
     }
 
@@ -159,6 +166,22 @@ public class OrganizationService {
             changes.add("shareVerificationStatus " + organization.isShareVerificationStatus() + " -> "
                     + request.shareVerificationStatus());
             organization.setShareVerificationStatus(request.shareVerificationStatus());
+        }
+        if (request.requireStaffMfa() != null && request.requireStaffMfa() != organization.isRequireStaffMfa()) {
+            if (request.requireStaffMfa() && !secretCipher.isConfigured()) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "MFA_NOT_CONFIGURED: two-factor authentication is not available on this server");
+            }
+            changes.add("requireStaffMfa " + organization.isRequireStaffMfa() + " -> " + request.requireStaffMfa());
+            organization.setRequireStaffMfa(request.requireStaffMfa());
+        }
+        if (request.ssoAllowedDomains() != null) {
+            String domains = SsoDomains.format(request.ssoAllowedDomains());
+            if (!Objects.equals(domains, organization.getSsoAllowedDomains())) {
+                changes.add("ssoAllowedDomains '" + (organization.getSsoAllowedDomains() == null ? "" : organization.getSsoAllowedDomains())
+                        + "' -> '" + (domains == null ? "" : domains) + "'");
+                organization.setSsoAllowedDomains(domains);
+            }
         }
         Organization saved = organizationRepository.save(organization);
         if (!changes.isEmpty()) {

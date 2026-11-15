@@ -1,4 +1,4 @@
-import type { AdminJobParams, AdminUserParams, ApplicantListParams, AssignmentStatus, AuditParams, JobListParams } from './types'
+import type { AdminJobParams, AdminUserParams, ApplicantListParams, AssignmentStatus, AuditParams, FairnessRange, JobListParams } from './types'
 
 /**
  * Query keys carry every parameter of the request, so a fast filter or page change can never render a response
@@ -17,7 +17,7 @@ export const qk = {
   workSamples: (jobId: number) => ['workSamples', jobId] as const,
   assignments: (jobId: number, status: AssignmentStatus | 'ALL') => ['workSamples', jobId, 'assignments', status] as const,
   interviewKit: (jobId: number) => ['interviewKit', jobId] as const,
-  jobFairness: (jobId: number) => ['fairness', 'job', jobId] as const,
+  jobFairness: (jobId: number, range: FairnessRange = {}) => ['fairness', 'job', jobId, range.from ?? '', range.to ?? ''] as const,
   interviewers: ['interviewers'] as const,
 
   interviews: ['interviews'] as const,
@@ -30,7 +30,18 @@ export const qk = {
   adminOrganization: ['admin', 'organization'] as const,
   adminJobs: (params: AdminJobParams) => ['admin', 'jobs', params] as const,
   adminAudit: (params: AuditParams) => ['admin', 'audit', params] as const,
-  adminFairness: ['fairness', 'organization'] as const,
+  adminFairness: (range: FairnessRange = {}) => ['fairness', 'organization', range.from ?? '', range.to ?? ''] as const,
+
+  /** Verification for one application (staff view). Invalidate with the applicant detail after a review. */
+  applicantVerification: (applicationId: number) => ['verification', 'application', applicationId] as const,
+  verification: ['verification'] as const,
+  verificationSettings: ['verification', 'settings'] as const,
+  verificationMetrics: ['verification', 'metrics'] as const,
+  shadowQueuePrefix: ['verification', 'shadowQueue'] as const,
+  shadowQueue: (page: number) => ['verification', 'shadowQueue', page] as const,
+
+  ssoProviders: ['auth', 'ssoProviders'] as const,
+  mfaStatus: ['account', 'mfa'] as const,
 
   notifications: ['notifications'] as const,
   notificationPage: (page: number) => ['notifications', 'page', page] as const,

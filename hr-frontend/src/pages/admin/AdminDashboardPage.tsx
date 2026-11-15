@@ -58,6 +58,9 @@ function Dashboard({ data }: { data: AdminDashboard }) {
           <HealthCard title="Backend API" value={health.backend} />
           <HealthCard title="Database" value={health.database} />
           <HealthCard title="AI service" value={health.aiService} hint="Resume parsing and matching wait in the queue while it is down." />
+          {data.health?.agentService && (
+            <HealthCard title="Verification agents" value={data.health.agentService} hint="Candidate verification runs wait and retry while it is down; nothing else is affected." />
+          )}
           {queue ? (
             <div className={`health-card${queue.dead > 0 ? ' warn' : ''}`}>
               <strong>Background queue</strong>

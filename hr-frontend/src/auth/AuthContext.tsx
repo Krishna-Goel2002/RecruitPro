@@ -18,6 +18,11 @@ type AuthContextValue = {
   /** Accepts an AuthResponse from login, signup or invitation acceptance; rejects non-staff accounts. */
   acceptSession: (auth: AuthResponse) => Promise<AuthUser>
   signOut: (reason?: string) => Promise<void>
+  /**
+   * Adopts a session whose refresh cookie the server set during a top-level navigation (SSO callback → /sso/complete):
+   * refreshes with the staff portal header. Resolves the user, or null when there is no usable staff session.
+   */
+  completeExternalSignIn: () => Promise<AuthUser | null>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -94,6 +99,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const completeExternalSignIn = useCallback(async () => {
+    const outcome = await refreshSession()
+    if (outcome.kind === 'network') throw new ApiError(0, 'The server could not be reached. Try again in a moment.')
+    if (outcome.kind !== 'ok') return null
+    if (!isStaff(outcome.auth.user.role)) {
+      await authApi.logout().catch(() => undefined)
+      setSession(null)
+      setEndedReason(NON_STAFF_MESSAGE)
+      return null
+    }
+    setEndedReason(null)
+    setSignedOutByUser(false)
+    return outcome.auth.user
+  }, [])
+
   const value = useMemo<AuthContextValue>(() => ({
     status,
     user,
@@ -102,7 +122,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     can: (capability: Capability) => roleCan(user?.role, capability),
     acceptSession,
     signOut,
-  }), [status, user, endedReason, signedOutByUser, acceptSession, signOut])
+    completeExternalSignIn,
+  }), [status, user, endedReason, signedOutByUser, acceptSession, signOut, completeExternalSignIn])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

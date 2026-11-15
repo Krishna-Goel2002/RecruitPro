@@ -14,8 +14,8 @@ import org.springframework.web.client.RestClient;
 import java.time.Duration;
 
 /**
- * M11: database {@code SELECT 1}, AI service {@code GET /health} (2-second timeout, result cached for 15
- * seconds) and background-queue counts.
+ * M11: database {@code SELECT 1}, AI service and agent service {@code GET /health} (2-second timeout, result
+ * cached for 15 seconds) and background-queue counts.
  */
 @Service
 public class SystemHealthService {
@@ -35,10 +35,17 @@ public class SystemHealthService {
     private volatile String cachedAiStatus;
     private volatile long cachedAiAt;
 
+    private final RestClient agentHealthClient;
+    private final boolean agentConfigured;
+    private volatile String cachedAgentStatus;
+    private volatile long cachedAgentAt;
+
     public SystemHealthService(JdbcTemplate jdbcTemplate, BackgroundJobRepository backgroundJobRepository,
                                RestClient.Builder restClientBuilder,
                                @Value("${app.ai-service.base-url:}") String aiBaseUrl,
-                               @Value("${app.ai-service.health-timeout-ms:2000}") int healthTimeoutMs) {
+                               @Value("${app.ai-service.health-timeout-ms:2000}") int healthTimeoutMs,
+                               @Value("${app.agent-service.base-url:}") String agentBaseUrl,
+                               @Value("${app.agent-service.health-timeout-ms:2000}") int agentHealthTimeoutMs) {
         this.jdbcTemplate = jdbcTemplate;
         this.backgroundJobRepository = backgroundJobRepository;
         this.aiConfigured = aiBaseUrl != null && !aiBaseUrl.isBlank();
@@ -48,10 +55,40 @@ public class SystemHealthService {
         this.aiHealthClient = aiConfigured
                 ? restClientBuilder.clone().baseUrl(aiBaseUrl).requestFactory(factory).build()
                 : null;
+        this.agentConfigured = agentBaseUrl != null && !agentBaseUrl.isBlank();
+        SimpleClientHttpRequestFactory agentFactory = new SimpleClientHttpRequestFactory();
+        agentFactory.setConnectTimeout(Duration.ofMillis(agentHealthTimeoutMs));
+        agentFactory.setReadTimeout(Duration.ofMillis(agentHealthTimeoutMs));
+        this.agentHealthClient = agentConfigured
+                ? restClientBuilder.clone().baseUrl(agentBaseUrl).requestFactory(agentFactory).build()
+                : null;
     }
 
     public SystemHealthResponse check() {
-        return new SystemHealthResponse(UP, databaseStatus(), aiServiceStatus(), queueHealth());
+        return new SystemHealthResponse(UP, databaseStatus(), aiServiceStatus(), queueHealth(), agentServiceStatus());
+    }
+
+    /** Verification agent service {@code GET /health} (public endpoint), cached like the AI service. */
+    public String agentServiceStatus() {
+        if (!agentConfigured) {
+            return UNCONFIGURED;
+        }
+        long now = System.currentTimeMillis();
+        String cached = cachedAgentStatus;
+        if (cached != null && now - cachedAgentAt < AI_CACHE_MILLIS) {
+            return cached;
+        }
+        String status;
+        try {
+            agentHealthClient.get().uri("/health").retrieve().toBodilessEntity();
+            status = UP;
+        } catch (RuntimeException ex) {
+            log.debug("Agent service health check failed: {}", ex.getClass().getSimpleName());
+            status = DOWN;
+        }
+        cachedAgentStatus = status;
+        cachedAgentAt = now;
+        return status;
     }
 
     public String databaseStatus() {

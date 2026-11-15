@@ -9,6 +9,7 @@ import com.recruitpro.application.repository.ApplicationRepository;
 import com.recruitpro.assessment.entity.WorkSampleAssignment;
 import com.recruitpro.assessment.entity.WorkSampleAssignmentStatus;
 import com.recruitpro.assessment.repository.WorkSampleAssignmentRepository;
+import com.recruitpro.assessment.service.WorkSampleFileService;
 import com.recruitpro.audit.repository.AuditEventRepository;
 import com.recruitpro.audit.service.AuditActions;
 import com.recruitpro.audit.service.AuditService;
@@ -40,9 +41,11 @@ import com.recruitpro.security.SecurityUtils;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
+import com.recruitpro.verification.service.VerificationPrivacyService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -62,7 +65,9 @@ import java.util.UUID;
  * so the portal does not try a token refresh) the account is anonymised in one transaction:
  * <ul>
  *   <li>deleted: resume files (after commit), resume facts and parser flags/timeline, claims, the equal-opportunity
- *       survey, notifications, one-time tokens; refresh tokens are revoked;</li>
+ *       survey, notifications, one-time tokens; every verification row (sources with their encrypted tokens, runs,
+ *       evidence, verdicts and their reviews and labels, reference requests) and, after commit, verification
+ *       documents and evidence snapshots (plan v2, WP-VBE); refresh tokens are revoked;</li>
  *   <li>anonymised: user (email {@code deleted-user-<id>@deleted.invalid}, name "Deleted Candidate", unusable
  *       password, disabled, {@code deleted_at}), profile fields, resume file names, cover letters, work-sample
  *       responses, and the actor email of the user's own audit rows;</li>
@@ -102,6 +107,14 @@ public class CandidateAccountDeletionService {
     private final AuditEventRepository auditEventRepository;
     private final AuditService auditService;
     private final ResumeStorage resumeStorage;
+    private final VerificationPrivacyService verificationPrivacyService;
+    /** WP-PLAT: work-sample submission files (setter-injected to keep the constructor stable). */
+    private WorkSampleFileService workSampleFileService;
+
+    @Autowired
+    public void setWorkSampleFileService(WorkSampleFileService workSampleFileService) {
+        this.workSampleFileService = workSampleFileService;
+    }
 
     public CandidateAccountDeletionService(SecurityUtils securityUtils, UserRepository userRepository,
                                            CandidateProfileRepository profileRepository, PasswordEncoder passwordEncoder,
@@ -116,7 +129,8 @@ public class CandidateAccountDeletionService {
                                            NotificationRepository notificationRepository,
                                            UserTokenRepository userTokenRepository, RefreshTokenService refreshTokenService,
                                            AuditEventRepository auditEventRepository, AuditService auditService,
-                                           ResumeStorage resumeStorage) {
+                                           ResumeStorage resumeStorage,
+                                           VerificationPrivacyService verificationPrivacyService) {
         this.securityUtils = securityUtils;
         this.userRepository = userRepository;
         this.profileRepository = profileRepository;
@@ -137,6 +151,7 @@ public class CandidateAccountDeletionService {
         this.auditEventRepository = auditEventRepository;
         this.auditService = auditService;
         this.resumeStorage = resumeStorage;
+        this.verificationPrivacyService = verificationPrivacyService;
     }
 
     @Transactional
@@ -171,6 +186,10 @@ public class CandidateAccountDeletionService {
             for (WorkSampleAssignment assignment : assignmentRepository.findAllForCandidate(candidateId)) {
                 assignment.setResponseText(null);
                 assignment.setResponseUrl(null);
+                if (workSampleFileService != null) {
+                    // WP-PLAT: submitted files are candidate content; rows now, stored files after commit.
+                    workSampleFileService.deleteAll(assignment.getId());
+                }
                 if (assignment.getStatus() == WorkSampleAssignmentStatus.ASSIGNED
                         || assignment.getStatus() == WorkSampleAssignmentStatus.STARTED) {
                     assignment.setStatus(WorkSampleAssignmentStatus.CANCELLED);
@@ -184,6 +203,9 @@ public class CandidateAccountDeletionService {
             List<CandidateClaim> claims = claimRepository.findAllByCandidateIdOrderByIdAsc(candidateId);
             counts.claims = claims.size();
             claimRepository.deleteAll(claims);
+            VerificationPrivacyService.DeletionCounts verification = verificationPrivacyService.deleteAllForCandidate(candidateId);
+            counts.verificationSources = verification.sources();
+            counts.verdicts = verification.verdicts();
             counts.survey = eeoRepository.deleteAllByCandidate(candidateId);
             for (Resume resume : resumeRepository.findAllByCandidateIdOrderByUploadedAtDescIdDesc(candidateId)) {
                 storageKeys.add(resume.getStorageKey());
@@ -222,7 +244,9 @@ public class CandidateAccountDeletionService {
         auditService.recordFor(null, user.getId(), anonymousEmail, AuditActions.CANDIDATE_ACCOUNT_DELETED, "USER",
                 String.valueOf(user.getId()), "Candidate account deleted: " + counts.applications + " application(s) kept "
                         + "anonymised (" + counts.withdrawn + " withdrawn), " + storageKeys.size() + " resume file(s), "
-                        + counts.facts + " fact(s), " + counts.claims + " claim(s) and " + counts.survey + " survey response(s) deleted");
+                        + counts.facts + " fact(s), " + counts.claims + " claim(s), " + counts.verificationSources
+                        + " verification source(s), " + counts.verdicts + " verdict(s) and " + counts.survey
+                        + " survey response(s) deleted");
         deleteFilesAfterCommit(storageKeys);
     }
 
@@ -295,5 +319,7 @@ public class CandidateAccountDeletionService {
         int claims;
         int facts;
         int survey;
+        int verificationSources;
+        int verdicts;
     }
 }

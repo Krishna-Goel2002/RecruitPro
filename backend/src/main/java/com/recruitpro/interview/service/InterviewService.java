@@ -31,6 +31,13 @@ import com.recruitpro.interview.dto.ScorecardRequest;
 import com.recruitpro.interview.dto.UpdateInterviewRequest;
 import com.recruitpro.interview.entity.Interview;
 import com.recruitpro.interview.entity.InterviewScorecard;
+import com.recruitpro.interview.entity.InterviewScorecardRevision;
+import com.recruitpro.interview.dto.ScorecardResponse;
+import com.recruitpro.interview.dto.ScorecardRevisionResponse;
+import com.recruitpro.interview.repository.InterviewScorecardRevisionRepository;
+import com.recruitpro.notification.service.NotificationAttachment;
+import com.recruitpro.common.util.JsonText;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.recruitpro.interview.entity.InterviewStatus;
 import com.recruitpro.interview.repository.InterviewKitRepository;
 import com.recruitpro.interview.repository.InterviewRepository;
@@ -95,6 +102,9 @@ public class InterviewService {
     private final MatchTriggerService matchTriggerService;
     private final NotificationService notificationService;
     private final InterviewViews views;
+    private final InterviewCalendarService calendar;
+    private final InterviewScorecardRevisionRepository revisionRepository;
+    private final ObjectMapper objectMapper;
     private final String hrPortalUrl;
 
     public InterviewService(HrJobAccessService jobAccess, SecurityUtils securityUtils,
@@ -104,7 +114,8 @@ public class InterviewService {
                             JobRequirementRepository requirementRepository, JobMatchRunRepository matchRunRepository,
                             UserRepository userRepository, AuditService auditService,
                             MatchTriggerService matchTriggerService, NotificationService notificationService,
-                            InterviewViews views,
+                            InterviewViews views, InterviewCalendarService calendar,
+                            InterviewScorecardRevisionRepository revisionRepository, ObjectMapper objectMapper,
                             @Value("${app.frontend.hr-url:http://localhost:5174}") String hrPortalUrl) {
         this.jobAccess = jobAccess;
         this.securityUtils = securityUtils;
@@ -121,6 +132,9 @@ public class InterviewService {
         this.matchTriggerService = matchTriggerService;
         this.notificationService = notificationService;
         this.views = views;
+        this.calendar = calendar;
+        this.revisionRepository = revisionRepository;
+        this.objectMapper = objectMapper;
         this.hrPortalUrl = hrPortalUrl;
     }
 
@@ -195,6 +209,7 @@ public class InterviewService {
                 throw new BadRequestException("status can only be set to CANCELLED");
             }
             interview.setStatus(InterviewStatus.CANCELLED);
+            interview.setIcsSequence(interview.getIcsSequence() + 1);
             Interview saved = interviewRepository.saveAndFlush(interview);
             notifyCancelled(saved, application, job, interviewer);
             return views.staffView(saved);
@@ -218,8 +233,12 @@ public class InterviewService {
                 changed = true;
             }
         }
+        if (changed) {
+            // WP-PLAT: the same calendar event (UID) with a higher SEQUENCE replaces the earlier invitation.
+            interview.setIcsSequence(interview.getIcsSequence() + 1);
+        }
         Interview saved = interviewRepository.saveAndFlush(interview);
-        if (changed && interviewer != null) {
+        if (changed) {
             notifyScheduled(saved, application, job, interviewer);
         }
         return views.staffView(saved);
@@ -315,6 +334,119 @@ public class InterviewService {
                         + " ratings, " + verified + " requirement-linked ratings at 3 or above");
         matchTriggerService.requestMatch(application.getId());
         return views.staffView(saved);
+    }
+
+    /** Applications whose scorecards can no longer be edited (the hiring decision was made, or the candidate left). */
+    public static final Set<ApplicationStatus> SCORECARD_LOCKED = EnumSet.of(ApplicationStatus.SELECTED,
+            ApplicationStatus.REJECTED, ApplicationStatus.WITHDRAWN);
+
+    /**
+     * PUT /api/v1/interviews/{id}/scorecard (WP-PLAT): the scorecard's author (the assigned interviewer who submitted
+     * it) replaces ratings, recommendation and summary until the application is SELECTED, REJECTED or WITHDRAWN. The
+     * replaced version is stored in {@code interview_scorecard_revisions}; audited as SCORECARD_UPDATED; re-matching is
+     * queued as after a submission. {@code scorecardId} (alias route) must be the interview's scorecard when given.
+     */
+    public InterviewResponse updateScorecard(Long interviewId, Long scorecardId, ScorecardRequest request) {
+        if (request == null || request.ratings() == null || request.recommendation() == null) {
+            throw new BadRequestException("ratings and recommendation are required");
+        }
+        CurrentUser caller = securityUtils.requireOrganizationMember();
+        lockInOrganization(interviewId, caller);
+        Interview interview = findInOrganization(interviewId, caller);
+        InterviewScorecard scorecard = scorecardRepository.findByInterviewId(interview.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("This interview has no scorecard yet"));
+        if (scorecardId != null && !scorecardId.equals(scorecard.getId())) {
+            throw new ResourceNotFoundException("Scorecard not found");
+        }
+        if (!Objects.equals(interview.getInterviewerUserId(), caller.userId())) {
+            throw new ForbiddenException("Only the interviewer who submitted the scorecard can edit it");
+        }
+        if (interview.getStatus() == InterviewStatus.CANCELLED) {
+            throw new BadRequestException("This interview was cancelled");
+        }
+        Application application = interview.getApplication();
+        if (SCORECARD_LOCKED.contains(application.getStatus())) {
+            throw new BadRequestException("The application has been decided, so the scorecard can no longer be changed");
+        }
+        Job job = application.getJob();
+        Set<Long> requirementIds = new HashSet<>();
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderById(job.getId())) {
+            requirementIds.add(requirement.getId());
+        }
+        Map<String, Long> kitLinks = new HashMap<>();
+        kitRepository.findByJobId(job.getId()).ifPresent(kit -> {
+            for (InterviewQuestion question : views.questions(kit.getQuestionsJson())) {
+                if (question.id() != null) {
+                    kitLinks.put(question.id(), question.requirementId());
+                }
+            }
+        });
+        List<ScorecardRating> ratings = validateRatings(request.ratings(), requirementIds, kitLinks);
+        String summary = request.summary() == null || request.summary().isBlank() ? null : request.summary().trim();
+        if (summary != null && summary.length() > MAX_SUMMARY) {
+            throw new BadRequestException("The summary must be at most " + MAX_SUMMARY + " characters");
+        }
+        ScorecardResponse previous = views.scorecard(scorecard, 0);
+        if (previous.ratings().equals(ratings) && previous.recommendation() == request.recommendation()
+                && Objects.equals(previous.summary(), summary)) {
+            return views.staffView(interview);
+        }
+        InterviewScorecardRevision revision = new InterviewScorecardRevision();
+        revision.setScorecardId(scorecard.getId());
+        revision.setRevisedBy(caller.userId());
+        revision.setSnapshotJson(JsonText.write(objectMapper, previous));
+        revisionRepository.save(revision);
+        String before = previous.recommendation() + ", " + previous.ratings().size() + " ratings";
+        scorecard.setRatingsJson(views.writeRatings(ratings));
+        scorecard.setRecommendation(request.recommendation());
+        scorecard.setSummary(summary);
+        scorecardRepository.saveAndFlush(scorecard);
+        long verified = ratings.stream().filter(rating -> rating.requirementId() != null
+                && rating.rating() >= VERIFIED_MIN_RATING).count();
+        auditService.record(AuditActions.SCORECARD_UPDATED, "INTERVIEW", String.valueOf(interview.getId()),
+                "Scorecard #" + scorecard.getId() + " of interview #" + interview.getId() + " (application #"
+                        + application.getId() + ", job #" + job.getId() + ") edited by its author: was " + before
+                        + "; now " + request.recommendation() + ", " + ratings.size() + " ratings, " + verified
+                        + " requirement-linked ratings at 3 or above");
+        matchTriggerService.requestMatch(application.getId());
+        return views.staffView(interview);
+    }
+
+    /**
+     * GET /api/v1/interviews/{id}/scorecard/revisions: earlier versions, newest first (the author, ADMIN or
+     * HR_MANAGER of the organisation).
+     */
+    @Transactional(readOnly = true)
+    public List<ScorecardRevisionResponse> scorecardRevisions(Long interviewId) {
+        CurrentUser caller = securityUtils.requireOrganizationMember();
+        Interview interview = findInOrganization(interviewId, caller);
+        boolean assigned = Objects.equals(interview.getInterviewerUserId(), caller.userId());
+        if (!assigned && !caller.hasAnyRole(Role.ADMIN, Role.HR_MANAGER)) {
+            throw new ForbiddenException("Only the interviewer or a hiring manager can see the scorecard history");
+        }
+        InterviewScorecard scorecard = scorecardRepository.findByInterviewId(interview.getId()).orElse(null);
+        if (scorecard == null) {
+            return List.of();
+        }
+        List<InterviewScorecardRevision> revisions = revisionRepository.findAllByScorecardIdOrderByIdDesc(scorecard.getId());
+        Set<Long> editorIds = new HashSet<>();
+        for (InterviewScorecardRevision revision : revisions) {
+            if (revision.getRevisedBy() != null) {
+                editorIds.add(revision.getRevisedBy());
+            }
+        }
+        Map<Long, String> names = new HashMap<>();
+        for (User user : userRepository.findAllById(editorIds)) {
+            names.put(user.getId(), user.getFullName());
+        }
+        List<ScorecardRevisionResponse> result = new ArrayList<>(revisions.size());
+        for (InterviewScorecardRevision revision : revisions) {
+            ScorecardResponse snapshot = views.readScorecardSnapshot(revision.getSnapshotJson());
+            result.add(new ScorecardRevisionResponse(revision.getId(), revision.getRevisedBy(),
+                    revision.getRevisedBy() == null ? null : names.getOrDefault(revision.getRevisedBy(), "Former staff member"),
+                    revision.getCreatedAt(), snapshot));
+        }
+        return result;
     }
 
     // ---- internals ----
@@ -441,7 +573,9 @@ public class InterviewService {
             params.put("scheduledAt", when);
             params.put("durationMinutes", String.valueOf(interview.getDurationMinutes()));
             params.put("location", interview.getLocation() == null ? "to be confirmed" : interview.getLocation());
-            notificationService.notify(NotificationRecipient.of(candidate), NotificationTemplate.INTERVIEW_SCHEDULED, params);
+            NotificationAttachment invite = calendar.forCandidate(interview, application, job, candidate,
+                    activeUser(interviewer) ? interviewer : null, IcsCalendar.Method.REQUEST);
+            notificationService.notify(NotificationRecipient.of(candidate), NotificationTemplate.INTERVIEW_SCHEDULED, params, invite);
         }
         if (activeUser(interviewer)) {
             Map<String, String> params = new HashMap<>();
@@ -450,8 +584,11 @@ public class InterviewService {
             params.put("candidateLabel", ApplicantQueryService.blindName(application.getId()));
             params.put("jobTitle", job.getTitle());
             params.put("scheduledAt", when);
-            params.put("link", trimTrailingSlash(hrPortalUrl) + "/interviews/" + interview.getId());
-            notificationService.notify(NotificationRecipient.of(interviewer), NotificationTemplate.INTERVIEW_ASSIGNED, params);
+            String link = trimTrailingSlash(hrPortalUrl) + "/interviews/" + interview.getId();
+            params.put("link", link);
+            NotificationAttachment invite = calendar.forInterviewer(interview, application, job, candidate, interviewer,
+                    link, IcsCalendar.Method.REQUEST);
+            notificationService.notify(NotificationRecipient.of(interviewer), NotificationTemplate.INTERVIEW_ASSIGNED, params, invite);
         }
     }
 
@@ -464,7 +601,9 @@ public class InterviewService {
             params.put("jobTitle", job.getTitle());
             params.put("scheduledAt", when);
             params.put("message", "The hiring team will contact you if a new time is arranged.");
-            notificationService.notify(NotificationRecipient.of(candidate), NotificationTemplate.INTERVIEW_CANCELLED, params);
+            NotificationAttachment cancel = calendar.forCandidate(interview, application, job, candidate,
+                    activeUser(interviewer) ? interviewer : null, IcsCalendar.Method.CANCEL);
+            notificationService.notify(NotificationRecipient.of(candidate), NotificationTemplate.INTERVIEW_CANCELLED, params, cancel);
         }
         if (activeUser(interviewer)) {
             Map<String, String> params = new HashMap<>();
@@ -472,7 +611,9 @@ public class InterviewService {
             params.put("jobTitle", job.getTitle());
             params.put("scheduledAt", when);
             params.put("message", "You no longer need to interview " + ApplicantQueryService.blindName(application.getId()) + ".");
-            notificationService.notify(NotificationRecipient.of(interviewer), NotificationTemplate.INTERVIEW_CANCELLED, params);
+            NotificationAttachment cancel = calendar.forInterviewer(interview, application, job, candidate, interviewer,
+                    trimTrailingSlash(hrPortalUrl) + "/interviews/" + interview.getId(), IcsCalendar.Method.CANCEL);
+            notificationService.notify(NotificationRecipient.of(interviewer), NotificationTemplate.INTERVIEW_CANCELLED, params, cancel);
         }
     }
 

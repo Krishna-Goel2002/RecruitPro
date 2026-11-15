@@ -9,6 +9,7 @@ import com.recruitpro.application.entity.Application;
 import com.recruitpro.application.entity.ApplicationStatus;
 import com.recruitpro.application.repository.ApplicationRepository;
 import com.recruitpro.assessment.dto.AssignWorkSampleRequest;
+import com.recruitpro.assessment.dto.CancelAssignmentRequest;
 import com.recruitpro.assessment.dto.CriterionScore;
 import com.recruitpro.assessment.dto.RubricCriterion;
 import com.recruitpro.assessment.dto.ScoreRequest;
@@ -99,6 +100,7 @@ public class WorkSampleService {
     private final AiServiceClient aiServiceClient;
     private final WorkSampleViews views;
     private final TransactionTemplate transactionTemplate;
+    private final WorkSampleFileService fileService;
     private final String candidatePortalUrl;
 
     public WorkSampleService(HrJobAccessService jobAccess, SecurityUtils securityUtils,
@@ -107,6 +109,7 @@ public class WorkSampleService {
                              ApplicationRepository applicationRepository, AuditService auditService, MatchTriggerService matchTriggerService,
                              NotificationService notificationService, AiServiceClient aiServiceClient,
                              WorkSampleViews views, PlatformTransactionManager transactionManager,
+                             WorkSampleFileService fileService,
                              @Value("${app.frontend.candidate-url:http://localhost:5173}") String candidatePortalUrl) {
         this.jobAccess = jobAccess;
         this.securityUtils = securityUtils;
@@ -121,6 +124,7 @@ public class WorkSampleService {
         this.aiServiceClient = aiServiceClient;
         this.views = views;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.fileService = fileService;
         this.candidatePortalUrl = candidatePortalUrl;
     }
 
@@ -336,6 +340,75 @@ public class WorkSampleService {
                         + linked + " requirement-linked criteria at 3 or above");
         matchTriggerService.requestMatch(applicationId);
         return views.assignment(saved);
+    }
+
+    /** Assignments HR may cancel (anything not finished by expiry or an earlier cancellation). */
+    public static final Set<WorkSampleAssignmentStatus> CANCELLABLE = EnumSet.of(WorkSampleAssignmentStatus.ASSIGNED,
+            WorkSampleAssignmentStatus.STARTED, WorkSampleAssignmentStatus.SUBMITTED, WorkSampleAssignmentStatus.SCORED);
+
+    /**
+     * POST /api/v1/hr/work-sample-assignments/{id}/cancel (ADMIN, HR_MANAGER; WP-PLAT): status CANCELLED with the
+     * reason, time and user. A SCORED assignment stops counting as DEMONSTRATED evidence, so re-matching is queued.
+     * The candidate is notified (WORK_SAMPLE_CANCELLED, with the reason); audited as WORK_SAMPLE_CANCELLED.
+     */
+    @Transactional
+    public WorkSampleAssignmentResponse cancel(Long assignmentId, CancelAssignmentRequest request) {
+        String reason = request == null || request.reason() == null ? "" : request.reason().trim();
+        if (reason.isEmpty() || reason.length() > 1000) {
+            throw new BadRequestException("A reason of 1 to 1000 characters is required");
+        }
+        Long jobId = assignmentRepository.findJobIdById(assignmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Work sample assignment not found"));
+        Job job = jobAccess.requireManageAccess(jobId);
+        WorkSampleAssignment assignment = assignmentRepository.lockById(assignmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Work sample assignment not found"));
+        if (!CANCELLABLE.contains(assignment.getStatus())) {
+            throw new BadRequestException(assignment.getStatus() == WorkSampleAssignmentStatus.CANCELLED
+                    ? "This work sample assignment is already cancelled"
+                    : "Expired work sample assignments cannot be cancelled");
+        }
+        WorkSampleAssignmentStatus previous = assignment.getStatus();
+        CurrentUser actor = securityUtils.currentUser();
+        assignment.setStatus(WorkSampleAssignmentStatus.CANCELLED);
+        assignment.setCancelledAt(UtcTime.now());
+        assignment.setCancelledByUserId(actor.userId());
+        assignment.setCancelReason(reason);
+        WorkSampleAssignment saved = assignmentRepository.saveAndFlush(assignment);
+        Application application = saved.getApplication();
+        WorkSample sample = saved.getWorkSample();
+        auditService.record(AuditActions.WORK_SAMPLE_CANCELLED, "WORK_SAMPLE_ASSIGNMENT", String.valueOf(saved.getId()),
+                "Work sample assignment #" + saved.getId() + " of application #" + application.getId() + " (job #"
+                        + job.getId() + ") cancelled (was " + previous + "): " + limit(reason, 300));
+        if (previous == WorkSampleAssignmentStatus.SCORED) {
+            matchTriggerService.requestMatch(application.getId());
+        }
+        User user = application.getCandidate() == null ? null : application.getCandidate().getUser();
+        if (user != null && user.getDeletedAt() == null && user.isEnabled() && user.getEmail() != null) {
+            Map<String, String> params = new HashMap<>();
+            params.put("firstName", user.getFirstName() == null ? "" : user.getFirstName());
+            params.put("jobTitle", job.getTitle());
+            params.put("title", sample.getTitle());
+            params.put("reason", reason);
+            notificationService.notify(NotificationRecipient.of(user), NotificationTemplate.WORK_SAMPLE_CANCELLED, params);
+        }
+        return views.assignment(saved);
+    }
+
+    /**
+     * GET /api/v1/hr/work-sample-assignments/{id}/files/{fileId} (ADMIN, HR_MANAGER, RECRUITER of the job's
+     * organisation): the submitted file, audited as WORK_SAMPLE_FILE_DOWNLOADED.
+     */
+    @Transactional
+    public WorkSampleFileService.Download downloadFile(Long assignmentId, Long fileId) {
+        Long jobId = assignmentRepository.findJobIdById(assignmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+        Job job = jobAccess.requireApplicantReadAccess(jobId);
+        WorkSampleFileService.Download download = fileService.load(assignmentId, fileId);
+        auditService.record(AuditActions.WORK_SAMPLE_FILE_DOWNLOADED, "WORK_SAMPLE_ASSIGNMENT", String.valueOf(assignmentId),
+                "Downloaded file #" + download.file().getId() + " (" + download.file().getContentType() + ", "
+                        + download.file().getSizeBytes() + " bytes) of work sample assignment #" + assignmentId
+                        + " (job #" + job.getId() + ")");
+        return download;
     }
 
     // ---- internals ----

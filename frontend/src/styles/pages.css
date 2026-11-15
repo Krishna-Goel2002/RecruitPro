@@ -966,3 +966,170 @@
 .danger-zone .danger-button {
   justify-self: start;
 }
+
+/* ---------- verification (Strengthen your application) and the referee page ---------- */
+
+.plain-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.plain-fieldset legend {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+  padding: 0;
+}
+
+.kind-choices {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.verdict-chip,
+.review-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 20px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.verdict-positive {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+  border-color: var(--brand-line);
+}
+
+.verdict-partial {
+  background: var(--blue-soft);
+  color: var(--blue-ink);
+  border-color: var(--blue-line);
+}
+
+.verdict-neutral {
+  background: #eef1f3;
+  color: var(--ink-2);
+  border-color: var(--line);
+}
+
+.verdict-negative {
+  background: var(--amber-soft);
+  color: var(--amber-ink);
+  border-color: var(--amber-line);
+}
+
+.review-tag {
+  background: var(--surface-2);
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.review-shared {
+  background: var(--brand-soft);
+  color: var(--brand-ink);
+}
+
+.review-awaiting_candidate {
+  background: var(--amber-soft);
+  color: var(--amber-ink);
+}
+
+.verdict-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.verdict-row:hover {
+  border-color: var(--brand-line);
+}
+
+.verdict-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.copy-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.copy-label {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.copy-value {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.copy-status {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--brand-ink);
+  min-height: 1em;
+}
+
+.ownership-steps ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.verdict-detail .subheading {
+  margin-bottom: 6px;
+}
+
+.verdict-detail ul:not(.plain-list) {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.auth-card.referee-card {
+  width: min(100%, 680px);
+}
+
+.referee-claim {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 14px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}

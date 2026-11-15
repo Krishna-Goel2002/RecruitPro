@@ -12,13 +12,18 @@ import { ConfirmDialog, TextPromptDialog } from '../../components/Dialog'
 import { EyeIcon, RefreshIcon } from '../../components/Icons'
 import { useNotices } from '../../components/Notices'
 import { ErrorPanel, LoadingPanel } from '../../components/States'
+import { Tabs } from '../../components/Tabs'
 import { formatDateTime } from '../../lib/format'
 import { usePageTitle, usePendingPoll, usePollRef } from '../../lib/hooks'
+import { useSearchState } from '../../lib/useSearchState'
 import { CandidateSection } from './CandidateSection'
 import { ClaimsSection, EvidenceSection } from './EvidenceSection'
 import { HistorySection } from './HistorySection'
 import { InterviewSection } from './InterviewSection'
+import { VerificationTab } from './VerificationTab'
 import { WorkSampleSection } from './WorkSampleSection'
+
+type ApplicantTab = 'review' | 'verification'
 
 type ActionCopy = { label: string; title: string; message: string; commentRequired: boolean; danger?: boolean; primary?: boolean }
 
@@ -65,6 +70,13 @@ function ApplicantView({ jobId, jobTitle, detail, pollTimedOut, onCheckAgain }: 
   const queryClient = useQueryClient()
   const notices = useNotices()
   const location = useLocation()
+  const search = useSearchState()
+  const tabs: { key: ApplicantTab; label: string }[] = [
+    { key: 'review', label: 'Evidence and assessments' },
+    ...(can('verification.view') ? [{ key: 'verification' as const, label: 'Verification' }] : []),
+  ]
+  const requestedTab = search.get('tab', 'review') as ApplicantTab
+  const activeTab: ApplicantTab = tabs.some(tab => tab.key === requestedTab) ? requestedTab : 'review'
   const [action, setAction] = useState<DecisionAction | null>(null)
   const [revealOpen, setRevealOpen] = useState(false)
   const backTo = typeof (location.state as { back?: unknown } | null)?.back === 'string' ? (location.state as { back: string }).back : `/jobs/${jobId}`
@@ -73,6 +85,8 @@ function ApplicantView({ jobId, jobTitle, detail, pollTimedOut, onCheckAgain }: 
   const refreshLists = () => {
     void queryClient.invalidateQueries({ queryKey: qk.applicants(jobId) })
     void queryClient.invalidateQueries({ queryKey: qk.job(jobId) })
+    // A reveal (explicit or by shortlisting) unlocks verification evidence and the candidate's notes.
+    void queryClient.invalidateQueries({ queryKey: qk.applicantVerification(detail.applicationId) })
   }
 
   const decide = useMutation({
@@ -155,10 +169,15 @@ function ApplicantView({ jobId, jobTitle, detail, pollTimedOut, onCheckAgain }: 
 
       <div className="applicant-layout">
         <div className="applicant-main">
-          <EvidenceSection detail={detail} />
-          <ClaimsSection jobId={jobId} detail={detail} />
-          <WorkSampleSection jobId={jobId} detail={detail} />
-          <InterviewSection jobId={jobId} detail={detail} />
+          <Tabs items={tabs} active={activeTab} onChange={key => search.set({ tab: key === 'review' ? null : key }, { replace: true })} label="Applicant sections">
+            {activeTab === 'review' && <>
+              <EvidenceSection detail={detail} />
+              <ClaimsSection jobId={jobId} detail={detail} />
+              <WorkSampleSection jobId={jobId} detail={detail} />
+              <InterviewSection jobId={jobId} detail={detail} />
+            </>}
+            {activeTab === 'verification' && <VerificationTab jobId={jobId} applicationId={detail.applicationId} />}
+          </Tabs>
         </div>
         <aside className="applicant-aside" aria-label="Candidate and history">
           <CandidateSection jobId={jobId} detail={detail} canReveal={canReveal} onReveal={() => { reveal.reset(); setRevealOpen(true) }} />

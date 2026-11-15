@@ -7,7 +7,7 @@ import { useAuth, useCurrentUser } from '../auth/AuthContext'
 import { Capability } from '../auth/permissions'
 import { fullName, roleLabel } from '../lib/format'
 import {
-  BellIcon, BriefcaseIcon, BuildingIcon, CalendarIcon, DocumentIcon, GridIcon, InviteIcon, KeyIcon, LockIcon, ScaleIcon, ShieldIcon, UsersIcon,
+  BellIcon, BriefcaseIcon, BuildingIcon, CalendarIcon, CheckIcon, DocumentIcon, GridIcon, InviteIcon, KeyIcon, LockIcon, ScaleIcon, ShieldIcon, UsersIcon,
 } from './Icons'
 
 type NavItem = { to: string; label: string; icon: ReactNode; capability: Capability; end?: boolean }
@@ -25,11 +25,13 @@ const ADMIN_NAV: NavItem[] = [
   { to: '/admin/jobs', label: 'Job oversight', icon: <ShieldIcon />, capability: 'admin' },
   { to: '/admin/audit', label: 'Audit log', icon: <DocumentIcon />, capability: 'admin' },
   { to: '/admin/fairness', label: 'Fairness', icon: <ScaleIcon />, capability: 'admin' },
+  { to: '/admin/verification', label: 'Verification', icon: <CheckIcon />, capability: 'verification.queue' },
 ]
 
 const ACCOUNT_NAV: NavItem[] = [
   { to: '/notifications', label: 'Notifications', icon: <BellIcon />, capability: 'account' },
   { to: '/account/password', label: 'Change password', icon: <KeyIcon />, capability: 'account' },
+  { to: '/account/security', label: 'Two-step verification', icon: <LockIcon />, capability: 'account' },
 ]
 
 /** Unread in-app notifications; refreshed every two minutes and when the window regains focus. */

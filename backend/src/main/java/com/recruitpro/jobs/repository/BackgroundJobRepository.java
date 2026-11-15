@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface BackgroundJobRepository extends JpaRepository<BackgroundJob, Long> {
 
@@ -21,16 +22,24 @@ public interface BackgroundJobRepository extends JpaRepository<BackgroundJob, Lo
     @Query("select j.id from BackgroundJob j where j.status = :status and j.runAfter <= :now order by j.runAfter asc, j.id asc")
     List<Long> findDueIds(@Param("status") BackgroundJobStatus status, @Param("now") LocalDateTime now, Pageable pageable);
 
-    /** Conditional claim: only one worker can move a given job from PENDING to RUNNING. */
+    /**
+     * Conditional claim: only one worker can move a given job from PENDING to RUNNING. The dedupe key is released, so
+     * a trigger arriving during the run can queue a follow-up job.
+     */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("update BackgroundJob j set j.status = :running, j.attempts = j.attempts + 1, j.lockedAt = :now, j.updatedAt = :now "
-            + "where j.id = :id and j.status = :pending")
+    @Query("update BackgroundJob j set j.status = :running, j.attempts = j.attempts + 1, j.lockedAt = :now, j.updatedAt = :now, "
+            + "j.dedupeKey = null where j.id = :id and j.status = :pending")
     int claim(@Param("id") Long id, @Param("pending") BackgroundJobStatus pending,
               @Param("running") BackgroundJobStatus running, @Param("now") LocalDateTime now);
 
     List<BackgroundJob> findAllByStatusAndLockedAtBefore(BackgroundJobStatus status, LocalDateTime cutoff);
 
     long countByStatus(BackgroundJobStatus status);
+
+    Optional<BackgroundJob> findByDedupeKey(String dedupeKey);
+
+    List<BackgroundJob> findAllByJobTypeAndEntityIdAndStatusInOrderByIdAsc(BackgroundJobType jobType, Long entityId,
+                                                                          Collection<BackgroundJobStatus> statuses);
 
     List<BackgroundJob> findAllByJobTypeAndEntityIdOrderByIdAsc(BackgroundJobType jobType, Long entityId);
 

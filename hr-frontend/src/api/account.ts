@@ -1,5 +1,7 @@
 import { api } from './client'
-import type { AppNotification, AuthResponse, ChangePasswordRequest, Page, UnreadCount } from './types'
+import type {
+  AppNotification, AuthResponse, ChangePasswordRequest, MfaConfirmResult, MfaDisableRequest, MfaEnrollment, MfaStatus, Page, RecoveryCodes, UnreadCount,
+} from './types'
 
 /** The signed-in staff member's own account (plan Section 5.2): in-app inbox and password change. */
 export const accountApi = {
@@ -13,4 +15,15 @@ export const accountApi = {
    * the change are rejected, so the caller must adopt the returned token.
    */
   changePassword: (body: ChangePasswordRequest) => api.post<AuthResponse>('/me/password', body),
+
+  /** Staff MFA (WP-PLAT). 503 `MFA_NOT_CONFIGURED` without an encryption key; candidates get 403. */
+  mfaStatus: (signal?: AbortSignal) => api.get<MfaStatus>('/me/mfa', undefined, signal),
+  /** Replaces an unconfirmed enrolment; 409 when MFA is already on. */
+  mfaEnroll: () => api.post<MfaEnrollment>('/me/mfa/enroll', {}),
+  /** With a bearer token `session` is absent. Wrong code: 400. */
+  mfaConfirm: (code: string) => api.post<MfaConfirmResult>('/me/mfa/confirm', { code }),
+  /** `code` is a TOTP code or a recovery code. 400 for a wrong password/code or while the organisation requires MFA. */
+  mfaDisable: (body: MfaDisableRequest) => api.post<null>('/me/mfa/disable', body),
+  /** The access token is enough (no extra code); earlier codes stop working. */
+  regenerateRecoveryCodes: () => api.post<RecoveryCodes>('/me/mfa/recovery-codes'),
 }

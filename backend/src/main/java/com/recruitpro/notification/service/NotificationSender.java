@@ -13,13 +13,22 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.core.io.ByteArrayResource;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -37,6 +46,8 @@ public class NotificationSender {
     private static final Pattern TOKEN_PARAMETER = Pattern.compile("(token=)[A-Za-z0-9_\\-]+");
     private static final Pattern LINK = Pattern.compile("https?://\\S+");
     private static final int BATCH_SIZE = 20;
+    /** How long a sender instance holds a claimed row; an instance that dies mid-send releases it by expiry. */
+    static final Duration CLAIM_DURATION = Duration.ofMinutes(2);
 
     private final NotificationRepository repository;
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
@@ -46,6 +57,7 @@ public class NotificationSender {
     private final boolean logLinks;
     private final String from;
     private final int maxAttempts;
+    private final String instanceId;
 
     public NotificationSender(NotificationRepository repository,
                               ObjectProvider<JavaMailSender> mailSenderProvider,
@@ -54,7 +66,8 @@ public class NotificationSender {
                               @Value("${app.mail.enabled:false}") boolean mailEnabled,
                               @Value("${app.notifications.log-links:false}") boolean logLinks,
                               @Value("${app.mail.from:RecruitPro <no-reply@recruitpro.local>}") String from,
-                              @Value("${app.notifications.max-attempts:5}") int maxAttempts) {
+                              @Value("${app.notifications.max-attempts:5}") int maxAttempts,
+                              @Value("${app.instance-id:}") String instanceId) {
         this.repository = repository;
         this.mailSenderProvider = mailSenderProvider;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
@@ -63,6 +76,26 @@ public class NotificationSender {
         this.logLinks = logLinks;
         this.from = from;
         this.maxAttempts = Math.max(1, maxAttempts);
+        this.instanceId = instanceId == null || instanceId.isBlank() ? defaultInstanceId() : limit(instanceId.trim(), 80);
+    }
+
+    /** Host name plus a random suffix, so two processes on one host never share an id. */
+    static String defaultInstanceId() {
+        String host;
+        try {
+            host = InetAddress.getLocalHost().getHostName();
+        } catch (Exception ex) {
+            host = "backend";
+        }
+        return limit(host, 60) + "-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private static String limit(String value, int max) {
+        return value.length() > max ? value.substring(0, max) : value;
+    }
+
+    public String instanceId() {
+        return instanceId;
     }
 
     @Scheduled(fixedDelayString = "${app.notifications.poll-interval-ms:5000}",
@@ -78,31 +111,50 @@ public class NotificationSender {
         }
     }
 
-    /** Delivers one batch of pending emails; returns the number processed. */
+    /**
+     * Delivers one batch of pending emails; returns the number this instance processed. Each row is first claimed
+     * with a conditional update (WP-PLAT: {@code claimed_by}, {@code claimed_until}) in its own transaction, so two
+     * backend instances never send the same message; the claim is released when the row is updated after sending.
+     */
     public int sendPendingBatch() {
-        List<Long> ids = transactionTemplate.execute(status -> repository
-                .findAllByChannelAndStatusOrderByCreatedAtAscIdAsc(NotificationChannel.EMAIL, NotificationStatus.PENDING,
-                        PageRequest.of(0, BATCH_SIZE))
-                .stream().map(Notification::getId).toList());
+        List<Long> ids = transactionTemplate.execute(status -> repository.findUnclaimedIds(NotificationChannel.EMAIL,
+                NotificationStatus.PENDING, UtcTime.now(), PageRequest.of(0, BATCH_SIZE)));
         if (ids == null || ids.isEmpty()) {
             return 0;
         }
+        int processed = 0;
         for (Long id : ids) {
+            if (!claim(id)) {
+                continue;
+            }
             transactionTemplate.executeWithoutResult(status -> deliver(id));
+            processed++;
         }
-        return ids.size();
+        return processed;
+    }
+
+    /** Claims one pending row for this instance; false when another instance holds it or it is no longer pending. */
+    public boolean claim(Long id) {
+        Integer updated = transactionTemplate.execute(status -> {
+            LocalDateTime now = UtcTime.now();
+            return repository.claim(id, NotificationStatus.PENDING, instanceId, now.plus(CLAIM_DURATION), now);
+        });
+        return updated != null && updated == 1;
     }
 
     private void deliver(Long id) {
         Notification notification = repository.findById(id).orElse(null);
-        if (notification == null || notification.getStatus() != NotificationStatus.PENDING) {
+        if (notification == null || notification.getStatus() != NotificationStatus.PENDING
+                || !instanceId.equals(notification.getClaimedBy())) {
             return;
         }
+        notification.setClaimedBy(null);
+        notification.setClaimedUntil(null);
         if (!mailEnabled) {
             String body = logLinks ? notification.getBody() : redact(notification.getBody());
-            log.info("Email delivery disabled (app.mail.enabled=false): {} to {} subject='{}' links={}",
+            log.info("Email delivery disabled (app.mail.enabled=false): {} to {} subject='{}' links={} attachment={}",
                     notification.getTemplate(), notification.getRecipientEmail(), notification.getSubject(),
-                    links(body));
+                    links(body), notification.getAttachmentName());
             notification.setStatus(NotificationStatus.SKIPPED);
             notification.setSentAt(UtcTime.now());
             notification.setBody(redact(notification.getBody()));
@@ -116,17 +168,21 @@ public class NotificationSender {
             return;
         }
         try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(from);
-            message.setTo(notification.getRecipientEmail());
-            message.setSubject(notification.getSubject());
-            message.setText(notification.getBody());
-            mailSender.send(message);
+            if (notification.getAttachmentName() != null && notification.getAttachmentContent() != null) {
+                mailSender.send(mimeMessage(mailSender, notification));
+            } else {
+                SimpleMailMessage message = new SimpleMailMessage();
+                message.setFrom(from);
+                message.setTo(notification.getRecipientEmail());
+                message.setSubject(notification.getSubject());
+                message.setText(notification.getBody());
+                mailSender.send(message);
+            }
             notification.setAttempts(notification.getAttempts() + 1);
             notification.setStatus(NotificationStatus.SENT);
             notification.setSentAt(UtcTime.now());
             notification.setBody(redact(notification.getBody()));
-        } catch (MailException ex) {
+        } catch (MailException | MessagingException ex) {
             int attempts = notification.getAttempts() + 1;
             notification.setAttempts(attempts);
             if (attempts >= maxAttempts) {
@@ -134,6 +190,21 @@ public class NotificationSender {
             }
             log.warn("Sending notification {} failed (attempt {}): {}", id, attempts, ex.getClass().getSimpleName());
         }
+    }
+
+    /** Plain-text body plus the stored attachment (calendar invites: {@code text/calendar; method=...}). */
+    private MimeMessage mimeMessage(JavaMailSender mailSender, Notification notification) throws MessagingException {
+        MimeMessage message = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
+        helper.setFrom(from);
+        helper.setTo(notification.getRecipientEmail());
+        helper.setSubject(notification.getSubject());
+        helper.setText(notification.getBody(), false);
+        String contentType = notification.getAttachmentContentType() == null ? "application/octet-stream"
+                : notification.getAttachmentContentType();
+        helper.addAttachment(notification.getAttachmentName(),
+                new ByteArrayResource(notification.getAttachmentContent().getBytes(StandardCharsets.UTF_8)), contentType);
+        return message;
     }
 
     /** Removes one-time tokens from links once a message has left the outbox. */
