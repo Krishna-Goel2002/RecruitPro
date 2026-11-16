@@ -51,6 +51,11 @@ public interface BackgroundJobRepository extends JpaRepository<BackgroundJob, Lo
 
     Optional<BackgroundJob> findByDedupeKey(String dedupeKey);
 
+    /** Releases the dedupe key of a job that is no longer PENDING. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update BackgroundJob j set j.dedupeKey = null where j.id = :id")
+    int clearDedupeKey(@Param("id") Long id);
+
     List<BackgroundJob> findAllByJobTypeAndEntityIdAndStatusInOrderByIdAsc(BackgroundJobType jobType, Long entityId,
                                                                           Collection<BackgroundJobStatus> statuses);
 

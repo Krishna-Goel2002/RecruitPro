@@ -7,7 +7,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
@@ -70,9 +70,16 @@ class AiServiceClientTimeoutTest {
         assertTrue(upload.contains("filename=\"resume.pdf\""), upload);
         assertFalse(upload.contains("Priya"), "the original file name never reaches the AI service");
 
-        assertThrows(ResourceAccessException.class,
+        // The read time-out can surface while the response is read (RestClientException wrapping the
+        // SocketTimeoutException) rather than as a ResourceAccessException; callers catch RestClientException.
+        RestClientException timeout = assertThrows(RestClientException.class,
                 () -> client.compileRequirements(new AiCompileRequest("Role", "Description", null)),
                 "the other calls keep the general time-out");
+        Throwable cause = timeout;
+        while (cause != null && !(cause instanceof java.net.SocketTimeoutException)) {
+            cause = cause.getCause();
+        }
+        assertNotNull(cause, "the failure is the read time-out");
     }
 
     @Test

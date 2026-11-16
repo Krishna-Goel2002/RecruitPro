@@ -98,7 +98,12 @@ public class BackgroundJobService {
         String key = dedupeKey(type, entityId);
         BackgroundJob pending = repository.findByDedupeKey(key).orElse(null);
         if (pending != null) {
-            return new EnqueueResult(pending, false);
+            if (pending.getStatus() == BackgroundJobStatus.PENDING) {
+                return new EnqueueResult(pending, false);
+            }
+            // The key belongs to PENDING jobs only (claim clears it). A row that left PENDING another way (operator SQL,
+            // a manual dead-letter) must not block new work for the entity: release its key.
+            repository.clearDedupeKey(pending.getId());
         }
         // Jobs waiting for a retry and RUNNING jobs carry no key; they are found by status.
         List<BackgroundJob> active = repository.findAllByJobTypeAndEntityIdAndStatusInOrderByIdAsc(type, entityId,

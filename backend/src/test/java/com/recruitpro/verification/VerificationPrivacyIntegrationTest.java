@@ -116,7 +116,7 @@ class VerificationPrivacyIntegrationTest extends VerificationIntegrationTestBase
         assertFalse(body.contains("encrypted-token-placeholder"), "tokens are never exported");
         assertFalse(body.contains("d".repeat(64)), "reference token hashes are never exported");
         assertFalse(body.contains(documentKey), "storage paths are never exported");
-        JsonNode verificationData = mapper.readTree(body).path("data").path("verification");
+        JsonNode verificationData = mapper.readTree(body).path("verification");
         assertEquals(2, verificationData.path("sources").size());
         assertTrue(verificationData.path("sources").path(0).path("accessTokenStored").asBoolean());
         assertEquals(1, verificationData.path("evidence").size());

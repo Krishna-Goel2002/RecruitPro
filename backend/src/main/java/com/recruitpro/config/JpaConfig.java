@@ -5,8 +5,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.auditing.DateTimeProvider;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import com.recruitpro.common.time.UtcTime;
+
 import java.time.temporal.TemporalAccessor;
 import java.util.Optional;
 
@@ -19,6 +19,6 @@ public class JpaConfig {
 
     @Bean
     public DateTimeProvider utcDateTimeProvider() {
-        return () -> Optional.<TemporalAccessor>of(LocalDateTime.now(ZoneOffset.UTC));
+        return () -> Optional.<TemporalAccessor>of(UtcTime.now());
     }
 }

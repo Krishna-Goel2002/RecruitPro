@@ -18,9 +18,16 @@ public final class UtcTime {
     private UtcTime() {
     }
 
-    /** Current UTC wall-clock time, independent of the JVM default zone. */
+    /**
+     * Current UTC wall-clock time, independent of the JVM default zone, truncated to microseconds.
+     *
+     * <p>PostgreSQL and H2 store TIMESTAMP with microsecond precision and <em>round</em> finer values. Without the
+     * truncation a value written with 100 ns digits (Windows clocks) could be stored rounded up, so an immediate
+     * {@code run_after <= now} comparison with an un-rounded parameter from the same clock tick would miss it (seen as
+     * background jobs that were never claimed on Windows).</p>
+     */
     public static LocalDateTime now() {
-        return LocalDateTime.now(ZoneOffset.UTC);
+        return LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.MICROS);
     }
 
     /** ISO-8601 with a trailing {@code Z}, truncated to milliseconds, e.g. {@code 2026-11-08T10:15:30Z}. */

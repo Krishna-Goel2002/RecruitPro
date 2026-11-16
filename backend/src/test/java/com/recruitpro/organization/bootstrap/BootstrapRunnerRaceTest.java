@@ -9,6 +9,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -26,8 +27,9 @@ class BootstrapRunnerRaceTest {
         when(organizationService.anyOrganizationExists()).thenReturn(true);
         assertDoesNotThrow(() -> runner.run(new DefaultApplicationArguments()));
 
-        when(organizationService.bootstrapFirstOrganization(anyString(), anyString(), anyString(), anyString(), anyString()))
-                .thenThrow(new DuplicateResourceException("Email is already registered"));
+        // doThrow: re-stubbing with when(...) would call the previous stub, which throws.
+        doThrow(new DuplicateResourceException("Email is already registered")).when(organizationService)
+                .bootstrapFirstOrganization(anyString(), anyString(), anyString(), anyString(), anyString());
         assertDoesNotThrow(() -> runner.run(new DefaultApplicationArguments()));
     }
 

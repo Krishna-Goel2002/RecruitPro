@@ -223,9 +223,9 @@ class RetentionPurgeIntegrationTest {
     }
 
     private void refreshToken(String hash, LocalDateTime revokedAt, LocalDateTime expiresAt) {
-        jdbcTemplate.update("INSERT INTO refresh_tokens (user_id, token_hash, expires_at, revoked_at, family_id, created_at, updated_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?)", userId, hash, ts(expiresAt), ts(revokedAt), "family-" + hash,
-                ts(daysAgo(50)), ts(daysAgo(50)));
+        jdbcTemplate.update("INSERT INTO refresh_tokens (user_id, token_hash, expires_at, revoked_at, family_id, family_started_at, "
+                + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", userId, hash, ts(expiresAt), ts(revokedAt),
+                "family-" + hash, ts(daysAgo(50)), ts(daysAgo(50)), ts(daysAgo(50)));
     }
 
     private long job(String status, LocalDateTime updatedAt) {
