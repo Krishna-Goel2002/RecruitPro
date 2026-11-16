@@ -435,6 +435,11 @@
   .ft-theme { max-width: 280px; }
   .ft-fine { margin: 0; padding-top: 24px; border-top: 1px solid var(--border-hairline); color: var(--fg-subtle); font-size: var(--text-caption); line-height: var(--lh-caption); }
 
+  /* ------------------------------------------------------------------ 404 (unknown address) */
+  .nf { padding-block: clamp(48px, 12vh, 120px); }
+  .nf-code { margin: 0 0 12px; color: var(--fg-subtle); font: 600 var(--text-overline) / var(--lh-overline) var(--font-sans); letter-spacing: .06em; }
+  .nf-actions { margin-top: 32px; }
+
   /* ------------------------------------------------------------------ scroll reveal */
   /* [data-reveal] comes from the design system (motion.css, useReveal). The landing page lets it travel a touch
      slower than in the portals, on the emphasized curve. */

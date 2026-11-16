@@ -8,15 +8,18 @@ import { ForTeams } from './sections/ForTeams'
 import { Header } from './sections/Header'
 import { Hero } from './sections/Hero'
 import { HowItWorks } from './sections/HowItWorks'
+import { NotFound, isLandingPath } from './sections/NotFound'
 import { Problem } from './sections/Problem'
 import { Trust } from './sections/Trust'
 
 /** The public landing page: one document, eight sections (ASSISTANT_PLAN §5). */
 export default function App() {
   const links = useMemo(() => portalLinks(), [])
+  const landing = isLandingPath(window.location.pathname)
   useEffect(() => {
-    document.title = `${brand.name} · ${brand.tagline}`
-  }, [])
+    if (landing) document.title = `${brand.name} · ${brand.tagline}`
+  }, [landing])
+  if (!landing) return <NotFound links={links} />
   return (
     <div className="site" id="top">
       <a className="skip" href="#main">

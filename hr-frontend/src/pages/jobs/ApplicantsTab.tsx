@@ -402,11 +402,19 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
           }}
         />
         {can('applicants.rematch') && (
-          <Tooltip content={job.requirements.length === 0 ? 'Add requirements before matching.' : 'Re-run matching for every application of this job.'} labelOnly>
-            <Button size="sm" icon={RefreshCw} loading={rematch.isPending} onClick={() => rematch.mutate()} disabled={job.requirements.length === 0}>
-              Re-run matching
-            </Button>
-          </Tooltip>
+          job.requirements.length === 0 ? (
+            // A disabled button cannot show a tooltip (no hover or focus), so the reason is visible text instead.
+            <span className="hra-disabled-reason">
+              <Button size="sm" icon={RefreshCw} disabled>Re-run matching</Button>
+              <span className="subtle">Add requirements first.</span>
+            </span>
+          ) : (
+            <Tooltip content="Re-run matching for every application of this job." labelOnly>
+              <Button size="sm" icon={RefreshCw} loading={rematch.isPending} onClick={() => rematch.mutate()}>
+                Re-run matching
+              </Button>
+            </Tooltip>
+          )
         )}
       </div>
     </div>
@@ -419,7 +427,7 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
       <div className="hra-bulk">
         <p className="hra-bulk-count numeric"><strong>{formatNumber(count)}</strong> selected</p>
         <Button size="sm" icon={LayoutGrid} disabled={count < 2 || count > 3} onClick={() => setCompare(selectedRows.slice(0, 3).map(row => row.applicationId))}>
-          Compare{count > 3 ? ' (pick 2–3)' : ''}
+          Compare{count < 2 || count > 3 ? ' (pick 2–3)' : ''}
         </Button>
         {canDecide && (
           <>

@@ -46,7 +46,7 @@ export function AdminAuditPage() {
     { key: 'action', header: 'Action', primary: true, cell: e => <Tooltip content={e.action} labelOnly><span className="adm-strong" tabIndex={0}>{humanize(e.action)}</span></Tooltip> },
     { key: 'actor', header: 'Actor', cell: e => (e.actorEmail ? <span className="adm-faint">{e.actorEmail}</span> : <span className="adm-faint">System</span>) },
     { key: 'target', header: 'Target', hideWhenStacked: true, cell: e => (e.targetType ? <span className="mono adm-faint">{humanize(e.targetType).toLowerCase()} #{e.targetId}</span> : '—') },
-    { key: 'details', header: 'Details', cell: e => <span className="adm-details">{e.details ?? '—'}</span> },
+    { key: 'details', header: 'Details', cell: e => <span className="adm-details" title={e.details ?? undefined}>{e.details ?? '—'}</span> },
     { key: 'ip', header: 'IP', width: '120px', hideWhenStacked: true, cell: e => <span className="mono adm-faint">{e.ipAddress ?? '—'}</span> },
   ]
 

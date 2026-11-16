@@ -200,3 +200,35 @@ describe('motion', () => {
     }
   })
 })
+
+describe('links and unknown addresses', () => {
+  it('every in-page link points at a section that exists', () => {
+    render(<App />)
+    const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href^="#"]'))
+    expect(anchors.length).toBeGreaterThan(5)
+    for (const a of anchors) {
+      const id = a.getAttribute('href')!.slice(1)
+      expect(document.getElementById(id), a.getAttribute('href')!).not.toBeNull()
+    }
+    // Every other link is an absolute http(s) address (the portals), never relative or javascript:.
+    for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>('a:not([href^="#"])'))) {
+      expect(a.getAttribute('href')).toMatch(/^https?:\/\//)
+    }
+  })
+
+  it('shows a not-found page with a way home instead of the landing page at an unknown path', () => {
+    window.history.pushState({}, '', '/pricing')
+    try {
+      render(<App />)
+      expect(screen.getByRole('heading', { level: 1, name: 'There is nothing at this address' })).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Back to the home page' })).toHaveAttribute('href', '/')
+      expect(screen.getByRole('link', { name: /For candidates: find jobs/ })).toHaveAttribute('href', `${DEFAULT_CANDIDATE_URL}/jobs`)
+      expect(screen.getByRole('link', { name: /For companies: HR portal/ })).toHaveAttribute('href', `${DEFAULT_HR_URL}/login`)
+      // No section links that would point at /pricing#how.
+      expect(document.querySelector('a[href^="#"]')).toBeNull()
+      expect(document.title).toMatch(/^Page not found/)
+    } finally {
+      window.history.pushState({}, '', '/')
+    }
+  })
+})

@@ -11,6 +11,7 @@ import brand from '../design/brand/active'
 import { Button, Checkbox, Field, LoadingRegion, SegmentedControl, Skeleton, SkeletonText, Textarea, ThemeSwitch, useDocumentTitle } from '../design/components'
 import { CircleAlert, CircleCheck, Clock, Icon, Link2, MailPlus } from '../design/icons'
 import { formatDate } from '../design/lib/format'
+import { useBeforeUnload } from '../lib/hooks'
 import { humanize } from '../lib/labels'
 import { siteUrl } from '../lib/site'
 import { refereeRelationshipLabel } from '../lib/verification'
@@ -142,6 +143,9 @@ function RefereeForm({ token, data, onDone }: { token: string; data: PublicRefer
   const [declineOpen, setDeclineOpen] = useState(false)
 
   const answered = data.claims.filter(c => answers[c.id]).length
+  // Answers live only on this page until they are sent: warn before a reload or a closed tab loses them.
+  const started = answered > 0 || Object.values(comments).some(c => c.trim()) || refereeComment.trim() !== ''
+  useBeforeUnload(started)
   const first = data.candidateFirstName
 
   const submit = useMutation({

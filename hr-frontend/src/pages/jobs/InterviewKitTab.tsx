@@ -1,4 +1,4 @@
-import { FormEvent, useRef, useState } from 'react'
+import { FormEvent, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { interviewsApi } from '../../api/assessments'
 import { errorMessage, isApiError } from '../../api/client'
@@ -13,6 +13,7 @@ import {
 import { plural, relativeTime } from '../../design/lib/format'
 import { ArrowDown, ArrowUp, CalendarClock, Plus, RefreshCw, Trash2, X } from '../../design/icons'
 import { humanize } from '../../lib/format'
+import { useDiscardGuard, useLeaveGuard } from '../../lib/leaveGuard'
 import { AnchorGrid } from './WorkSamplesTab'
 
 /** Loads the kit; a 404 means "no kit yet". */
@@ -98,7 +99,9 @@ export function InterviewKitTab({ job }: { job: JobStaff }) {
       description={`${plural(data.questions.length, 'question')} · ${data.generatedBy === 'manual' ? 'edited by your team' : `drafted by the ${data.generatedBy === 'llm' ? 'assistant' : 'rules engine'}`} · updated ${relativeTime(data.updatedAt)}`}
       actions={canManage ? (
         <span className="cluster">
-          <Button variant="ghost" icon={RefreshCw} onClick={() => setConfirmRegenerate(true)} disabled={noRequirements}>Regenerate</Button>
+          {noRequirements
+            ? <span className="hra-disabled-reason"><span className="subtle">Add requirements to regenerate.</span><Button variant="ghost" icon={RefreshCw} disabled>Regenerate</Button></span>
+            : <Button variant="ghost" icon={RefreshCw} onClick={() => setConfirmRegenerate(true)}>Regenerate</Button>}
           <Button onClick={() => setEditing(true)}>Edit questions</Button>
         </span>
       ) : undefined}
@@ -169,9 +172,11 @@ function newQuestion(existing: InterviewQuestion[], reserved: Set<string>): Inte
 function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: InterviewKit; requirements: Requirement[]; onDone: () => void }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const [questions, setQuestions] = useState<InterviewQuestion[]>(() => kit.questions.map(question => ({ ...question, followUps: [...question.followUps], anchors: { ...question.anchors } })))
+  const initial = useMemo(() => kit.questions.map(question => ({ ...question, followUps: [...question.followUps], anchors: { ...question.anchors } })), [kit])
+  const [questions, setQuestions] = useState<InterviewQuestion[]>(initial)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const reserved = useRef(new Set(kit.questions.map(question => question.id)))
+  const dirty = JSON.stringify(questions) !== JSON.stringify(initial)
 
   const save = useMutation({
     mutationFn: (body: InterviewQuestion[]) => interviewsApi.saveKit(jobId, body),
@@ -182,6 +187,10 @@ function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: I
       onDone()
     },
   })
+
+  // Cancel with edits asks first; so do links and the other job tabs (they would unmount the editor).
+  const discard = useDiscardGuard(dirty, onDone, 'changes to the interview kit')
+  const leaveGuard = useLeaveGuard(dirty && !save.isPending && !save.isSuccess, { body: <p>Your changes to the interview kit have not been saved yet and will be lost.</p> })
 
   const update = (index: number, values: Partial<InterviewQuestion>) => setQuestions(current => current.map((item, i) => (i === index ? { ...item, ...values } : item)))
   const move = (index: number, delta: number) => setQuestions(current => {
@@ -226,6 +235,7 @@ function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: I
   }
 
   return (
+    <>
     <form className="hra-kit-editor" onSubmit={submit} noValidate aria-label="Edit interview questions">
       <header className="hra-kit-editor-head">
         <h2 className="t-h2">Edit interview questions</h2>
@@ -280,10 +290,13 @@ function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: I
       <div className="hra-sticky-bar" role="region" aria-label="Save the interview kit">
         <p className="subtle">{save.isError ? <span className="ui-field-error">{errorMessage(save.error)}</span> : `${plural(questions.length, 'question')}`}</p>
         <span className="cluster">
-          <Button variant="ghost" onClick={onDone} disabled={save.isPending}>Cancel</Button>
+          <Button variant="ghost" onClick={discard.request} disabled={save.isPending}>Cancel</Button>
           <Button type="submit" variant="primary" loading={save.isPending}>Save kit</Button>
         </span>
       </div>
     </form>
+    {discard.dialog}
+    {leaveGuard}
+    </>
   )
 }

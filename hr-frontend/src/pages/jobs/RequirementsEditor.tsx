@@ -119,7 +119,9 @@ export function RequirementsEditor({ drafts, onChange, errors }: {
           ))}
         </ol>
       )}
-      <Button icon={Plus} onClick={add} disabled={drafts.length >= MAX_REQUIREMENTS}>Add requirement</Button>
+      {drafts.length >= MAX_REQUIREMENTS
+        ? <p className="subtle">{MAX_REQUIREMENTS} requirements is the maximum. Remove one to add another.</p>
+        : <Button icon={Plus} onClick={add}>Add requirement</Button>}
     </div>
   )
 }

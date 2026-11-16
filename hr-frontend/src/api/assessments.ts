@@ -8,6 +8,7 @@ import type {
   InterviewQuestion,
   ScheduleInterviewRequest,
   ScorecardInput,
+  ScorecardRevision,
   ScoreRequest,
   UpdateInterviewRequest,
   WorkSample,
@@ -20,6 +21,12 @@ import type {
 export const workSamplesApi = {
   list: (jobId: number, signal?: AbortSignal) => api.get<WorkSample[]>(`/hr/jobs/${jobId}/work-samples`, undefined, signal),
   generate: (jobId: number) => api.post<WorkSample>(`/hr/jobs/${jobId}/work-samples/generate`),
+  /** A hand-written DRAFT (no AI call); same validation as an edit. */
+  create: (jobId: number, body: WorkSampleInput) => api.post<WorkSample>(`/hr/jobs/${jobId}/work-samples`, body),
+  /** A DRAFT copy titled "… (copy)". */
+  duplicate: (jobId: number, id: number) => api.post<WorkSample>(`/hr/jobs/${jobId}/work-samples/${id}/duplicate`),
+  /** DRAFT and never assigned only (400 otherwise: archive instead). Audited. */
+  remove: (jobId: number, id: number) => api.delete<null>(`/hr/jobs/${jobId}/work-samples/${id}`),
   update: (jobId: number, id: number, body: WorkSampleInput) => api.put<WorkSample>(`/hr/jobs/${jobId}/work-samples/${id}`, body),
   setStatus: (jobId: number, id: number, status: WorkSampleStatus) =>
     api.patch<WorkSample>(`/hr/jobs/${jobId}/work-samples/${id}/status`, { status }),
@@ -51,4 +58,6 @@ export const interviewsApi = {
   submitScorecard: (id: number, body: ScorecardInput) => api.post<Interview>(`/interviews/${id}/scorecard`, body),
   /** Author only, until the application is decided: 403 other users, 400 decided/cancelled, 404 no scorecard yet. */
   updateScorecard: (id: number, body: ScorecardInput) => api.put<Interview>(`/interviews/${id}/scorecard`, body),
+  /** Earlier versions of an edited scorecard, newest first (author, ADMIN, HR_MANAGER). */
+  scorecardRevisions: (id: number, signal?: AbortSignal) => api.get<ScorecardRevision[]>(`/interviews/${id}/scorecard/revisions`, undefined, signal),
 }

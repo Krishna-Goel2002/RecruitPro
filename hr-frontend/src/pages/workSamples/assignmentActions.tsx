@@ -62,6 +62,7 @@ export function useCancelAssignment(jobId: number, onCancelled?: (updated: WorkS
         : undefined}
       tone="danger"
       confirmLabel="Cancel assignment"
+      cancelLabel="Keep assignment"
       busy={cancel.isPending}
       error={cancel.error}
       comment={{ label: 'Reason', required: true, maxLength: CANCEL_REASON_MAX, placeholder: 'Why it is no longer needed', requiredMessage: 'A reason is required to cancel.', hint: 'Sent to the candidate and kept in the audit log.' }}

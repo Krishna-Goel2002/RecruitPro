@@ -365,6 +365,8 @@ export type WorkSample = {
   status: WorkSampleStatus
   createdAt: string
   updatedAt: string
+  /** Assignments in any status. 0: a draft may be deleted, an active/archived sample may go back to draft. Absent on older servers. */
+  assignmentCount?: number
 }
 
 export type WorkSampleInput = Pick<WorkSample, 'title' | 'instructions' | 'timeLimitMinutes' | 'rubric'>
@@ -431,6 +433,9 @@ export type Scorecard = {
   updatedAt?: string | null
   revisionCount?: number
 }
+
+/** GET /interviews/{id}/scorecard/revisions: one replaced version (author, ADMIN, HR_MANAGER), newest first. */
+export type ScorecardRevision = { id: number; revisedByUserId: number | null; revisedByName: string | null; revisedAt: string; previous: Scorecard }
 
 export type ScorecardInput = Pick<Scorecard, 'ratings' | 'recommendation' | 'summary'>
 
@@ -603,6 +608,8 @@ export const AUDIT_ACTIONS = [
   // WP-VBE (backend verification/service/VerificationAuditActions.java)
   'VERIFICATION_SOURCE_CONNECTED', 'VERIFICATION_SOURCE_REVOKED', 'VERIFICATION_OWNERSHIP_PROVEN', 'VERDICT_SHARED',
   'VERDICT_REVIEWED', 'VERIFICATION_SETTINGS_CHANGED', 'REFERENCE_REQUESTED',
+  // HR job status changes (JobService), the assistant, and draft deletion (completeness sweep)
+  'JOB_STATUS_CHANGED', 'ASSISTANT_ACTION_CONFIRMED', 'JOB_DELETED', 'WORK_SAMPLE_DELETED', 'ACCOUNT_NAME_CHANGED', 'RETENTION_PURGE',
 ] as const
 
 // ---------------------------------------------------------------------------------------------------------------------

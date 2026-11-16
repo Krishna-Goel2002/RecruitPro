@@ -12,14 +12,14 @@ import { useNotify } from '../components/Notices'
 import {
   Alert, Button, CodeField, EmptyState, Field, FileDropzone, IconButton, Input, LoadingRegion, PageHeader, Skeleton, SkeletonText, Textarea, buttonProps,
 } from '../design/components'
-import { ArrowRight, Check, CircleCheck, Clock, Download, Icon, ListChecks } from '../design/icons'
+import { ArrowRight, Check, CircleCheck, Clock, Download, Icon, ListChecks, Trash2 } from '../design/icons'
 import { formatDate, formatFileSize } from '../design/lib/format'
 import { useDraft } from '../lib/drafts'
 import { saveBlob, safeFilename } from '../lib/download'
 import { WORK_SAMPLE_ACCEPT, WORK_SAMPLE_MAX_BYTES, WORK_SAMPLE_MAX_FILES, mergeWorkSampleFiles, validateWorkSampleFiles } from '../lib/files'
 import { describeDuration, formatDuration, formatLongDateTime, formatTime } from '../lib/format'
 import { useBeforeUnload, useNow } from '../lib/hooks'
-import { readStored } from '../lib/storage'
+import { readStored, writeStored } from '../lib/storage'
 import { isHttpUrl } from '../lib/url'
 import { workSamplesQuery } from '../lib/queries'
 import { WorkSampleBadge } from './WorkSamplesPage'
@@ -34,6 +34,13 @@ const URL_MAX = 500
 const ANNOUNCE_AT_SECONDS = [600, 300, 60]
 
 const draftKey = (id: number) => `draft-work-sample-${id}`
+/** The link is drafted too: before, a reload kept the text but silently dropped the link. */
+const urlDraftKey = (id: number) => `draft-work-sample-url-${id}`
+
+function clearStoredDrafts(id: number): void {
+  writeStored(draftKey(id), null)
+  writeStored(urlDraftKey(id), null)
+}
 
 function deadlineOf(sample: CandidateWorkSample): number | null {
   if (sample.deadlineAt) return new Date(sample.deadlineAt).getTime()
@@ -56,6 +63,12 @@ export function WorkSampleResponsePage() {
   const samples = useQuery(workSamplesQuery)
   const sample = samples.data?.find(item => item.assignmentId === id)
   const crumbs = [{ label: 'Work samples', to: '/work-samples' }]
+  const finished = sample?.status === 'SUBMITTED' || sample?.status === 'SCORED'
+
+  // A response sent (from here or another tab) leaves nothing to keep: drop the local draft so it cannot linger.
+  useEffect(() => {
+    if (finished) clearStoredDrafts(id)
+  }, [finished, id])
 
   if (samples.isPending) {
     return (
@@ -94,7 +107,10 @@ export function WorkSampleResponsePage() {
         title={sample.title}
         documentTitle={`Work sample: ${sample.title}`}
         status={<WorkSampleBadge status={sample.status} />}
-        meta={[sample.jobTitle, `${sample.timeLimitMinutes} minutes`]}
+        meta={[
+          sample.applicationId ? <Link to={`/applications/${sample.applicationId}`}>{sample.jobTitle}</Link> : sample.jobTitle,
+          `${sample.timeLimitMinutes} minutes`,
+        ]}
       />
       {sample.status === 'ASSIGNED' && <StartPanel sample={sample} />}
       {sample.status === 'STARTED' && <ResponsePanel sample={sample} />}
@@ -119,6 +135,7 @@ export function WorkSampleResponsePage() {
           {sample.cancelReason ? ` Reason given: ${sample.cancelReason}` : ''}
         </Alert>
       )}
+      {sample.status === 'CANCELLED' && <UnsentDraft sample={sample} />}
     </div>
   )
 }
@@ -158,7 +175,6 @@ function SubmittedFiles({ sample }: { sample: CandidateWorkSample }) {
 }
 
 function ExpiredPanel({ sample }: { sample: CandidateWorkSample }) {
-  const unsent = readStored(draftKey(sample.assignmentId))
   return (
     <div className="t-block">
       <Alert tone="warning" title={sample.startedAt ? 'The time ran out' : 'The start-by time has passed'}>
@@ -167,17 +183,64 @@ function ExpiredPanel({ sample }: { sample: CandidateWorkSample }) {
           : 'This work sample can no longer be started.'}{' '}
         Contact the employer if something went wrong.
       </Alert>
-      {unsent && (
-        <div>
-          <p className="t-subhead">Your unsent response</p>
-          <p className="c-meta" style={{ marginBottom: 8 }}>
-            Saved in this browser. Copy it if you want to keep it.
-          </p>
-          <CodeField value={unsent} label="Response text" />
-        </div>
-      )}
+      <UnsentDraft sample={sample} />
     </div>
   )
+}
+
+/**
+ * A draft left in this browser when the task closed (expired or cancelled): shown so it can be copied, and deletable,
+ * because nothing else ever removes it (it used to stay in localStorage for good, with no way to get rid of it).
+ */
+export function UnsentDraft({ sample }: { sample: CandidateWorkSample }) {
+  const notify = useNotify()
+  const [text, setText] = useState(() => readStored(draftKey(sample.assignmentId)))
+  const [link, setLink] = useState(() => readStored(urlDraftKey(sample.assignmentId)))
+  const [confirming, setConfirming] = useState(false)
+  if (!text && !link) return null
+  return (
+    <div className="t-unsent">
+      <p className="t-subhead">Your unsent response</p>
+      <p className="c-meta" style={{ marginBottom: 8 }}>
+        Saved in this browser only; the employer never received it. Copy it if you want to keep it, then delete it.
+      </p>
+      {text && <CodeField value={text} label="Response text" />}
+      {link && <CodeField value={link} label="Link to your work" />}
+      <div>
+        <Button variant="danger-ghost" icon={Trash2} onClick={() => setConfirming(true)}>
+          Delete draft
+        </Button>
+      </div>
+      <ConfirmDialog
+        open={confirming}
+        title="Delete your unsent response?"
+        confirmLabel="Delete draft"
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          clearStoredDrafts(sample.assignmentId)
+          setText(null)
+          setLink(null)
+          setConfirming(false)
+          notify('success', 'Draft deleted', { body: 'It was removed from this browser.' })
+        }}
+      >
+        <p>The text{link ? ' and link' : ''} saved in this browser for “{sample.title}” are deleted. This cannot be undone.</p>
+      </ConfirmDialog>
+    </div>
+  )
+}
+
+/** "Your response text and the link are cleared …" for the discard confirmation. */
+export function discardSummary(text: string, link: string, fileCount: number): string {
+  const parts = [
+    text.trim() ? 'your response text' : null,
+    link.trim() ? 'the link' : null,
+    fileCount > 0 ? `${fileCount} attached file${fileCount === 1 ? '' : 's'}` : null,
+  ].filter((part): part is string => part !== null)
+  if (parts.length === 0) return 'Your draft is cleared from this page and this browser.'
+  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+  const plural = parts.length > 1 || (parts[0].endsWith('files'))
+  return `${list.charAt(0).toUpperCase()}${list.slice(1)} ${plural ? 'are' : 'is'} cleared from this page and this browser.`
 }
 
 function StartPanel({ sample }: { sample: CandidateWorkSample }) {
@@ -263,10 +326,12 @@ function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
   const remaining = deadline === null ? null : Math.round((deadline - now) / 1000)
   const total = sample.timeLimitMinutes * 60
   const draft = useDraft(draftKey(sample.assignmentId), 600)
-  const [responseUrl, setResponseUrl] = useState('')
+  const link = useDraft(urlDraftKey(sample.assignmentId), 600)
+  const responseUrl = link.value
   const [files, setFiles] = useState<File[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [confirming, setConfirming] = useState(false)
+  const [discarding, setDiscarding] = useState(false)
   const [announcement, setAnnouncement] = useState('')
   const lastThreshold = useRef<number | null>(null)
 
@@ -289,6 +354,7 @@ function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
     onSuccess: submitted => {
       setConfirming(false)
       draft.clear()
+      link.clear()
       setFiles([])
       notify('success', 'Response submitted', { body: 'The employer reviews it against the same scoring guide as everyone else.' })
       queryClient.setQueryData<CandidateWorkSample[]>(queryKeys.workSamples, current =>
@@ -329,6 +395,17 @@ function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
     if (Object.keys(next).length === 0) setConfirming(true)
     else focusFirstInvalid(formRef.current)
   }
+
+  function discard() {
+    draft.clear()
+    link.clear()
+    setFiles([])
+    setErrors({})
+    setDiscarding(false)
+    notify('success', 'Draft discarded', { body: 'The timer keeps running. You can start your response again.' })
+    window.setTimeout(() => formRef.current?.querySelector<HTMLElement>('textarea')?.focus(), 0)
+  }
+  const hasDraft = draft.value.trim() !== '' || responseUrl.trim() !== '' || files.length > 0
 
   const timeUp = remaining !== null && remaining <= 0
   const closed = remaining !== null && remaining <= -GRACE_SECONDS
@@ -390,7 +467,7 @@ function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
             <Textarea rows={10} maxRows={30} maxLength={RESPONSE_MAX} showCount value={draft.value} onChange={e => draft.setValue(e.target.value)} />
           </Field>
           <Field label="Link to your work" optional error={errors.responseUrl} hint="For example a shared document, spreadsheet or repository.">
-            <Input type="url" inputMode="url" maxLength={URL_MAX} placeholder="https://" value={responseUrl} onChange={e => setResponseUrl(e.target.value)} />
+            <Input type="url" inputMode="url" maxLength={URL_MAX} placeholder="https://" value={responseUrl} onChange={e => link.setValue(e.target.value)} />
           </Field>
           <div>
             <p className="ui-field-label">
@@ -422,9 +499,16 @@ function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
           </div>
           <div className="t-submit">
             <span className="c-meta">You cannot change your response after submitting.</span>
-            <Button type="submit" variant="primary">
-              Submit response
-            </Button>
+            <span className="t-submit-actions">
+              {hasDraft && (
+                <Button variant="ghost" icon={Trash2} onClick={() => setDiscarding(true)} disabled={submit.isPending}>
+                  Discard draft
+                </Button>
+              )}
+              <Button type="submit" variant="primary">
+                Submit response
+              </Button>
+            </span>
           </div>
         </form>
       </section>
@@ -446,6 +530,9 @@ function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
           You cannot edit it afterwards.
           {files.length > 0 ? ` ${files.length} file${files.length === 1 ? '' : 's'} will be attached.` : ''}
         </p>
+      </ConfirmDialog>
+      <ConfirmDialog open={discarding} title="Discard your draft?" confirmLabel="Discard draft" onCancel={() => setDiscarding(false)} onConfirm={discard}>
+        <p>{discardSummary(draft.value, responseUrl, files.length)} The timer keeps running.</p>
       </ConfirmDialog>
     </>
   )

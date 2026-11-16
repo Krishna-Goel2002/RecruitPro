@@ -20,6 +20,8 @@ export const anonymousRoutes = []
 
 export const screens = [
   { name: 'landing', path: '/', anonymous: true },
+  // Unknown address: a 404 with a way home instead of the landing page under the wrong URL.
+  { name: 'not-found', path: '/pricing', anonymous: true },
   { name: 'landing-faq-open', path: '/', anonymous: true, action: clickFaq(0) },
   // Phone menu (the button only shows below 1060 px; at 1440 the capture equals `landing`).
   { name: 'landing-menu', path: '/', anonymous: true, action: openMenu },

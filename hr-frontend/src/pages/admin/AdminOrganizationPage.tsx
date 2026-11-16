@@ -8,6 +8,7 @@ import { ActionDialog } from '../../components/ActionDialog'
 import { DomainListInput } from '../../components/DomainListInput'
 import { InlineError, QueryError } from '../../components/QueryError'
 import { SaveBar } from '../../components/SaveBar'
+import { useLeaveGuard } from '../../lib/leaveGuard'
 import { Field, Input, LoadingRegion, PageHeader, Section, SkeletonText, Switch, useToast } from '../../design/components'
 import './admin.css'
 
@@ -59,6 +60,7 @@ function OrgForm({ org }: { org: Organization }) {
       toast({ tone: 'success', title: 'Organisation settings saved', body: 'Every change is recorded in the audit log.' })
     },
   })
+  const leaveGuard = useLeaveGuard(changes > 0 && !save.isPending)
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -115,6 +117,7 @@ function OrgForm({ org }: { org: Organization }) {
         onCancel={() => setConfirmBlindOff(false)}
         onConfirm={() => { setConfirmBlindOff(false); save.mutate() }}
       />
+      {leaveGuard}
     </>
   )
 }

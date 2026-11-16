@@ -46,10 +46,11 @@ public class WorkSampleViews {
         this.fileService = fileService;
     }
 
-    public WorkSampleResponse workSample(WorkSample sample) {
+    /** Staff view; {@code assignmentCount} decides what the UI offers (delete or back to draft only while 0). */
+    public WorkSampleResponse workSample(WorkSample sample, long assignmentCount) {
         return new WorkSampleResponse(sample.getId(), sample.getJob().getId(), sample.getTitle(), sample.getInstructions(),
                 sample.getTimeLimitMinutes(), rubric(sample.getRubricJson()), sample.getStatus(), sample.getCreatedAt(),
-                sample.getUpdatedAt());
+                sample.getUpdatedAt(), assignmentCount);
     }
 
     public WorkSampleAssignmentResponse assignment(WorkSampleAssignment assignment) {

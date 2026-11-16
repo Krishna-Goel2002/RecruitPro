@@ -9,7 +9,7 @@ import brand from '../design/brand/active'
 import { AccountMenu, AppShell, BackNavProvider, Tooltip, type NavGroup, type NavItem } from '../design/components'
 import {
   BadgeCheck, Bell, BriefcaseBusiness, Building2, CalendarClock, Icon, Inbox, KeyRound, LadderMark, LayoutGrid, ListChecks, MailPlus, MessagesSquare,
-  Scale, ScrollText, ShieldCheck, Users,
+  Scale, ScrollText, ShieldCheck, User as UserIcon, Users,
 } from '../design/icons'
 import { AssistantProvider } from '../assistant/AssistantProvider'
 import { AskButton, AssistantPanel } from '../assistant/AssistantPanel'
@@ -124,6 +124,7 @@ function Shell() {
             links={
               can('account')
                 ? [
+                    { label: 'Your name', to: '/account/name', icon: UserIcon },
                     { label: 'Change password', to: '/account/password', icon: KeyRound },
                     { label: 'Two-step verification', to: '/account/security', icon: ShieldCheck },
                   ]

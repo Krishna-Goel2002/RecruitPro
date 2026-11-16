@@ -9,7 +9,7 @@ import type { JobStaff, JobStatus, Page } from '../../api/types'
 import { ActionDialog } from '../../components/ActionDialog'
 import { useToast, type MenuItem } from '../../design/components'
 import { formatDate, plural } from '../../design/lib/format'
-import { Download, Link2, Pencil, Trash2, X } from '../../design/icons'
+import { Copy, Download, Link2, Pencil, Trash2, X } from '../../design/icons'
 
 export type JobAction = 'PUBLISH' | 'HOLD' | 'RESUME' | 'CLOSE' | 'CANCEL' | 'DELETE'
 
@@ -36,7 +36,7 @@ export const ACTION_LABEL: Record<JobAction, string> = {
 /** Hold and resume are reversible and internal: they happen at once with Undo. The rest are confirmed first. */
 const IMMEDIATE: JobAction[] = ['HOLD', 'RESUME']
 
-function confirmCopy(action: JobAction, job: JobStaff): { title: string; body: ReactNode; label: string; danger: boolean } {
+function confirmCopy(action: JobAction, job: JobStaff): { title: string; body: ReactNode; label: string; danger: boolean; keep?: string } {
   const reqs = job.requirements.length
   const gates = job.requirements.filter(r => r.mandatory && r.knockout).length
   switch (action) {
@@ -58,9 +58,9 @@ function confirmCopy(action: JobAction, job: JobStaff): { title: string; body: R
     case 'CLOSE':
       return { title: `Close “${job.title}”?`, label: 'Close job', danger: true, body: <p>It stops taking applications and cannot be reopened. Applicants already in review stay where they are.</p> }
     case 'CANCEL':
-      return { title: `Cancel the draft “${job.title}”?`, label: 'Cancel draft', danger: true, body: <p>Cancelled jobs cannot be reopened. Use Delete instead if you want it gone.</p> }
+      return { title: `Cancel the draft “${job.title}”?`, label: 'Cancel draft', keep: 'Keep draft', danger: true, body: <p>Cancelled jobs cannot be reopened. Use Delete instead if you want it gone.</p> }
     case 'DELETE':
-      return { title: `Delete the draft “${job.title}”?`, label: 'Delete draft', danger: true, body: <p>The draft and its requirements are removed permanently.</p> }
+      return { title: `Delete the draft “${job.title}”?`, label: 'Delete draft', keep: 'Keep draft', danger: true, body: <p>The draft, its requirements, work samples and interview kit are removed permanently. This is recorded in the audit log.</p> }
     default:
       return { title: ACTION_LABEL[action], label: ACTION_LABEL[action], danger: false, body: null }
   }
@@ -136,6 +136,7 @@ export function useJobActions() {
       open={pending != null}
       title={copy?.title ?? ''}
       confirmLabel={copy?.label ?? 'Confirm'}
+      cancelLabel={copy?.keep}
       tone={copy?.danger ? 'danger' : 'primary'}
       size="sm"
       busy={mutation.isPending}
@@ -151,6 +152,17 @@ export function useJobActions() {
     mutationFn: (job: JobStaff) => reviewApi.exportAudit(job.id),
     onSuccess: filename => toast({ tone: 'success', title: `${filename} downloaded`, body: 'The export itself is recorded in the audit log.' }),
     onError: (cause, job) => toast({ tone: 'danger', title: 'The audit export failed', body: errorMessage(cause), action: { label: 'Try again', onClick: () => exportAudit.mutate(job) } }),
+  })
+
+  const duplicate = useMutation({
+    mutationFn: (job: JobStaff) => jobsApi.duplicate(job.id),
+    onSuccess: (copy, job) => {
+      void queryClient.invalidateQueries({ queryKey: qk.jobs })
+      queryClient.setQueryData(qk.job(copy.id), copy)
+      toast({ tone: 'success', title: `Copied “${job.title}” as a draft`, body: 'Rename it and adjust the details before publishing.' })
+      navigate(`/jobs/${copy.id}/edit`)
+    },
+    onError: (cause, job) => toast({ tone: 'danger', title: 'The job could not be copied', body: errorMessage(cause), action: { label: 'Try again', onClick: () => duplicate.mutate(job) } }),
   })
 
   /** "⋯" menu items for a job (list row or page header). `primary` actions shown as buttons are left out. */
@@ -169,6 +181,7 @@ export function useJobActions() {
         })
       }
     }
+    if (opts.canManage) items.push({ label: 'Duplicate as draft', icon: Copy, disabled: duplicate.isPending, onSelect: () => duplicate.mutate(job), separated: items.length > 0 })
     if (opts.canExport) items.push({ label: 'Export audit CSV', icon: Download, onSelect: () => exportAudit.mutate(job), separated: items.length > 0 })
     items.push({
       label: 'Copy link',
@@ -183,5 +196,5 @@ export function useJobActions() {
     return items
   }
 
-  return { run, dialog, menuItems, busy: mutation.isPending, exportAudit }
+  return { run, dialog, menuItems, busy: mutation.isPending, exportAudit, duplicate }
 }

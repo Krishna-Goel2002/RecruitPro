@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import type { CandidateInterview } from '../api/types'
 import { ErrorState } from '../components/Feedback'
@@ -71,7 +72,7 @@ function InterviewRows({ interviews, past }: { interviews: CandidateInterview[];
               <span className="iv-date-d numeric">{start.getDate()}</span>
             </span>
             <div className="iv-main">
-              <p className="t-strong">{i.jobTitle}</p>
+              <p className="t-strong">{i.applicationId ? <Link to={`/applications/${i.applicationId}`}>{i.jobTitle}</Link> : i.jobTitle}</p>
               <p className="c-meta-line">
                 <span>
                   <time dateTime={i.scheduledAt}>

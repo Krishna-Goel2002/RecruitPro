@@ -15,7 +15,7 @@ from app.assistant.catalogue import Catalogue, parse_arg_spec
 from app.assistant.intents import detect_intent
 from app.assistant.llm_planner import build_prompt
 from app.assistant.planner import plan_step
-from app.assistant.reference_catalogue import INTERVIEWER_TOOLS, RECRUITER_TOOLS, REFERENCE_TOOLS
+from app.assistant.reference_catalogue import INTERVIEWER_TOOLS, LEGACY_TOOLS, RECRUITER_TOOLS, REFERENCE_TOOLS
 from app.assistant.text import application_codes, parse_date, parse_datetime
 from app.core.config import ConfigError, load_settings, validate_settings
 from app.llm.provider import GeminiProvider, GroqProvider, get_assistant_provider
@@ -200,7 +200,7 @@ class TestIntents:
 class TestOfflineReads:
     def test_job_insights_by_title_resolves_through_list_jobs(self):
         first = step("How is the Backend Engineer posting doing?")
-        assert first["type"] == "tool_call" and first["tool"] == "list_jobs" and first["args"] == {"query": "Backend Engineer"}
+        assert first["type"] == "tool_call" and first["tool"] == "list_jobs" and first["args"] == {"search": "Backend Engineer"}
         jobs = obs("list_jobs", first["args"], {"jobs": [{"id": 12, "title": "Backend Engineer", "status": "PUBLISHED"},
                                                          {"id": 13, "title": "Data Analyst", "status": "DRAFT"}]})
         second = step("How is the Backend Engineer posting doing?", observations=[jobs])
@@ -220,18 +220,18 @@ class TestOfflineReads:
         assert result["type"] == "tool_call" and result["args"] == {"jobId": 12}
 
     def test_unknown_job_title_is_reported_not_guessed(self):
-        jobs = obs("list_jobs", {"query": "Astronaut"}, [{"id": 12, "title": "Backend Engineer"}])
+        jobs = obs("list_jobs", {"search": "Astronaut"}, [{"id": 12, "title": "Backend Engineer"}])
         result = step("how is the astronaut job doing", observations=[jobs])
         assert result["type"] == "answer" and "couldn't find" in result["text"]
 
     def test_applicant_insights(self):
         first = step("Tell me about A-3014")
-        assert first["type"] == "tool_call" and first["tool"] == "applicant_insights" and first["args"] == {"applicationId": 3014}
+        assert first["type"] == "tool_call" and first["tool"] == "applicant_insights" and first["args"] == {"applicationCode": "A-3014"}
         data = {"code": "A-3014", "jobId": 12, "status": "SUBMITTED", "group": "MUST_HAVES_UNVERIFIED", "verified": 60.0,
                 "claimed": 80.0, "requirements": [{"description": "Kafka", "status": "MATCHED", "tier": "SELF_CLAIMED",
                                                    "knockout": True}],
                 "unverifiedKnockouts": ["Kafka"], "openQuestions": ["Ask for a concrete Kafka example"]}
-        answer = step("Tell me about A-3014", observations=[obs("applicant_insights", {"applicationId": 3014}, data)])
+        answer = step("Tell me about A-3014", observations=[obs("applicant_insights", {"applicationCode": "A-3014"}, data)])
         assert answer["type"] == "answer" and "A-3014" in answer["text"] and "60%" in answer["text"]
         assert "probability" not in answer["text"].replace("not a probability", "")
         assert any(block["kind"] == "notice" and "not a rejection" in block["text"] for block in answer["blocks"])
@@ -239,19 +239,19 @@ class TestOfflineReads:
 
     def test_applicant_from_page_context(self):
         result = step("summary of this candidate", page="applicant", job=12, code="A-3014")
-        assert result["tool"] == "applicant_insights" and result["args"] == {"applicationId": 3014}
+        assert result["tool"] == "applicant_insights" and result["args"] == {"applicationCode": "A-3014"}
 
     def test_compare_and_compare_top(self):
         result = step("Compare A-3001 and A-3014")
-        assert result["tool"] == "compare_applicants" and result["args"] == {"applicationIds": [3001, 3014]}
+        assert result["tool"] == "compare_applicants" and result["args"] == {"applicationCodes": ["A-3001", "A-3014"]}
         first = step("compare the top 2", page="job", job=12, title="Backend Engineer")
         assert first["tool"] == "job_insights"
         second = step("compare the top 2", page="job", job=12, observations=[obs("job_insights", {"jobId": 12}, JOB_INSIGHTS)])
-        assert second["tool"] == "compare_applicants" and second["args"] == {"applicationIds": [3014, 3001]}
+        assert second["tool"] == "compare_applicants" and second["args"] == {"applicationCodes": ["A-3014", "A-3001"]}
         data = {"applicants": JOB_INSIGHTS["top"][:2],
                 "requirements": [{"description": "Java", "results": {"A-3014": {"status": "MATCHED", "tier": "RESUME_STATED"},
                                                                      "A-3001": {"status": "UNCLEAR"}}}]}
-        third = step("Compare A-3001 and A-3014", observations=[obs("compare_applicants", {"applicationIds": [3001, 3014]}, data)])
+        third = step("Compare A-3001 and A-3014", observations=[obs("compare_applicants", {"applicationCodes": ["A-3001", "A-3014"]}, data)])
         table = next(block for block in third["blocks"] if block["kind"] == "table")
         assert table["columns"] == ["Requirement", "A-3014", "A-3001"] and table["rows"][0][1] == "Matched (RESUME_STATED)"
 
@@ -265,7 +265,8 @@ class TestOfflineReads:
             "newApplicants": 4, "unscoredWorkSamples": [{"code": "A-1", "jobTitle": "QA"}], "interviewsWithoutScorecards": 0})])
         assert digest["type"] == "answer" and "4 new applicants" in digest["text"] and "1 work samples to score" in digest["text"]
         interviews = step("my interviews this week")
-        assert interviews["tool"] == "my_interviews" and interviews["args"] == {"range": "week"}
+        assert interviews["tool"] == "my_interviews" and interviews["args"] == {}
+        assert step("my upcoming interviews")["args"] == {"upcomingOnly": True}
         assert step("fairness summary for this job", page="job", job=12)["args"] == {"jobId": 12}
         fairness = step("fairness summary for this job", page="job", job=12, observations=[obs("fairness_summary", {"jobId": 12}, {
             "adverseImpactRatio": 0.72, "flagged": True, "groups": [{"group": "Group A", "applicants": 20, "selected": 5, "rate": 0.25}]})])
@@ -275,7 +276,7 @@ class TestOfflineReads:
         assert step("show closed jobs")["args"] == {"status": "CLOSED"}
 
     def test_failed_observation_is_reported(self):
-        result = step("Tell me about A-3014", observations=[obs("applicant_insights", {"applicationId": 3014}, None, ok=False,
+        result = step("Tell me about A-3014", observations=[obs("applicant_insights", {"applicationCode": "A-3014"}, None, ok=False,
                                                                  error="not found")])
         assert result["type"] == "answer" and "not found" in result["text"]
 
@@ -312,16 +313,16 @@ class TestOfflineWrites:
     def test_decisions_are_proposals(self):
         result = step("Shortlist A-3014", page="job", job=12, title="Backend Engineer")
         assert result["type"] == "propose" and result["action"] == "decide_application"
-        assert result["args"] == {"applicationId": 3014, "decision": "SHORTLIST"}
+        assert result["args"] == {"applicationCode": "A-3014", "decision": "SHORTLIST"}
         assert "Shortlist A-3014 for Backend Engineer" in result["summary"]
-        assert step("move A-3014 to interview")["args"]["decision"] == "INTERVIEW"
+        assert step("move A-3014 to interview")["args"]["decision"] == "MOVE_TO_INTERVIEW"
         assert step("select A-3014")["args"]["decision"] == "SELECT"
 
     def test_reject_collects_a_reason(self):
         first = step("reject A-3001")
         assert first["type"] == "ask" and first["field"] == "reason" and first["draft"]["kind"] == "action"
         second = step("Not enough relevant experience", draft=first["draft"])
-        assert second["type"] == "propose" and second["args"] == {"applicationId": 3001, "decision": "REJECT",
+        assert second["type"] == "propose" and second["args"] == {"applicationCode": "A-3001", "decision": "REJECT",
                                                                   "reason": "Not enough relevant experience"}
         assert second["draft"] is None
         inline = step("reject A-3001 because no SQL experience")
@@ -331,12 +332,12 @@ class TestOfflineWrites:
         first = step("schedule an interview with A-3014")
         assert first["type"] == "ask" and first["field"] == "startsAt"
         second = step("tomorrow 3 pm", draft=first["draft"])
-        assert second["type"] == "propose" and second["args"] == {"applicationId": 3014, "startsAt": "2026-11-18T15:00"}
+        assert second["type"] == "propose" and second["args"] == {"applicationCode": "A-3014", "scheduledAt": "2026-11-18T15:00"}
         direct = step("schedule an interview with A-3014 on 20 Nov at 11:30 for 60 minutes")
-        assert direct["args"] == {"applicationId": 3014, "startsAt": "2026-11-20T11:30", "durationMinutes": 60}
+        assert direct["args"] == {"applicationCode": "A-3014", "scheduledAt": "2026-11-20T11:30", "durationMinutes": 60}
 
     def test_other_writes(self):
-        assert step("assign the work sample to A-3014")["args"] == {"applicationId": 3014}
+        assert step("assign the work sample to A-3014")["args"] == {"applicationCode": "A-3014"}
         kit = step("generate interview kit for this job", page="job", job=12, title="Backend Engineer")
         assert kit["type"] == "propose" and kit["action"] == "generate_interview_kit" and kit["args"] == {"jobId": 12}
         assert step("generate a work sample for this job", page="job", job=12)["action"] == "generate_work_sample"
@@ -348,9 +349,37 @@ class TestOfflineWrites:
         first = step("shortlist this candidate please", page="job", job=12)
         assert first["type"] == "ask" and first["field"] == "applicationCode"
         second = step("A-3014", draft=first["draft"], page="job", job=12)
-        assert second["type"] == "propose" and second["args"]["applicationId"] == 3014
+        assert second["type"] == "propose" and second["args"]["applicationCode"] == "A-3014"
         switched = step("what needs my attention?", draft=first["draft"])
         assert switched["type"] == "tool_call" and switched["tool"] == "attention_digest" and switched["draft"] is None
+
+
+class TestAliasNamedCatalogue:
+    """A catalogue with other argument names (``applicationId``, ``startsAt``, ``dueInDays``, ``range``) still works."""
+
+    def test_reads_and_writes_use_the_catalogues_names(self):
+        assert step("Tell me about A-3014", tools=LEGACY_TOOLS)["args"] == {"applicationId": 3014}
+        assert step("Compare A-3001 and A-3014", tools=LEGACY_TOOLS)["args"] == {"applicationIds": [3001, 3014]}
+        assert step("my interviews this week", tools=LEGACY_TOOLS)["args"] == {"range": "week"}
+        assert step("How is the Backend Engineer posting doing?", tools=LEGACY_TOOLS)["args"] == {"query": "Backend Engineer"}
+        assert step("move A-3014 to interview", tools=LEGACY_TOOLS)["args"] == {"applicationId": 3014, "decision": "INTERVIEW"}
+        direct = step("schedule an interview with A-3014 on 20 Nov at 11:30 for 60 minutes", tools=LEGACY_TOOLS)
+        assert direct["args"] == {"applicationId": 3014, "startsAt": "2026-11-20T11:30", "durationMinutes": 60}
+        assign = step("assign the work sample to A-3014 in 5 days", tools=LEGACY_TOOLS)
+        assert assign["args"] == {"applicationId": 3014, "dueInDays": 5}
+
+    def test_backend_names_for_the_same_requests(self):
+        assign = step("assign work sample #7 to A-3014 in 5 days")
+        assert assign["args"] == {"applicationCode": "A-3014", "workSampleId": 7, "dueAt": "2026-11-22"}
+        due = step("assign the work sample to A-3014, due by 30 Nov")
+        assert due["args"] == {"applicationCode": "A-3014", "dueAt": "2026-11-30"}
+        interview = step("schedule an interview with A-3014 tomorrow at 3 pm with Priya Sharma on Zoom for 30 minutes")
+        assert interview["args"] == {"applicationCode": "A-3014", "scheduledAt": "2026-11-18T15:00", "interviewer": "Priya Sharma",
+                                     "durationMinutes": 30, "location": "Zoom"}
+        mine = step("schedule an interview with A-3014 tomorrow at 3 pm, interviewer: me")
+        assert "interviewer" not in mine["args"]
+        masked = step("schedule an interview with [name] (A-3014) tomorrow at 3 pm with [email]")
+        assert "interviewer" not in masked["args"]
 
 
 # ------------------------------------------------------------------------------------------------ job posting
@@ -568,7 +597,8 @@ class TestLlmPlanner:
         {"type": "tool_call", "tool": "delete_everything", "args": {}},
         {"type": "tool_call", "tool": "decide_application", "args": {"applicationId": 1, "decision": "REJECT"}},
         {"type": "tool_call", "tool": "job_insights", "args": {"jobId": "twelve"}},
-        {"type": "tool_call", "tool": "job_insights", "args": {"jobId": 12, "extra": 1}},
+        {"type": "tool_call", "tool": "job_insights", "args": {"jobId": 0}},
+        {"type": "tool_call", "tool": "job_insights", "args": {"extra": 12}},
         {"type": "tool_call", "tool": "job_insights", "args": {}},
         {"type": "propose", "action": "create_job", "args": {}, "summary": "x"},
         {"type": "ask", "text": "", "field": "x"},
@@ -609,6 +639,22 @@ class TestLlmPlanner:
                         "summary": "Shortlist A-3014"})
         result = step("go ahead and shortlist A-3014 for me", external=True, settings=GEMINI, provider=provider)
         assert result["type"] == "propose" and result["meta"]["planner"] == "gemini"
+        assert result["args"] == {"applicationCode": "A-3014", "decision": "SHORTLIST"}  # synonym renamed to the catalogue's
+
+    def test_model_args_are_mapped_to_the_catalogue_and_unknown_ones_dropped(self):
+        provider = llm({"type": "tool_call", "tool": "job_insights", "args": {"jobId": 12, "extra": 1, "verbose": True}})
+        result = step("how's this job doing", page="job", job=12, external=True, settings=GEMINI, provider=provider)
+        assert result["meta"]["planner"] == "gemini" and result["args"] == {"jobId": 12}
+        provider = llm({"type": "propose", "action": "schedule_interview", "summary": "Schedule A-3014",
+                        "args": {"applicationId": 3014, "startsAt": "2026-11-20T15:00", "duration": "60", "room": "4B"}})
+        result = step("schedule an interview with A-3014 on 20 Nov at 3 pm", external=True, settings=GEMINI, provider=provider)
+        assert result["meta"]["planner"] == "gemini"
+        assert result["args"] == {"applicationCode": "A-3014", "scheduledAt": "2026-11-20T15:00", "durationMinutes": 60,
+                                  "location": "4B"}
+        provider = llm({"type": "propose", "action": "decide_application", "summary": "Move A-3014 to interview",
+                        "args": {"code": "a3014", "decision": "interview"}})
+        result = step("move A-3014 to interview", external=True, settings=GEMINI, provider=provider)
+        assert result["args"] == {"applicationCode": "A-3014", "decision": "MOVE_TO_INTERVIEW"}
 
     def test_prompt_is_compact_and_deidentified(self):
         captured: list = []

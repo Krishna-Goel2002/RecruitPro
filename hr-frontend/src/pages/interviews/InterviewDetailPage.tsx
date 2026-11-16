@@ -107,7 +107,7 @@ function InterviewView({ interview }: { interview: InterviewDetail }) {
                 <h2 id="iv-sc-h" className="t-h2">Scorecard</h2>
                 {canEdit && <Button icon={Pencil} variant="secondary" onClick={() => setEditing(true)}>Edit scorecard</Button>}
               </div>
-              <ScorecardView scorecard={interview.scorecard} questions={interview.kit} />
+              <ScorecardView scorecard={interview.scorecard} questions={interview.kit} interviewId={interview.id} canSeeRevisions={mine || user.role === 'ADMIN' || user.role === 'HR_MANAGER'} />
               {canEdit && <p className="iv-fine">You can edit it until the application is decided. Earlier versions are kept for the audit trail.</p>}
               {lockedNote && <p className="iv-fine">{lockedNote}</p>}
             </section>

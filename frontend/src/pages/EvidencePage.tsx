@@ -39,6 +39,10 @@ export function EvidencePage() {
   const [adding, setAdding] = useState(false)
   const [toDelete, setToDelete] = useState<CandidateClaim | null>(null)
   const [fresh, setFresh] = useState<number | null>(null)
+  const [claimDirty, setClaimDirty] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  // Escape, the backdrop and Cancel used to throw away a half-written claim without a word.
+  const closeAdd = () => (claimDirty ? setConfirmDiscard(true) : setAdding(false))
   const listRef = useRef<HTMLUListElement>(null)
   const played = useRef(false)
 
@@ -156,10 +160,11 @@ export function EvidencePage() {
         )}
       </Section>
 
-      <Drawer open={adding} onClose={() => setAdding(false)} title="Add a claim" description="It is shown to employers as your claim until a recruiter or a source checks it.">
+      <Drawer open={adding} onClose={closeAdd} title="Add a claim" description="It is shown to employers as your claim until a recruiter or a source checks it.">
         {adding && (
           <ClaimForm
-            onCancel={() => setAdding(false)}
+            onDirtyChange={setClaimDirty}
+            onCancel={closeAdd}
             onCreated={claim => {
               setAdding(false)
               setFresh(claim.id)
@@ -168,6 +173,19 @@ export function EvidencePage() {
           />
         )}
       </Drawer>
+
+      <ConfirmDialog
+        open={confirmDiscard}
+        title="Discard this claim?"
+        confirmLabel="Discard claim"
+        onCancel={() => setConfirmDiscard(false)}
+        onConfirm={() => {
+          setConfirmDiscard(false)
+          setAdding(false)
+        }}
+      >
+        <p>What you typed has not been added yet and will be lost.</p>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={toDelete !== null}

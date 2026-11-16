@@ -15,6 +15,7 @@ import { Button, Field, LoadingRegion, PageHeader, Panel, Select, SkeletonText }
 import { Check, Download, EyeOff, Icon, Trash2 } from '../design/icons'
 import { formatDate } from '../design/lib/format'
 import { safeFilename, saveBlob } from '../lib/download'
+import { useBeforeUnload } from '../lib/hooks'
 import { AGE_BAND_OPTIONS, DISABILITY_OPTIONS, GENDER_OPTIONS, SOCIAL_CATEGORY_OPTIONS } from '../lib/labels'
 import './common.css'
 import './settings/settings.css'
@@ -110,6 +111,9 @@ function SurveySection() {
   }
 
   const stored = survey.data ?? null
+  const baseline = toSurveyForm(stored)
+  const changed = (Object.keys(form) as (keyof SurveyForm)[]).some(k => form[k] !== baseline[k])
+  useBeforeUnload(survey.isSuccess && changed)
   const set = (key: keyof SurveyForm) => (e: { target: { value: string } }) => setForm(current => ({ ...current, [key]: e.target.value }))
   const why = [
     'Stored separately from your applications.',

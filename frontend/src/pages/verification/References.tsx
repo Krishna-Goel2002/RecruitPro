@@ -14,6 +14,7 @@ import {
 } from '../../design/components'
 import { ArrowRight, Ellipsis, MailPlus, UserRoundCheck, X } from '../../design/icons'
 import { formatDate, plural } from '../../design/lib/format'
+import { useBeforeUnload } from '../../lib/hooks'
 import { humanize } from '../../lib/labels'
 import { referencesQuery } from '../../lib/queries'
 import { MAX_OPEN_REFERENCES, RELATIONSHIP_OPTIONS, referenceStatusLabel, relationshipLabel } from '../../lib/verification'
@@ -174,6 +175,7 @@ export function ReferenceDrawer({ open, onClose, ledger }: { open: boolean; onCl
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [consent, setConsent] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  useBeforeUnload(open && (refereeName.trim() !== '' || refereeEmail.trim() !== '' || employerName.trim() !== '' || selected.size > 0))
 
   function reset() {
     setStep(0)

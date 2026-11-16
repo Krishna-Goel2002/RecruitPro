@@ -105,6 +105,7 @@ export function ProfilePage() {
       ) : (
         <ProfileForm profile={profile.data} />
       )}
+      <ChangeName />
       <ChangePassword />
     </div>
   )
@@ -278,6 +279,65 @@ function ProfileForm({ profile }: { profile: CandidateProfile }) {
         </Button>
       </div>
       </div>
+    </form>
+  )
+}
+
+/** Your name (PATCH /me): employers see it once they shortlist you, so a typo is worth fixing. */
+function ChangeName() {
+  const user = useCurrentUser()
+  const { updateUser } = useAuth()
+  const notify = useNotify()
+  const formRef = useRef<HTMLFormElement>(null)
+  const [first, setFirst] = useState(user.firstName ?? '')
+  const [last, setLast] = useState(user.lastName ?? '')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const dirty = first.trim() !== (user.firstName ?? '') || last.trim() !== (user.lastName ?? '')
+  useBeforeUnload(dirty)
+
+  const save = useMutation({
+    mutationFn: () => meApi.updateName(first.trim(), last.trim()),
+    onSuccess: updated => {
+      updateUser({ ...user, ...updated })
+      setFirst(updated.firstName ?? '')
+      setLast(updated.lastName ?? '')
+      notify('success', 'Name updated')
+    },
+  })
+
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    const next: Record<string, string> = {}
+    if (!first.trim()) next.first = 'Enter your first name.'
+    if (!last.trim()) next.last = 'Enter your last name.'
+    setErrors(next)
+    if (Object.keys(next).length === 0) save.mutate()
+    else focusFirstInvalid(formRef.current)
+  }
+
+  return (
+    <form ref={formRef} onSubmit={submit} noValidate>
+      <SettingsSection title="Name" description="Employers see your name only after they shortlist you.">
+        <div className="st-row">
+          <Field label="First name" error={errors.first}>
+            <Input autoComplete="given-name" maxLength={100} value={first} onChange={e => setFirst(e.target.value)} />
+          </Field>
+          <Field label="Last name" error={errors.last}>
+            <Input autoComplete="family-name" maxLength={100} value={last} onChange={e => setLast(e.target.value)} />
+          </Field>
+        </div>
+        <FormError error={save.error} />
+        <div className="cluster-tight">
+          {dirty && (
+            <Button variant="ghost" onClick={() => { setFirst(user.firstName ?? ''); setLast(user.lastName ?? ''); setErrors({}); save.reset() }} disabled={save.isPending}>
+              Discard
+            </Button>
+          )}
+          <Button type="submit" loading={save.isPending} disabled={!dirty}>
+            Save name
+          </Button>
+        </div>
+      </SettingsSection>
     </form>
   )
 }

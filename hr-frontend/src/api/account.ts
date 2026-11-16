@@ -1,6 +1,6 @@
 import { api } from './client'
 import type {
-  AppNotification, AuthResponse, ChangePasswordRequest, MfaConfirmResult, MfaDisableRequest, MfaEnrollment, MfaStatus, Page, RecoveryCodes, UnreadCount,
+  AppNotification, AuthResponse, AuthUser, ChangePasswordRequest, MfaConfirmResult, MfaDisableRequest, MfaEnrollment, MfaStatus, Page, RecoveryCodes, UnreadCount,
 } from './types'
 
 /** The signed-in staff member's own account (plan Section 5.2): in-app inbox and password change. */
@@ -15,6 +15,8 @@ export const accountApi = {
    * the change are rejected, so the caller must adopt the returned token.
    */
   changePassword: (body: ChangePasswordRequest) => api.post<AuthResponse>('/me/password', body),
+  /** PATCH /me: own first and last name (1..100 characters each); audited. Returns the updated AuthUser. */
+  updateName: (firstName: string, lastName: string) => api.patch<AuthUser>('/me', { firstName, lastName }),
 
   /** Staff MFA (WP-PLAT). 503 `MFA_NOT_CONFIGURED` without an encryption key; candidates get 403. */
   mfaStatus: (signal?: AbortSignal) => api.get<MfaStatus>('/me/mfa', undefined, signal),

@@ -7,27 +7,96 @@ Observation data is only ever rendered, never interpreted as instructions.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 from app.assistant import jobpost
-from app.assistant.catalogue import Catalogue
+from app.assistant.catalogue import Catalogue, slot_of
 from app.assistant.compose import compose, get, link, notice
 from app.assistant.help_topics import TOPICS, topic_by_key
 from app.assistant.intents import INTENTS, WRITE_INTENTS, Intent, detect_intent
-from app.assistant.text import application_codes, code_to_id, normalise, parse_datetime, word_number
+from app.assistant.text import application_codes, code_to_id, normalise, parse_date, parse_datetime, word_number
 from app.models.assistant import StepRequest
 from app.pipeline.deidentify import scrub_contacts
 
 READ_TOOLS = {"list_jobs", "job_insights", "applicant_insights", "compare_applicants", "attention_digest", "my_interviews",
               "fairness_summary"}
-DECISION_LABELS = {"SHORTLIST": "Shortlist", "REJECT": "Reject", "INTERVIEW": "Move to interview", "SELECT": "Select"}
+DECISION_LABELS = {"SHORTLIST": "Shortlist", "REJECT": "Reject", "INTERVIEW": "Move to interview",
+                   "MOVE_TO_INTERVIEW": "Move to interview", "SELECT": "Select"}
 JOB_STATUS_LABELS = {"PUBLISHED": "published", "ON_HOLD": "on hold", "CLOSED": "closed", "CANCELLED": "cancelled"}
 REJECT_REASONS = ["Must-have requirements not evidenced", "Not enough relevant experience", "Position filled",
                   "Candidate withdrew interest", "Other"]
 _AFFIRM = re.compile(r"^(?:yes|yep|yeah|ok|okay|sure|go ahead|looks good|lgtm|perfect|great|fine|done|confirm|publish(?: it)?|"
                      r"post it|save(?: it)?(?: as draft)?|create(?: it)?|ship it|that'?s (?:all|it|fine|good))\b")
 _STRONG_QUESTION = re.compile(r"^(?:how|what|who|which|show|list|when|where|why|tell me|give me|open|go to|compare|explain)\b")
+
+_UPCOMING = re.compile(r"\b(?:upcoming|next|coming up|lined up|future|remaining|still to come|tomorrow)\b")
+_NOT_A_PERSON = {"me", "myself", "us", "him", "her", "them", "the", "a", "an", "today", "tomorrow", "monday", "tuesday",
+                 "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april", "may",
+                 "june", "july", "august", "september", "october", "november", "december", "jan", "feb", "mar", "apr",
+                 "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec", "zoom", "teams", "google", "meet", "skype",
+                 "webex", "phone", "next", "this", "hr", "panel", "interview", "kit", "reason", "notice"}
+_MEETING_TOOLS = (("zoom", "Zoom"), ("google meet", "Google Meet"), ("gmeet", "Google Meet"), ("meet", "Google Meet"),
+                  ("microsoft teams", "Microsoft Teams"), ("ms teams", "Microsoft Teams"), ("teams", "Microsoft Teams"),
+                  ("skype", "Skype"), ("webex", "Webex"), ("phone", "Phone"), ("a phone call", "Phone"), ("video call", "Video call"))
+
+
+def interviewer_from(text: str) -> str | None:
+    """The interviewer a scheduling message names ("with Priya Sharma", "interviewer: Rahul"), if any.
+
+    Staff names only: candidate names reach the planner as "[name]" and e-mails as "[email]" (backend
+    de-identification), and neither is taken.
+    """
+    match = re.search(r"\b(?i:interviewer)\s*(?:(?i:is|will be|should be|would be)\s+|[:=-]\s*)?"
+                      r"([^\s,;\[\]]+@[^\s,;\[\]]+\.[A-Za-z]{2,}|[A-Za-z][\w.'-]*(?:\s+[A-Z][\w.'-]*){0,2})", text or "") or \
+        re.search(r"\b(?:with|by)\s+([^\s,;\[\]]+@[^\s,;\[\]]+\.[A-Za-z]{2,}|[A-Z][a-z][\w'-]*(?:\s+[A-Z][a-z][\w'-]*){0,2})\b", text or "")
+    if not match:
+        return None
+    name = match.group(1).strip(" .'-")
+    if not name or name.split()[0].lower() in _NOT_A_PERSON or application_codes(name):
+        return None
+    return name[:200]
+
+
+def meeting_location(text: str) -> str | None:
+    """Where an interview takes place ("location: Room 4B", "on Zoom", "in conference room 2"), if said."""
+    value = text or ""
+    match = re.search(r"(?i)\b(?:location|venue|place)\s*(?:is\s+|[:=-]\s*)([^,;\n]{2,120})", value)
+    if match:
+        return match.group(1).strip(" .")[:500]
+    lowered = value.lower()
+    for word, label in _MEETING_TOOLS:
+        if re.search(rf"\b(?:on|via|over|using|through)\s+(?:a\s+)?{word}\b", lowered):
+            return label
+    match = re.search(r"(?i)\bin\s+(?:the\s+)?((?:conference |meeting |board ?)?room\s+[\w-]{1,20}|(?:the )?office)\b", value)
+    return match.group(1).strip()[:500] if match else None
+
+
+def work_sample_id(text: str) -> int | None:
+    """A work sample named by id ("work sample #12", "WS-12"), if any."""
+    match = re.search(r"(?i)\b(?:work ?sample|sample|assignment)\s*(?:#\s*|no\.?\s*|number\s*|id\s*:?\s*)(\d{1,9})\b", text or "") or \
+        re.search(r"\bWS-?(\d{1,9})\b", text or "", re.I)
+    return int(match.group(1)) if match and int(match.group(1)) >= 1 else None
+
+
+def due_from(text: str, today: date) -> tuple[int | None, date | None]:
+    """(days from today, due date) of "in 3 days" / "within a week" / "due by 25 Nov"; the date is never in the past."""
+    lowered = normalise(text)
+    days = None
+    match = re.search(r"\b(?:in|within|for)\s+(\d{1,2}|a|an|one|two|three|four|five|six|seven|ten|fourteen)\s+(days?|weeks?)\b", lowered)
+    if match:
+        count = 1 if match.group(1) in {"a", "an"} else word_number(match.group(1))
+        if count:
+            days = count * (7 if match.group(2).startswith("week") else 1)
+    due = today + timedelta(days=days) if days else None
+    if due is None:
+        match = re.search(r"\b(?:due|by|before|deadline|until|till)\b\s*(?:on|is|:)?\s*(.{1,40})", lowered)
+        when = parse_date(match.group(1), today) if match else None
+        if when and when >= today:
+            due = when
+            days = (when - today).days
+    return days, due
+
 
 ProseWriter = Callable[[dict[str, Any]], "dict[str, Any] | None"]
 
@@ -64,6 +133,12 @@ class OfflinePlanner:
         return self.draft
 
     def tool_call(self, tool: str, args: dict[str, Any], thought: str, draft: Any = "keep") -> dict[str, Any]:
+        # Last line of the catalogue contract: only a read tool of this request's catalogue, only its own arguments.
+        if not self.catalogue.reads(tool):
+            return self._not_allowed("That information")
+        args, problem = self.catalogue.normalise_args(tool, args)
+        if problem:
+            return self._unusable(problem)
         return {"type": "tool_call", "tool": tool, "args": args, "thought": thought[:200],
                 "draft": self._keep() if draft == "keep" else draft}
 
@@ -73,6 +148,11 @@ class OfflinePlanner:
 
     def propose(self, action: str, args: dict[str, Any], summary: str, blocks: list[dict[str, Any]] | None = None,
                 draft: Any = None) -> dict[str, Any]:
+        if not self.catalogue.writes(action):
+            return self._not_allowed("That change")
+        args, problem = self.catalogue.normalise_args(action, args)
+        if problem:
+            return self._unusable(problem)
         return {"type": "propose", "action": action, "args": args, "summary": summary, "blocks": blocks or [],
                 "draft": self._keep() if draft == "keep" else draft}
 
@@ -176,6 +256,10 @@ class OfflinePlanner:
         detail = f" ({scrub_contacts(error)[:200]})" if error else ""
         return self.answer(f"I couldn't get that information{detail}.", [notice("The request failed; nothing was changed.", "error")])
 
+    def _unusable(self, problem: str) -> dict[str, Any]:
+        return self.answer("I couldn't prepare that request (" + problem[:200] + "). Please rephrase it or use the portal.",
+                           [notice("Nothing was changed.", "info")])
+
     def _not_allowed(self, what: str) -> dict[str, Any]:
         return self.answer(f"{what} isn't available to you here. I can only use the tools your role allows.",
                            [notice("Ask an HR manager or admin if you need this.", "info")])
@@ -193,10 +277,19 @@ class OfflinePlanner:
             "topic": intent.slots.get("topic"), "status": intent.slots.get("status"),
             "decision": intent.slots.get("decision"), "reason": intent.slots.get("reason"),
             "range": intent.slots.get("range"), "startsAt": intent.slots.get("startsAt"),
-            "durationMinutes": intent.slots.get("durationMinutes"),
+            "durationMinutes": intent.slots.get("durationMinutes"), "upcomingOnly": self._upcoming_only(intent),
+            "days": intent.slots.get("days"), "dueAt": intent.slots.get("dueAt"),
+            "workSampleId": intent.slots.get("workSampleId"), "interviewer": intent.slots.get("interviewer"),
+            "location": intent.slots.get("location"),
         }
         values.update(intent.slots.get("extra") or {})
         return values
+
+    def _upcoming_only(self, intent: Intent) -> bool | None:
+        """True when the user asks only for interviews still to come ("upcoming", "next", "tomorrow")."""
+        if intent.slots.get("range") in {"tomorrow", "upcoming"} or _UPCOMING.search(normalise(self.text)):
+            return True
+        return None
 
     def _jobs_from(self, observation: Any) -> list[dict[str, Any]]:
         data = observation.data if observation else None
@@ -290,19 +383,19 @@ class OfflinePlanner:
         return self.tool_call(tool, args, thought)
 
     def _ask_missing(self, intent: Intent, name: str) -> dict[str, Any]:
-        key = name.lower().replace("_", "")
-        if key in {"applicationcode", "code", "applicationid", "applicantid"}:
+        slot = slot_of(name)
+        if slot in {"applicationCode", "applicationId"}:
             return self.ask("Which applicant? Give me the application code, for example A-3014.", "applicationCode",
                             draft=self._action_draft(intent, "applicationCode"))
-        if key in {"applicationcodes", "codes", "applicationids"}:
+        if slot in {"applicationCodes", "applicationIds"}:
             return self.ask("Which applicants should I compare? For example: A-3001 and A-3014.", "applicationCodes",
                             draft=self._action_draft(intent, "applicationCodes"))
-        if key in {"jobid", "job"}:
+        if slot == "jobId":
             return self.ask("Which job? Tell me its title.", "job", draft=self._action_draft(intent, "job"))
-        if key in {"startsat", "startat", "scheduledat", "datetime", "start", "starttime"}:
+        if slot == "startsAt":
             return self.ask("When should the interview be? For example 'tomorrow at 3 pm' or '20 Nov 11:30'.", "startsAt",
                             ["Tomorrow 11 am", "Tomorrow 3 pm", "Next Monday 10 am"], draft=self._action_draft(intent, "startsAt"))
-        if key in {"reason", "rejectionreason", "comment", "note"}:
+        if slot == "reason":
             return self.ask("What is the reason? It is recorded with the decision.", "reason", REJECT_REASONS,
                             draft=self._action_draft(intent, "reason"))
         readable = re.sub(r"(?<!^)(?=[A-Z])", " ", name).replace("_", " ").lower()
@@ -489,7 +582,8 @@ class OfflinePlanner:
     def my_interviews(self, intent: Intent) -> dict[str, Any]:
         if not self.catalogue.reads("my_interviews"):
             return self._not_allowed("Interview lists")
-        return self._read(intent, "my_interviews", {"range": intent.slots.get("range")}, "Fetching your interviews", {})
+        values = {"range": intent.slots.get("range"), "upcomingOnly": self._upcoming_only(intent)}
+        return self._read(intent, "my_interviews", values, "Fetching your interviews", {})
 
     def fairness_summary(self, intent: Intent) -> dict[str, Any]:
         if not self.catalogue.reads("fairness_summary"):
@@ -518,8 +612,7 @@ class OfflinePlanner:
         decision = intent.slots.get("decision")
         if not code:
             return self._ask_missing(intent, "applicationCode")
-        reason_arg = next((spec.name for spec in self.catalogue.specs.get("decide_application", [])
-                           if spec.name.lower().replace("_", "") in {"reason", "rejectionreason", "comment", "note", "notes"}), None)
+        reason_arg = self.catalogue.arg_for("decide_application", "reason")
         if decision == "REJECT" and reason_arg and not intent.slots.get("reason"):
             return self.ask(f"What is the reason for rejecting {code}? It is recorded with the decision.", "reason",
                             REJECT_REASONS, draft=self._action_draft(intent, "reason"))
@@ -557,8 +650,7 @@ class OfflinePlanner:
             intent.slots["startsAt"] = None
             return self.ask("That time is in the past. When should the interview be?", "startsAt",
                             ["Tomorrow 11 am", "Tomorrow 3 pm"], draft=self._action_draft(intent, "startsAt"))
-        has_time_arg = any(spec.name.lower().replace("_", "") in {"startsat", "startat", "scheduledat", "datetime", "start", "starttime"}
-                           for spec in self.catalogue.specs.get("schedule_interview", []))
+        has_time_arg = self.catalogue.arg_for("schedule_interview", "startsAt") is not None
         if has_time_arg and not intent.slots.get("startsAt"):
             prefix = "Sorry, I couldn't read that time. " if intent.slots.get("_retry") else ""
             return self.ask(prefix + f"When should the interview with {code} be? For example 'tomorrow at 3 pm'.", "startsAt",
@@ -566,6 +658,8 @@ class OfflinePlanner:
         duration = re.search(r"\b(\d{2,3})\s*(?:min|mins|minutes)\b|\b(an|one|1)\s*(?:hour|hr)\b", normalise(self.text))
         if duration:
             intent.slots["durationMinutes"] = int(duration.group(1)) if duration.group(1) else 60
+        intent.slots["interviewer"] = intent.slots.get("interviewer") or interviewer_from(self.text)
+        intent.slots["location"] = intent.slots.get("location") or meeting_location(self.text)
         args, step = self._write_args(intent, "schedule_interview", self._values(intent, self.context.jobId))
         if step:
             return step
@@ -584,9 +678,12 @@ class OfflinePlanner:
         code = self._code(intent)
         if not code:
             return self._ask_missing(intent, "applicationCode")
-        days = re.search(r"\b(?:in|within)\s+(\d{1,2})\s+days?\b", normalise(self.text))
-        if days:
-            intent.slots.setdefault("extra", {})["days"] = int(days.group(1))
+        days, due = due_from(self.text, self.today)
+        if days is not None:
+            intent.slots["days"] = days
+        if due is not None:
+            intent.slots["dueAt"] = due.isoformat()
+        intent.slots["workSampleId"] = intent.slots.get("workSampleId") or work_sample_id(self.text)
         args, step = self._write_args(intent, "assign_work_sample", self._values(intent, self.context.jobId))
         if step:
             return step

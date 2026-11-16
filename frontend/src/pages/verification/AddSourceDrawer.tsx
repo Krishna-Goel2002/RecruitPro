@@ -13,6 +13,7 @@ import {
 } from '../../design/components'
 import { ArrowRight, CircleCheck, Github, Icon, KeyRound } from '../../design/icons'
 import { VERDICTS } from '../../design/lib/labels'
+import { useBeforeUnload } from '../../lib/hooks'
 import { DOCUMENT_ACCEPT, DOCUMENT_MAX_BYTES, validateDocumentFile } from '../../lib/files'
 import { isHttpUrl, isHttpsUrl } from '../../lib/url'
 import {
@@ -241,6 +242,8 @@ function ConnectStep({ kind, onBack, onConnected }: { kind: SourceKind; onBack: 
   })
 
   const showOAuth = kind === 'GITHUB' && !oauthUnavailable && !byUsername
+  // Typed or chosen but not connected yet. Never while the GitHub sign-in is shown: that step leaves the page on purpose.
+  useBeforeUnload(!showOAuth && !create.isSuccess && (identifier.trim() !== '' || credential.trim() !== '' || file !== null))
 
   function requireConsent(): boolean {
     if (!consent) {

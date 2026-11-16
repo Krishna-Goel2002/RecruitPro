@@ -83,6 +83,9 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
   const notify = useNotify()
   const [confirmWithdraw, setConfirmWithdraw] = useState(false)
   const [evidenceFor, setEvidenceFor] = useState<ApplicationRequirement | null>(null)
+  const [evidenceDirty, setEvidenceDirty] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const closeEvidence = () => (evidenceDirty ? setConfirmDiscard(true) : setEvidenceFor(null))
   const canWithdraw = WITHDRAWABLE_STATUSES.includes(detail.status)
   const withdraw = useMutation({
     mutationFn: () => applicationsApi.withdraw(detail.id),
@@ -265,7 +268,7 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
 
       <Drawer
         open={evidenceFor !== null}
-        onClose={() => setEvidenceFor(null)}
+        onClose={closeEvidence}
         title="Add evidence"
         description={evidenceFor ? `For “${evidenceFor.description}”. Your claim is added to your evidence for every employer you apply to.` : undefined}
       >
@@ -274,7 +277,8 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
             initialType={claimTypeFor(evidenceFor.type)}
             initialValue={evidenceFor.description}
             submitLabel="Add evidence"
-            onCancel={() => setEvidenceFor(null)}
+            onDirtyChange={setEvidenceDirty}
+            onCancel={closeEvidence}
             onCreated={() => {
               setEvidenceFor(null)
               notify('success', 'Evidence added', { body: 'Recruiters see it as your claim until it is checked. Matching re-runs now.' })
@@ -282,6 +286,18 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
           />
         )}
       </Drawer>
+      <ConfirmDialog
+        open={confirmDiscard}
+        title="Discard this evidence?"
+        confirmLabel="Discard"
+        onCancel={() => setConfirmDiscard(false)}
+        onConfirm={() => {
+          setConfirmDiscard(false)
+          setEvidenceFor(null)
+        }}
+      >
+        <p>What you changed has not been added yet and will be lost.</p>
+      </ConfirmDialog>
     </>
   )
 }

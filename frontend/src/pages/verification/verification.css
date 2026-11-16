@@ -233,6 +233,8 @@
   .v-drawer-nav { display: flex; align-items: center; gap: 2px; }
   .v-drawer-pos { margin-right: 6px; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
   .v-drawer-footer { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .v-drawer-footer { flex-wrap: wrap; }
+  .v-drawer-why { text-align: right; }
   .v-detail { display: flex; flex-direction: column; gap: 24px; animation: ui-fade-in var(--dur-fast) var(--ease-standard); }
   .v-detail-lead { color: var(--fg-default); font: 400 var(--text-body-lg) / var(--lh-body-lg) var(--font-sans); }
   .v-ownership { display: flex; align-items: flex-start; gap: 8px; margin-top: -12px; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }

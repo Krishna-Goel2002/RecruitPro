@@ -15,6 +15,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -49,10 +50,32 @@ public class WorkSampleController {
         return ApiResponse.success(service.generate(jobId), "Work sample drafted");
     }
 
+    @PostMapping("/jobs/{jobId}/work-samples")
+    @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER')")
+    @Operation(summary = "Write a work sample by hand (stored as DRAFT; same rules as an edit)")
+    public ApiResponse<WorkSampleResponse> create(@PathVariable Long jobId, @Valid @RequestBody WorkSampleUpdateRequest request) {
+        return ApiResponse.success(service.create(jobId, request), "Work sample created");
+    }
+
     @GetMapping("/jobs/{jobId}/work-samples")
     @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER','RECRUITER')")
     public ApiResponse<List<WorkSampleResponse>> list(@PathVariable Long jobId) {
         return ApiResponse.success(service.list(jobId));
+    }
+
+    @PostMapping("/jobs/{jobId}/work-samples/{workSampleId}/duplicate")
+    @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER')")
+    @Operation(summary = "Copy a work sample of the job as a new DRAFT")
+    public ApiResponse<WorkSampleResponse> duplicate(@PathVariable Long jobId, @PathVariable Long workSampleId) {
+        return ApiResponse.success(service.duplicate(jobId, workSampleId), "Work sample copied as a draft");
+    }
+
+    @DeleteMapping("/jobs/{jobId}/work-samples/{workSampleId}")
+    @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER')")
+    @Operation(summary = "Delete a DRAFT work sample that was never assigned (others are archived instead; audited)")
+    public ApiResponse<Void> delete(@PathVariable Long jobId, @PathVariable Long workSampleId) {
+        service.delete(jobId, workSampleId);
+        return ApiResponse.success("Draft work sample deleted");
     }
 
     @PutMapping("/jobs/{jobId}/work-samples/{workSampleId}")

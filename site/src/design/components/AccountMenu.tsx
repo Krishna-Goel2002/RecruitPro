@@ -41,7 +41,7 @@ export function AccountMenu({ name, email, detail, links = [], onSignOut, signin
         onClick={() => setOpen(o => !o)}
       >
         <Avatar name={name} size={28} />
-        <span className="p-account-btn-name">{name}</span>
+        <span className="p-account-btn-name" title={name}>{name}</span>
         <span className="sr-only">, account menu</span>
         <Icon icon={ChevronDown} size={14} className="p-account-chevron" />
       </button>

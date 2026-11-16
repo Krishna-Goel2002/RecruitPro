@@ -10,6 +10,7 @@ import { ActionDialog } from '../../components/ActionDialog'
 import { DomainListInput } from '../../components/DomainListInput'
 import { InlineError, QueryError } from '../../components/QueryError'
 import { SaveBar } from '../../components/SaveBar'
+import { useLeaveGuard } from '../../lib/leaveGuard'
 import { ShortcutSheet, useShortcuts } from '../../components/Shortcuts'
 import { OwnershipLine, SOURCE_ICON, VerdictDetails } from '../../components/VerdictParts'
 import {
@@ -393,7 +394,9 @@ function ConnectorsForm({ settings }: { settings: VerificationSettings }) {
   useEffect(() => { setConnectors({ ...settings.connectors }) }, [settings])
   const changed = CONNECTOR_KINDS.filter(k => Boolean(connectors[k]) !== Boolean(settings.connectors[k])).length
   const save = useSettingsSave()
+  const leaveGuard = useLeaveGuard(changed > 0 && !save.isPending)
   return (
+    <>
     <form id="vf-connectors" onSubmit={e => { e.preventDefault(); save.mutate({ mode: settings.mode, connectors }) }} noValidate>
       <p className="adm-sub">A disabled connector’s results are hidden from your reviewers and never affect your rankings. Candidates can still connect it.</p>
       <div className="adm-connectors">
@@ -407,6 +410,8 @@ function ConnectorsForm({ settings }: { settings: VerificationSettings }) {
       <InlineError error={save.error} />
       <SaveBar changes={changed} busy={save.isPending} form="vf-connectors" onDiscard={() => { setConnectors({ ...settings.connectors }); save.reset() }} />
     </form>
+    {leaveGuard}
+    </>
   )
 }
 
@@ -420,7 +425,9 @@ function TrustedForm({ settings }: { settings: VerificationSettings }) {
   const message = save.error ? errorMessage(save.error) : ''
   const fieldError = (field: string) => (isApiError(save.error, 400) && message.includes(field) ? message.replace(`${field}: `, '') : undefined)
   const unsupported = settings.trustedEmployerDomains === undefined
+  const leaveGuard = useLeaveGuard(changed > 0 && !save.isPending)
   return (
+    <>
     <form id="vf-trusted" className="adm-trusted" noValidate onSubmit={e => { e.preventDefault(); save.mutate({ mode: settings.mode, trustedEmployerDomains: employers, trustedBadgeIssuers: issuers }) }}>
       {unsupported && <p className="adm-sub">This server does not report trusted lists yet; saving sends them anyway.</p>}
       <section className="adm-trusted-block" aria-labelledby="tr-emp">
@@ -436,5 +443,7 @@ function TrustedForm({ settings }: { settings: VerificationSettings }) {
       {!fieldError('trustedEmployerDomains') && !fieldError('trustedBadgeIssuers') && <InlineError error={save.error} />}
       <SaveBar changes={changed} busy={save.isPending} form="vf-trusted" onDiscard={() => { setEmployers(initial.employers); setIssuers(initial.issuers); save.reset() }} note="re-ranks reviewed candidates" />
     </form>
+    {leaveGuard}
+    </>
   )
 }

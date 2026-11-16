@@ -173,6 +173,10 @@ export function VerdictDrawer({ verdictId, queue, onNavigate, onClose }: Verdict
               </Button>
             )}
             <span className="grow" />
+            {/* Says why Hide or Share is greyed out (it already has that state; a new note re-enables it). */}
+            {(data.candidateStatus === 'HIDDEN' || data.candidateStatus === 'SHARED') && !note.trim() && (
+              <span className="v-meta v-drawer-why">{data.candidateStatus === 'HIDDEN' ? 'Already hidden' : 'Already shared'}. Add a note to update it.</span>
+            )}
             <Button
               variant="secondary"
               icon={EyeOff}

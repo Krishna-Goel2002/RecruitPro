@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { queryKeys } from '../../api/queryKeys'
 import type { CandidateProfile, JobPublic } from '../../api/types'
-import { fail, mockApi, ok, refreshRoute, renderPage } from '../../test/utils'
+import { CANDIDATE, fail, mockApi, ok, refreshRoute, renderPage } from '../../test/utils'
 import { HomePage } from '../HomePage'
 import { JobsPage } from '../JobsPage'
 import { ProfilePage } from '../ProfilePage'
@@ -132,6 +132,25 @@ describe('ProfilePage', () => {
     const body = api.find('PUT', '/candidates/me')[0].body as Record<string, unknown>
     expect(body).toMatchObject({ city: 'Mumbai', country: 'India', yearsOfExperience: 5, linkedinUrl: null })
     expect(Object.keys(body)).toHaveLength(13)
+  })
+
+  it('fixes a typo in the name (PATCH /me) without touching the profile', async () => {
+    const api = mockApi([
+      refreshRoute(),
+      { path: '/candidates/me', reply: ok(profile) },
+      { method: 'PATCH', path: '/me', reply: call => ok({ ...CANDIDATE, ...(call.body as object) }) },
+    ])
+    const { user } = renderPage(<ProfilePage />, { route: '/profile', path: '/profile' })
+    const save = await screen.findByRole('button', { name: 'Save name' })
+    expect(save).toBeDisabled()
+    const last = screen.getByLabelText(/^Last name/)
+    await user.clear(last)
+    await user.type(last, 'Iyengar')
+    await user.click(screen.getByRole('button', { name: 'Save name' }))
+    await waitFor(() => expect(api.find('PATCH', '/me')).toHaveLength(1))
+    expect(api.find('PATCH', '/me')[0].body).toEqual({ firstName: CANDIDATE.firstName, lastName: 'Iyengar' })
+    expect(api.find('PUT', '/candidates/me')).toHaveLength(0)
+    expect(await screen.findByText('Name updated')).toBeInTheDocument()
   })
 
   it('does not send anything for Ctrl+S without changes, and checks the salary format', async () => {

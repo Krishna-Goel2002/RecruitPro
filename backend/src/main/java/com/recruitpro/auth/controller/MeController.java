@@ -2,6 +2,7 @@ package com.recruitpro.auth.controller;
 
 import com.recruitpro.auth.dto.AuthResponse;
 import com.recruitpro.auth.dto.ChangePasswordRequest;
+import com.recruitpro.auth.dto.UpdateNameRequest;
 import com.recruitpro.auth.dto.UserResponse;
 import com.recruitpro.auth.service.AuthService;
 import com.recruitpro.auth.web.Portal;
@@ -14,6 +15,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -33,6 +35,12 @@ public class MeController {
     @Operation(summary = "Current user (AuthUser)")
     public ApiResponse<UserResponse> me() {
         return ApiResponse.success(authService.me());
+    }
+
+    @PatchMapping
+    @Operation(summary = "Change your own first and last name (any role; audited for staff and candidates alike)")
+    public ApiResponse<UserResponse> updateName(@Valid @RequestBody UpdateNameRequest request) {
+        return ApiResponse.success(authService.updateName(request.firstName(), request.lastName()), "Name updated");
     }
 
     /**

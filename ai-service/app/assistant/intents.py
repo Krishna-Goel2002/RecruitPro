@@ -271,7 +271,8 @@ def detect_intent(message: str, context: Any = None) -> Intent:
     if codes and not _LIST_JOBS_RE.search(text):
         return Intent("applicant_insights", slots)
     if _INTERVIEWS_RE.search(text) and not re.search(r"\bscorecards?\b|\bwithout\b|\bmissing\b", text):
-        rng = "today" if "today" in text else "tomorrow" if "tomorrow" in text else "week" if "week" in text else None
+        rng = "today" if "today" in text else "tomorrow" if "tomorrow" in text else "week" if "week" in text else \
+            "upcoming" if re.search(r"\b(?:upcoming|next|coming up|lined up)\b", text) else None
         return Intent("my_interviews", {**slots, "range": rng})
     if _DIGEST_RE.search(text) and not (phrase and _JOB_INSIGHT_RE.search(text)):
         return Intent("attention_digest", slots)

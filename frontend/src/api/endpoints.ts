@@ -176,6 +176,8 @@ export const authApi = {
 
 export const meApi = {
   get: () => apiRequest<AuthUser>('/me'),
+  /** PATCH /me: own first and last name (1..100 characters each); returns the updated user. */
+  updateName: (firstName: string, lastName: string) => apiRequest<AuthUser>('/me', { method: 'PATCH', body: { firstName, lastName } }),
   /** WP-BE-A deviation: returns the new session (other sessions are revoked). */
   changePassword: (body: ChangePasswordRequest) =>
     apiRequest<AuthResponse | null>('/me/password', { method: 'POST', body }),

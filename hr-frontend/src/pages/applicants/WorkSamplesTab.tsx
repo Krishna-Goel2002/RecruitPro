@@ -36,7 +36,9 @@ export function WorkSamplesTab({ jobId, detail }: { jobId: number; detail: Appli
   const assignHint = !ASSIGNABLE.includes(detail.applicationStatus)
     ? 'Work samples can be assigned once the application is shortlisted.'
     : samples.isSuccess && available.length === 0
-      ? 'No active work sample left to assign. Activate one on the job’s Work samples tab.'
+      ? detail.workSamples.some(a => a.status === 'CANCELLED' || a.status === 'EXPIRED')
+        ? 'Each work sample can be given to an application once. To set a cancelled or expired task again, duplicate it on the job’s Work samples tab and activate the copy.'
+        : 'No active work sample left to assign. Activate one on the job’s Work samples tab.'
       : null
 
   return (
@@ -189,7 +191,7 @@ function Submission({ assignment: a }: { assignment: WorkSampleAssignment }) {
           {files.map(f => (
             <li key={f.id}>
               <Icon icon={FileText} size={16} />
-              <span className="ap-file-name">{f.originalName}</span>
+              <span className="ap-file-name" title={f.originalName}>{f.originalName}</span>
               <span className="ap-muted numeric">{formatFileSize(f.sizeBytes)}</span>
               {can('workSamples.downloadFiles') && (
                 <Button size="sm" variant="ghost" icon={Download} loading={download.busyFileId === f.id} disabled={download.busyFileId != null && download.busyFileId !== f.id} aria-label={`Download ${f.originalName}`} onClick={() => download.start(a.id, f)}>Download</Button>

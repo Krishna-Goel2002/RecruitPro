@@ -204,4 +204,5 @@
     .adm-bar span, .adm-sent, .adm-q-form, .adm-q-done { animation: none; }
     .adm-services li[data-state='DOWN'] .adm-dot { animation: none; }
   }
+  .adm-row-actions { justify-content: flex-end; flex-wrap: nowrap; }
 }

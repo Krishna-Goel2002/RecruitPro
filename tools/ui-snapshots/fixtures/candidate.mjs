@@ -286,6 +286,15 @@ export const screens = [
   { name: 'work-sample-final', path: '/work-samples/801', override: started(0.8) },
   { name: 'work-sample-submitted', path: '/work-samples/801', override: [route('GET', '/candidates/me/work-samples', [{ ...workSamples[0], status: 'SUBMITTED', startedAt: ago(3), submittedAt: ago(2), files: [{ id: 1, originalName: 'refunds-design.pdf', contentType: 'application/pdf', sizeBytes: 248000, sha256: 'ab', uploadedAt: ago(2) }] }])] },
   { name: 'work-sample-expired', path: '/work-samples/801', override: [route('GET', '/candidates/me/work-samples', [{ ...workSamples[0], status: 'EXPIRED', dueAt: ago(5) }])] },
+  // Completeness sweep: a running draft can be discarded; a closed task's unsent draft can be deleted.
+  { name: 'work-sample-draft', path: '/work-samples/801', override: started(42), action: typeInto('textarea', 'Clients send an Idempotency-Key header; the server stores the key with the response for 24 hours.') },
+  { name: 'work-sample-discard', path: '/work-samples/801', override: started(42), action: async (p) => { await typeInto('textarea', 'First attempt')(p); await clickText('Discard draft')(p) } },
+  { name: 'work-sample-expired-draft', path: '/work-samples/801', override: [route('GET', '/candidates/me/work-samples', [{ ...workSamples[0], status: 'EXPIRED', startedAt: ago(3), dueAt: ago(5) }])],
+    action: async (p) => {
+      await p.evaluate(() => { localStorage.setItem('draft-work-sample-801', 'Clients send an Idempotency-Key header; the server stores it with the response.'); localStorage.setItem('draft-work-sample-url-801', 'https://docs.example.org/refunds-design') })
+      await p.reload({ waitUntil: 'networkidle0' })
+      await new Promise((r) => setTimeout(r, 500))
+    } },
   { name: 'work-samples-empty', path: '/work-samples', override: [route('GET', '/candidates/me/work-samples', [])] },
   // Interviews, inbox, profile
   { name: 'interviews-empty', path: '/interviews', override: [route('GET', '/candidates/me/interviews', [])] },

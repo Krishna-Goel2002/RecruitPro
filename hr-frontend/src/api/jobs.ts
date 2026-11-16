@@ -8,7 +8,10 @@ export const jobsApi = {
   create: (body: JobInput) => api.post<JobStaff>('/jobs', body),
   update: (id: number, body: JobInput) => api.put<JobStaff>(`/jobs/${id}`, body),
   setStatus: (id: number, status: JobStatus) => api.patch<JobStaff>(`/jobs/${id}/status`, { status }),
+  /** DRAFT jobs without applications only (published jobs are closed instead). Audited. */
   remove: (id: number) => api.delete<null>(`/jobs/${id}`),
+  /** A new DRAFT with the job's fields and requirements, titled "… (copy)". */
+  duplicate: (id: number) => api.post<JobStaff>(`/jobs/${id}/duplicate`),
   /** Replace-all; increments requirementsVersion and re-matches when the job is PUBLISHED/ON_HOLD. */
   replaceRequirements: (id: number, requirements: RequirementInput[]) => api.put<JobStaff>(`/jobs/${id}/requirements`, { requirements }),
   addRequirement: (id: number, body: RequirementInput) => api.post<Requirement>(`/jobs/${id}/requirements`, body),

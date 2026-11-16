@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'
+import { errorMessage } from '../../api/client'
 import { qk } from '../../api/queryKeys'
 import type { Invitation } from '../../api/types'
 import { ActionDialog } from '../../components/ActionDialog'
@@ -30,6 +31,16 @@ export function AdminInvitationsPage() {
       void queryClient.invalidateQueries({ queryKey: qk.adminInvitations })
     },
   })
+  // Resend (pending) or invite again (expired, revoked): the server issues a new link and retires any open one.
+  const resend = useMutation({
+    mutationFn: (i: Invitation) => adminApi.invite(i.email, i.role),
+    onSuccess: (created, i) => {
+      const wasPending = invitationStatus(i) === 'PENDING'
+      toast({ tone: 'success', title: wasPending ? `Invitation sent again to ${created.email}` : `${created.email} is invited again`, body: wasPending ? 'A new link is on its way; the earlier one no longer works.' : `As ${roleLabel(created.role)}. The link is valid for 7 days.` })
+      void queryClient.invalidateQueries({ queryKey: qk.adminInvitations })
+    },
+    onError: (cause, i) => toast({ tone: 'danger', title: `Could not invite ${i.email}`, body: errorMessage(cause) }),
+  })
 
   const all = [...(list.data ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const pending = all.filter(i => invitationStatus(i) === 'PENDING')
@@ -44,7 +55,22 @@ export function AdminInvitationsPage() {
       key: 'exp', header: 'Expires', width: '130px', hideWhenStacked: true, sortValue: i => i.expiresAt,
       cell: i => { const s = invitationStatus(i); return s === 'PENDING' ? <time dateTime={i.expiresAt}>{relativeTime(i.expiresAt)}</time> : <span className="adm-faint">—</span> },
     },
-    { key: 'act', header: <span className="sr-only">Actions</span>, align: 'end', width: '100px', cell: i => (invitationStatus(i) === 'PENDING' ? <Button size="sm" variant="danger-ghost" onClick={() => { revoke.reset(); setRevoking(i) }}>Revoke</Button> : null) },
+    {
+      key: 'act', header: <span className="sr-only">Actions</span>, align: 'end', width: '200px',
+      cell: i => {
+        const status = invitationStatus(i)
+        if (status === 'ACCEPTED') return null
+        const busy = resend.isPending && resend.variables?.id === i.id
+        return (
+          <span className="cluster-tight adm-row-actions">
+            <Button size="sm" variant="secondary" loading={busy} onClick={() => resend.mutate(i)} aria-label={`${status === 'PENDING' ? 'Resend' : 'Invite again'}: ${i.email}`}>
+              {status === 'PENDING' ? 'Resend' : 'Invite again'}
+            </Button>
+            {status === 'PENDING' && <Button size="sm" variant="danger-ghost" onClick={() => { revoke.reset(); setRevoking(i) }} aria-label={`Revoke: ${i.email}`}>Revoke</Button>}
+          </span>
+        )
+      },
+    },
   ]
 
   return (
@@ -70,6 +96,7 @@ export function AdminInvitationsPage() {
         title={`Revoke the invitation for ${revoking?.email ?? ''}?`}
         description="The link stops working at once. You can invite the same address again later."
         confirmLabel="Revoke invitation"
+        cancelLabel="Keep invitation"
         tone="danger"
         busy={revoke.isPending}
         error={revoke.error}

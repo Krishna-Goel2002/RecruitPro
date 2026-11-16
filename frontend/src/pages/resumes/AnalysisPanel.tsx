@@ -7,7 +7,7 @@ import type { Resume, ResumeAnalysis, ResumeFact } from '../../api/types'
 import { ErrorState, FormError } from '../../components/Feedback'
 import { useNotify } from '../../components/Notices'
 import { Alert, Button, EvidenceLadder, Field, LoadingRegion, ProvenanceLine, Quote, Skeleton, SkeletonText, Textarea } from '../../design/components'
-import { Pencil, RefreshCw, ScrollText } from '../../design/icons'
+import { Pencil, RefreshCw, ScrollText, X } from '../../design/icons'
 import { formatDate } from '../../design/lib/format'
 import { stagger } from '../../design/motion'
 import { FACT_GROUPS, analysisErrorText, explainFlag, humanize } from '../../lib/labels'
@@ -255,6 +255,19 @@ function FactRow({ resumeId, fact, correctable }: { resumeId: number; fact: Resu
       </div>
       <div className="r-fact-side">
         <EvidenceLadder tier={fact.tier ?? 'RESUME_STATED'} audience="candidate" />
+        {correctable && !editing && claimed && (
+          // Before, the only way back was to type the text as read, character for character, into the editor.
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={X}
+            loading={save.isPending && save.variables === extracted}
+            disabled={save.isPending}
+            onClick={() => save.mutate(extracted)}
+          >
+            Remove my correction<span className="sr-only"> for {extracted}</span>
+          </Button>
+        )}
         {correctable && !editing && (
           <Button
             ref={editRef}
@@ -270,6 +283,7 @@ function FactRow({ resumeId, fact, correctable }: { resumeId: number; fact: Resu
           </Button>
         )}
       </div>
+      {!editing && save.isError && <FormError error={errorMessage(save.error)} />}
       <div className="r-fact-edit" aria-hidden={!editing}>
         <div>
           {editing && (

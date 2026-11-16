@@ -18,7 +18,7 @@ export function Breadcrumb({ items, className }: { items: Crumb[]; className?: s
           return (
             <li key={`${c.label}-${i}`} data-middle={i > 0 && i < items.length - 1 ? true : undefined}>
               {last || !c.to ? (
-                <span aria-current={last ? 'page' : undefined}>{c.label}</span>
+                <span aria-current={last ? 'page' : undefined} title={last ? c.label : undefined}>{c.label}</span>
               ) : (
                 <Link to={c.to}>{c.label}</Link>
               )}

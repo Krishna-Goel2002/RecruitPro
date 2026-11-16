@@ -245,6 +245,27 @@ public class AuthService {
         return toUserResponse(user);
     }
 
+    /** PATCH /api/v1/me: the caller's own first and last name, trimmed; audited (ACCOUNT_NAME_CHANGED). */
+    @Transactional
+    public UserResponse updateName(String firstName, String lastName) {
+        String first = firstName == null ? "" : firstName.trim();
+        String last = lastName == null ? "" : lastName.trim();
+        if (first.isEmpty() || last.isEmpty() || first.length() > 100 || last.length() > 100) {
+            throw new BadRequestException("First and last name are required (at most 100 characters each)");
+        }
+        CurrentUser current = securityUtils.currentUser();
+        User user = userRepository.findById(current.userId())
+                .orElseThrow(() -> new UnauthorizedException("Authentication is required"));
+        if (!first.equals(user.getFirstName()) || !last.equals(user.getLastName())) {
+            user.setFirstName(first);
+            user.setLastName(last);
+            userRepository.save(user);
+            auditService.recordFor(user.getOrganizationId(), user.getId(), user.getEmail(), AuditActions.ACCOUNT_NAME_CHANGED,
+                    "USER", String.valueOf(user.getId()), "Own name changed");
+        }
+        return toUserResponse(user);
+    }
+
     /** New sign-in session: access token plus the first refresh token of a new family. */
     public AuthSession createSession(User user) {
         String refreshToken = refreshTokenService.issueNewFamily(user);

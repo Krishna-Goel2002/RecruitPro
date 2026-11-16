@@ -41,6 +41,10 @@ public final class AuditActions {
     public static final String SCORECARD_UPDATED = "SCORECARD_UPDATED";
     // AS-BE (HR assistant): a confirmed proposed action; details start with "via=ASSISTANT".
     public static final String ASSISTANT_ACTION_CONFIRMED = "ASSISTANT_ACTION_CONFIRMED";
+    // Completeness sweep: deleting a draft is recorded (published things are closed or archived, never deleted).
+    public static final String JOB_DELETED = "JOB_DELETED";
+    public static final String WORK_SAMPLE_DELETED = "WORK_SAMPLE_DELETED";
+    public static final String ACCOUNT_NAME_CHANGED = "ACCOUNT_NAME_CHANGED";
 
     private AuditActions() {
     }

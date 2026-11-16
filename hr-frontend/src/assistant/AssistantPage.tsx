@@ -85,7 +85,7 @@ export function AssistantPage() {
                   aria-current={active ? 'true' : undefined}
                   onClick={() => { a.selectConversation(c.id); setHistoryOpen(false) }}
                 >
-                  <span className="as-history-name">{c.title || 'Untitled conversation'}</span>
+                  <span className="as-history-name" title={c.title || 'Untitled conversation'}>{c.title || 'Untitled conversation'}</span>
                   <span className="as-history-when">{relativeTime(c.updatedAt)}</span>
                 </button>
                 <IconButton size="sm" label={`Delete “${c.title || 'Untitled conversation'}”`} icon={Trash2} className="as-history-del" onClick={() => { remove.reset(); setToDelete(c) }} noTooltip />

@@ -691,6 +691,8 @@ textarea.ui-input[data-autogrow] { overflow-y: auto; }
   .ui-table[data-stack] tbody th[data-primary] { order: -1; flex: 0 0 100%; color: var(--fg-default); font-size: var(--text-body); line-height: var(--lh-body); }
   .ui-table[data-stack] tbody tr[data-row] > td:not([data-meta-first]):not(.ui-td-select)::before { content: '·'; margin: 0 6px; color: var(--fg-subtle); }
   .ui-table[data-stack] tbody [data-hide-stacked] { display: none; }
+  /* A cell with nothing in it (an action column with no action for this row) leaves no stray "·". */
+  .ui-table[data-stack] tbody tr[data-row] > td:empty { display: none; }
   .ui-table[data-stack] tbody tr.ui-tr-group > th { flex: 0 0 100%; display: block; padding: 8px 0; color: var(--fg-default); }
   .ui-table[data-stack] tbody .ui-td-select { position: absolute; left: 0; top: 12px; width: auto; }
   .ui-table[data-stack] tbody tr[data-selected] > :first-child { box-shadow: none; }

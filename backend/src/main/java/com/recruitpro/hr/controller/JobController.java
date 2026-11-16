@@ -69,6 +69,12 @@ public class JobController {
     @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER')")
     public ApiResponse<Void> delete(@PathVariable Long id) { service.delete(id); return ApiResponse.success("Draft job deleted"); }
 
+    @PostMapping("/{id}/duplicate")
+    @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER')")
+    public ApiResponse<JobStaffResponse> duplicate(@PathVariable Long id) {
+        return ApiResponse.success(service.duplicate(id), "Job copied as a draft");
+    }
+
     @PostMapping("/compile-requirements")
     @PreAuthorize("hasAnyRole('ADMIN','HR_MANAGER')")
     public ApiResponse<CompileRequirementsResponse> compileRequirements(@Valid @RequestBody CompileRequirementsRequest request) {

@@ -115,7 +115,7 @@ export function InterviewsTab({ jobId, detail, onSchedule }: { jobId: number; de
                 </div>
                 {i.scorecard && (
                   <div className="ap-row-more" aria-hidden={!open || undefined} {...(open ? {} : ({ inert: '' } as Record<string, string>))}>
-                    <div><div className="ap-row-more-inner"><ScorecardView scorecard={i.scorecard} questions={kit.data?.questions ?? []} /></div></div>
+                    <div><div className="ap-row-more-inner"><ScorecardView scorecard={i.scorecard} questions={kit.data?.questions ?? []} interviewId={i.id} canSeeRevisions={can('interviews.schedule')} /></div></div>
                   </div>
                 )}
               </li>
@@ -138,6 +138,7 @@ export function InterviewsTab({ jobId, detail, onSchedule }: { jobId: number; de
         description={cancelling ? `${slotLabel(cancelling.scheduledAt, cancelling.durationMinutes)} with ${cancelling.interviewerName}. Both are notified.` : ''}
         tone="danger"
         confirmLabel="Cancel interview"
+        cancelLabel="Keep interview"
         busy={cancel.isPending}
         error={cancel.error}
         onCancel={() => setCancelling(null)}

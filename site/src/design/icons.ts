@@ -12,14 +12,14 @@ import { LockOpen } from 'lucide-react'
 export type { LucideIcon as IconComponent } from 'lucide-react'
 
 export {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpDown, ArrowUpRight, Award, BadgeCheck, Bell, BriefcaseBusiness,
+  Archive, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpDown, ArrowUpRight, Award, BadgeCheck, Bell, BriefcaseBusiness,
   Building2, Calendar, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   ChevronUp, Circle, CircleAlert, CircleCheck, CircleMinus, Clock, Copy, Download, Ellipsis, ExternalLink, Eye, EyeOff,
   FileText, Filter, Github, Gitlab, Globe, Inbox, Info, KeyRound, KeySquare, LayoutGrid, LifeBuoy, Link2, ListChecks,
   History, LoaderCircle, LockKeyhole, LockOpen, LogOut, Mail, MailPlus, Maximize2, Menu, MessagesSquare, Minimize2, Monitor, Moon,
   PanelLeftClose, PanelLeftOpen, PanelRightClose, SendHorizontal, SquarePen,
   Pencil, Plus, RefreshCw, Rows3, Rows4, Scale, ScrollText, Search, Settings2, ShieldCheck, SlidersHorizontal, Sun,
-  Trash2, TriangleAlert, Upload, User, UserRoundCheck, Users, X,
+  Trash2, TriangleAlert, Undo2, Upload, User, UserRoundCheck, Users, X,
 } from 'lucide-react'
 
 /** Ownership-open ranking gate (alias, §7). */

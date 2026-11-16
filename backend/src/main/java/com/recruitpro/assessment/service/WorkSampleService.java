@@ -188,15 +188,102 @@ public class WorkSampleService {
             WorkSample saved = workSampleRepository.saveAndFlush(sample);
             return new WorkSampleResponse(saved.getId(), jobIdValue, saved.getTitle(), saved.getInstructions(),
                     saved.getTimeLimitMinutes(), views.rubric(saved.getRubricJson()), saved.getStatus(),
-                    saved.getCreatedAt(), saved.getUpdatedAt());
+                    saved.getCreatedAt(), saved.getUpdatedAt(), 0L);
         });
     }
 
-    /** GET /api/v1/hr/jobs/{jobId}/work-samples (ADMIN, HR_MANAGER, RECRUITER). */
+    /**
+     * POST /api/v1/hr/jobs/{jobId}/work-samples (ADMIN, HR_MANAGER): a work sample written by hand, stored as DRAFT.
+     * Same rules as an edit; no AI call, so it also works while drafting is unavailable.
+     */
+    @Transactional
+    public WorkSampleResponse create(Long jobId, WorkSampleUpdateRequest request) {
+        Job job = jobAccess.requireManageAccess(jobId);
+        if (job.getStatus() == JobStatus.CANCELLED) {
+            throw new BadRequestException("Cancelled jobs cannot get work samples");
+        }
+        List<RubricCriterion> rubric = validateRubric(request.rubric(), requirementIds(job));
+        CurrentUser actor = securityUtils.currentUser();
+        WorkSample sample = new WorkSample();
+        sample.setJob(job);
+        sample.setTitle(request.title().trim());
+        sample.setInstructions(request.instructions().trim());
+        sample.setTimeLimitMinutes(request.timeLimitMinutes());
+        sample.setRubricJson(views.writeRubric(rubric));
+        sample.setStatus(WorkSampleStatus.DRAFT);
+        sample.setCreatedByUserId(actor.userId());
+        return views.workSample(workSampleRepository.saveAndFlush(sample), 0L);
+    }
+
+    /**
+     * POST /api/v1/hr/jobs/{jobId}/work-samples/{id}/duplicate (ADMIN, HR_MANAGER): a DRAFT copy titled "… (copy)"
+     * of any sample of the job (the way to change an active one: copy, edit, activate, archive the old one).
+     * Requirement links to requirements the job no longer has become general criteria.
+     */
+    @Transactional
+    public WorkSampleResponse duplicate(Long jobId, Long workSampleId) {
+        Job job = jobAccess.requireManageAccess(jobId);
+        if (job.getStatus() == JobStatus.CANCELLED) {
+            throw new BadRequestException("Cancelled jobs cannot get work samples");
+        }
+        WorkSample source = findSample(job, workSampleId);
+        Set<Long> requirementIds = requirementIds(job);
+        List<RubricCriterion> rubric = new ArrayList<>();
+        for (RubricCriterion criterion : views.rubric(source.getRubricJson())) {
+            Long link = criterion.requirementId() != null && requirementIds.contains(criterion.requirementId())
+                    ? criterion.requirementId() : null;
+            rubric.add(new RubricCriterion(link, criterion.criterion(), criterion.anchors()));
+        }
+        CurrentUser actor = securityUtils.currentUser();
+        WorkSample copy = new WorkSample();
+        copy.setJob(job);
+        copy.setTitle(copyTitle(source.getTitle()));
+        copy.setInstructions(source.getInstructions());
+        copy.setTimeLimitMinutes(source.getTimeLimitMinutes());
+        copy.setRubricJson(views.writeRubric(rubric));
+        copy.setStatus(WorkSampleStatus.DRAFT);
+        copy.setCreatedByUserId(actor.userId());
+        return views.workSample(workSampleRepository.saveAndFlush(copy), 0L);
+    }
+
+    /**
+     * DELETE /api/v1/hr/jobs/{jobId}/work-samples/{id} (ADMIN, HR_MANAGER): DRAFT samples that were never assigned.
+     * Anything else is archived instead, so assignments, submissions and scores stay in the history. Audited
+     * (WORK_SAMPLE_DELETED).
+     */
+    @Transactional
+    public void delete(Long jobId, Long workSampleId) {
+        Job job = jobAccess.requireManageAccess(jobId);
+        WorkSample sample = findSample(job, workSampleId);
+        if (sample.getStatus() != WorkSampleStatus.DRAFT) {
+            throw new BadRequestException("Only draft work samples can be deleted; archive it instead so its "
+                    + "assignments and scores are kept");
+        }
+        if (assignmentRepository.existsByWorkSampleId(sample.getId())) {
+            throw new BadRequestException("This work sample has been assigned and cannot be deleted; archive it instead");
+        }
+        Long id = sample.getId();
+        String title = sample.getTitle();
+        try {
+            workSampleRepository.delete(sample);
+            workSampleRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            throw new BadRequestException("This work sample has been assigned and cannot be deleted; archive it instead");
+        }
+        auditService.record(AuditActions.WORK_SAMPLE_DELETED, "WORK_SAMPLE", String.valueOf(id),
+                "Draft work sample #" + id + " (" + limit(title, 200) + ") of job #" + job.getId() + " deleted");
+    }
+
+    /** GET /api/v1/hr/jobs/{jobId}/work-samples (ADMIN, HR_MANAGER, RECRUITER), each with its assignment count. */
     @Transactional(readOnly = true)
     public List<WorkSampleResponse> list(Long jobId) {
         Job job = jobAccess.requireJobReadAccess(jobId);
-        return workSampleRepository.findAllByJobIdOrderByIdAsc(job.getId()).stream().map(views::workSample).toList();
+        Map<Long, Long> counts = new HashMap<>();
+        for (Object[] row : assignmentRepository.countByWorkSampleForJob(job.getId())) {
+            counts.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+        }
+        return workSampleRepository.findAllByJobIdOrderByIdAsc(job.getId()).stream()
+                .map(sample -> views.workSample(sample, counts.getOrDefault(sample.getId(), 0L))).toList();
     }
 
     /** PUT /api/v1/hr/jobs/{jobId}/work-samples/{id} (ADMIN, HR_MANAGER): DRAFT samples only. */
@@ -213,7 +300,7 @@ public class WorkSampleService {
         sample.setInstructions(request.instructions().trim());
         sample.setTimeLimitMinutes(request.timeLimitMinutes());
         sample.setRubricJson(views.writeRubric(rubric));
-        return views.workSample(workSampleRepository.saveAndFlush(sample));
+        return response(workSampleRepository.saveAndFlush(sample));
     }
 
     /**
@@ -230,7 +317,7 @@ public class WorkSampleService {
         WorkSample sample = findSample(job, workSampleId);
         WorkSampleStatus target = request.status();
         if (sample.getStatus() == target) {
-            return views.workSample(sample);
+            return response(sample);
         }
         if (target == WorkSampleStatus.DRAFT && assignmentRepository.existsByWorkSampleId(sample.getId())) {
             throw new BadRequestException("This work sample has already been assigned and can no longer return to draft");
@@ -244,7 +331,7 @@ public class WorkSampleService {
                     sample.getStatus() == WorkSampleStatus.DRAFT ? requirementIds(job) : null);
         }
         sample.setStatus(target);
-        return views.workSample(workSampleRepository.saveAndFlush(sample));
+        return response(workSampleRepository.saveAndFlush(sample));
     }
 
     /**
@@ -483,6 +570,17 @@ public class WorkSampleService {
                     AnchorLevels.normalize(criterion.anchors(), null, MAX_ANCHOR)));
         }
         return result;
+    }
+
+    private WorkSampleResponse response(WorkSample sample) {
+        return views.workSample(sample, assignmentRepository.countByWorkSampleId(sample.getId()));
+    }
+
+    /** "Title (copy)", cut so that it stays within the 255-character column. */
+    static String copyTitle(String title) {
+        String base = title == null || title.isBlank() ? "Work sample" : title.trim();
+        String suffix = " (copy)";
+        return base.length() + suffix.length() > 255 ? base.substring(0, 255 - suffix.length()) + suffix : base + suffix;
     }
 
     private WorkSample findSample(Job job, Long workSampleId) {

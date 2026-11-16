@@ -23,6 +23,11 @@ export interface ActionDialogProps {
   children?: ReactNode
   comment?: ActionDialogComment
   confirmLabel: string
+  /**
+   * Label of the dismiss button (default "Cancel"). Use "Keep …" when the action itself is a cancellation
+   * ("Cancel interview"), so the two buttons never read alike.
+   */
+  cancelLabel?: string
   /** danger: a destructive confirmation (role alertdialog, Cancel focused first, solid danger button). */
   tone?: 'primary' | 'danger'
   busy?: boolean
@@ -41,7 +46,7 @@ export interface ActionDialogProps {
  * Cancel so Enter never destroys by accident.
  */
 export function ActionDialog({
-  open, title, description, children, comment, confirmLabel, tone = 'primary', busy, error, overline, size = 'md', focusCancel, onCancel, onConfirm,
+  open, title, description, children, comment, confirmLabel, cancelLabel = 'Cancel', tone = 'primary', busy, error, overline, size = 'md', focusCancel, onCancel, onConfirm,
 }: ActionDialogProps) {
   const [text, setText] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
@@ -94,7 +99,7 @@ export function ActionDialog({
       footer={
         <>
           <Button ref={cancelRef} variant="secondary" onClick={onCancel} disabled={busy}>
-            Cancel
+            {cancelLabel}
           </Button>
           <Button type="submit" form={formId} variant={danger ? 'danger' : 'primary'} loading={busy}>
             {confirmLabel}

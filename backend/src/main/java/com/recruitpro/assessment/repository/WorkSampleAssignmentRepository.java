@@ -18,6 +18,13 @@ public interface WorkSampleAssignmentRepository extends JpaRepository<WorkSample
 
     boolean existsByWorkSampleId(Long workSampleId);
 
+    long countByWorkSampleId(Long workSampleId);
+
+    /** [workSampleId, count] for every sample of a job that has assignments (work-sample list). */
+    @Query("select a.workSample.id, count(a) from WorkSampleAssignment a where a.workSample.job.id = :jobId "
+            + "group by a.workSample.id")
+    List<Object[]> countByWorkSampleForJob(@Param("jobId") Long jobId);
+
     boolean existsByWorkSampleIdAndApplicationId(Long workSampleId, Long applicationId);
 
     /** Every assignment of a job's work samples, newest first (HR assignment list). */

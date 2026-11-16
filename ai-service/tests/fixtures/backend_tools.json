@@ -1,0 +1,501 @@
+[
+  {
+    "name": "list_jobs",
+    "description": "List the organisation's jobs (newest first, at most 20) with status, location and applicant counts. Use it to find a job id by title.",
+    "capability": "JOBS_READ",
+    "writes": false,
+    "args": [
+      {
+        "name": "status",
+        "type": "ENUM",
+        "required": false,
+        "values": [
+          "DRAFT",
+          "PUBLISHED",
+          "ON_HOLD",
+          "CLOSED",
+          "CANCELLED"
+        ],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "search",
+        "type": "STRING",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": 100,
+        "hint": "part of the title"
+      }
+    ]
+  },
+  {
+    "name": "job_insights",
+    "description": "How a job posting is doing: pipeline counts per status, ranking groups, top applicants by verified coverage (application codes), must-have requirements most often unverified, pending matching, work samples awaiting scoring, average days in the current stage.",
+    "capability": "JOBS_READ",
+    "writes": false,
+    "args": [
+      {
+        "name": "jobId",
+        "type": "INTEGER",
+        "required": true,
+        "values": [],
+        "min": 1,
+        "max": null,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "applicant_insights",
+    "description": "Everything about one applicant by application code: evidence per requirement (tier, status, quoted evidence), ranking gates, verification verdicts, work sample and interview results, open questions. Interviewers: only applicants they interview.",
+    "capability": "ANY_STAFF",
+    "writes": false,
+    "args": [
+      {
+        "name": "applicationCode",
+        "type": "APPLICATION_CODE",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "compare_applicants",
+    "description": "Compare 2 to 4 applicants of the same job requirement by requirement (status and evidence tier), with verified and claimed coverage, ranking group and status.",
+    "capability": "JOBS_READ",
+    "writes": false,
+    "args": [
+      {
+        "name": "applicationCodes",
+        "type": "APPLICATION_CODES",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": 4,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "attention_digest",
+    "description": "What needs attention today: new applicants awaiting a first decision, work samples awaiting a score, pending matching, application deadlines in the next 7 days, your interviews without a scorecard and your interviews in the next 7 days.",
+    "capability": "JOBS_READ",
+    "writes": false,
+    "args": []
+  },
+  {
+    "name": "my_interviews",
+    "description": "Interviews assigned to me (soonest first): application code, job, time, status and whether my scorecard is submitted.",
+    "capability": "ANY_STAFF",
+    "writes": false,
+    "args": [
+      {
+        "name": "upcomingOnly",
+        "type": "BOOLEAN",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": "only scheduled interviews in the future"
+      }
+    ]
+  },
+  {
+    "name": "fairness_summary",
+    "description": "Fairness (adverse impact) summary of a job, or of the whole organisation when jobId is omitted (administrators): flagged stages, impact ratios, survey response rate.",
+    "capability": "JOBS_MANAGE",
+    "writes": false,
+    "args": [
+      {
+        "name": "jobId",
+        "type": "INTEGER",
+        "required": false,
+        "values": [],
+        "min": 1,
+        "max": null,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "explain",
+    "description": "Short built-in help on how RecruitPro works (verified coverage, evidence tiers, ranking groups, knockouts, blind review, work samples, interview kits, fairness, verification, the assistant).",
+    "capability": "ANY_STAFF",
+    "writes": false,
+    "args": [
+      {
+        "name": "topic",
+        "type": "ENUM",
+        "required": true,
+        "values": [
+          "VERIFIED_COVERAGE",
+          "EVIDENCE_TIERS",
+          "RANKING_GROUPS",
+          "KNOCKOUTS",
+          "BLIND_REVIEW",
+          "WORK_SAMPLES",
+          "INTERVIEW_KITS",
+          "FAIRNESS_REPORT",
+          "VERIFICATION",
+          "ASSISTANT"
+        ],
+        "min": null,
+        "max": null,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "create_job",
+    "description": "Create a job posting from the draft fields (shown as a preview with wording warnings; the user chooses Save as draft or Publish). Ask for missing required fields first.",
+    "capability": "JOBS_MANAGE",
+    "writes": true,
+    "args": [
+      {
+        "name": "title",
+        "type": "STRING",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": 255,
+        "hint": null
+      },
+      {
+        "name": "department",
+        "type": "STRING",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": 100,
+        "hint": null
+      },
+      {
+        "name": "location",
+        "type": "STRING",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": 255,
+        "hint": null
+      },
+      {
+        "name": "jobType",
+        "type": "ENUM",
+        "required": true,
+        "values": [
+          "FULL_TIME",
+          "PART_TIME",
+          "CONTRACT",
+          "INTERNSHIP"
+        ],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "experienceLevel",
+        "type": "ENUM",
+        "required": true,
+        "values": [
+          "ENTRY",
+          "MID",
+          "SENIOR",
+          "LEAD",
+          "EXECUTIVE"
+        ],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "salaryMin",
+        "type": "NUMBER",
+        "required": false,
+        "values": [],
+        "min": 0,
+        "max": 9999999999,
+        "hint": null
+      },
+      {
+        "name": "salaryMax",
+        "type": "NUMBER",
+        "required": false,
+        "values": [],
+        "min": 0,
+        "max": 9999999999,
+        "hint": null
+      },
+      {
+        "name": "openings",
+        "type": "INTEGER",
+        "required": false,
+        "values": [],
+        "min": 1,
+        "max": 10000,
+        "hint": "default 1"
+      },
+      {
+        "name": "deadline",
+        "type": "DATE_TIME",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": "application deadline in the future"
+      },
+      {
+        "name": "summary",
+        "type": "STRING",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": 10000,
+        "hint": null
+      },
+      {
+        "name": "responsibilities",
+        "type": "STRING_LIST",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": 30,
+        "hint": null
+      },
+      {
+        "name": "description",
+        "type": "STRING",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": 50000,
+        "hint": "full description; built from summary and responsibilities when omitted"
+      },
+      {
+        "name": "requirements",
+        "type": "REQUIREMENTS",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "publish",
+        "type": "BOOLEAN",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": "default false (save as draft)"
+      }
+    ]
+  },
+  {
+    "name": "update_job_status",
+    "description": "Change a job's status: PUBLISHED (publish or resume), ON_HOLD, CLOSED or CANCELLED (drafts only).",
+    "capability": "JOBS_MANAGE",
+    "writes": true,
+    "args": [
+      {
+        "name": "jobId",
+        "type": "INTEGER",
+        "required": true,
+        "values": [],
+        "min": 1,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "status",
+        "type": "ENUM",
+        "required": true,
+        "values": [
+          "PUBLISHED",
+          "ON_HOLD",
+          "CLOSED",
+          "CANCELLED"
+        ],
+        "min": null,
+        "max": null,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "decide_application",
+    "description": "Record a decision on an application: SHORTLIST, REJECT (reason required), MOVE_TO_INTERVIEW or SELECT.",
+    "capability": "JOBS_MANAGE",
+    "writes": true,
+    "args": [
+      {
+        "name": "applicationCode",
+        "type": "APPLICATION_CODE",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "decision",
+        "type": "ENUM",
+        "required": true,
+        "values": [
+          "SHORTLIST",
+          "REJECT",
+          "MOVE_TO_INTERVIEW",
+          "SELECT"
+        ],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "reason",
+        "type": "STRING",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": 2000,
+        "hint": "required for REJECT"
+      }
+    ]
+  },
+  {
+    "name": "assign_work_sample",
+    "description": "Assign an active work sample of the job to a shortlisted or interviewing applicant (the job's only active sample when workSampleId is omitted).",
+    "capability": "JOBS_MANAGE",
+    "writes": true,
+    "args": [
+      {
+        "name": "applicationCode",
+        "type": "APPLICATION_CODE",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "workSampleId",
+        "type": "INTEGER",
+        "required": false,
+        "values": [],
+        "min": 1,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "dueAt",
+        "type": "DATE_TIME",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": "latest start time, in the future"
+      }
+    ]
+  },
+  {
+    "name": "schedule_interview",
+    "description": "Schedule an interview for a shortlisted or interviewing applicant at a future time with a staff member (interviewer: name or e-mail, or interviewerUserId; default: me); moves a shortlisted application to interviewing.",
+    "capability": "JOBS_MANAGE",
+    "writes": true,
+    "args": [
+      {
+        "name": "applicationCode",
+        "type": "APPLICATION_CODE",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "scheduledAt",
+        "type": "DATE_TIME",
+        "required": true,
+        "values": [],
+        "min": null,
+        "max": null,
+        "hint": "in the future"
+      },
+      {
+        "name": "interviewerUserId",
+        "type": "INTEGER",
+        "required": false,
+        "values": [],
+        "min": 1,
+        "max": null,
+        "hint": null
+      },
+      {
+        "name": "interviewer",
+        "type": "STRING",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": 200,
+        "hint": "staff name or e-mail; default: me"
+      },
+      {
+        "name": "durationMinutes",
+        "type": "INTEGER",
+        "required": false,
+        "values": [],
+        "min": 5,
+        "max": 480,
+        "hint": "default 45"
+      },
+      {
+        "name": "location",
+        "type": "STRING",
+        "required": false,
+        "values": [],
+        "min": null,
+        "max": 500,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "generate_work_sample",
+    "description": "Draft a work sample (task with an anchored 1-4 rubric) for a job; saved as a draft to review and activate.",
+    "capability": "JOBS_MANAGE",
+    "writes": true,
+    "args": [
+      {
+        "name": "jobId",
+        "type": "INTEGER",
+        "required": true,
+        "values": [],
+        "min": 1,
+        "max": null,
+        "hint": null
+      }
+    ]
+  },
+  {
+    "name": "generate_interview_kit",
+    "description": "Draft an interview kit (structured questions with anchored ratings per requirement) for a job; replaces the job's current kit.",
+    "capability": "JOBS_MANAGE",
+    "writes": true,
+    "args": [
+      {
+        "name": "jobId",
+        "type": "INTEGER",
+        "required": true,
+        "values": [],
+        "min": 1,
+        "max": null,
+        "hint": null
+      }
+    ]
+  }
+]

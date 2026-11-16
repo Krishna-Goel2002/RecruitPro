@@ -18,7 +18,8 @@ import { relativeTime } from '../design/lib/format'
 import { stagger } from '../design/motion'
 import { EnterList } from '../components/EnterList'
 import { humanize } from '../lib/labels'
-import { ledgerQuery } from '../lib/queries'
+import { useScrollToHash } from '../lib/hooks'
+import { ledgerQuery, referencesQuery } from '../lib/queries'
 import {
   NOT_FOUND_EXPLANATION, OAUTH_CONNECTED_TEXT, isRunActive, noOwnershipCheckReason, oauthErrorMessage, ownershipMethodLabel, ownershipMethodsFor,
   runErrorText, sourceKindLabel,
@@ -59,6 +60,7 @@ export function VerificationPage() {
   const [params, setParams] = useSearchParams()
   const [arrival, setArrival] = useState<ArrivalMessage | null>(() => arrivalMessage(params))
   const ledger = useQuery(ledgerQuery)
+  const references = useQuery(referencesQuery)
 
   const patchParams = useCallback(
     (patch: Record<string, string | null>) => {
@@ -140,6 +142,10 @@ export function VerificationPage() {
     const first = awaiting.find(v => v.sourceLabel === label) ?? awaiting[0]
     patchParams({ add: null, step: null, kind: null, source: null, review: first ? String(first.id) : null })
   }
+
+  // "See references" in the inbox links to /verification#references, the last section: scroll there once the
+  // sections above it have their final height.
+  useScrollToHash(!ledger.isPending && !sources.query.isPending && !references.isPending)
 
   const stats = ledgerStats(ledger.data)
   const sourceList = sources.query.data ?? []

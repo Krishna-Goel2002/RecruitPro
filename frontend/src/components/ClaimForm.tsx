@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../api/client'
 import { claimsApi } from '../api/endpoints'
@@ -6,6 +6,7 @@ import { queryKeys } from '../api/queryKeys'
 import type { CandidateClaim, ClaimType } from '../api/types'
 import { Button, Field, Input, Select, Textarea } from '../design/components'
 import { CLAIM_TYPES, CLAIM_TYPE_LABEL } from '../lib/labels'
+import { useBeforeUnload } from '../lib/hooks'
 import { isHttpUrl } from '../lib/url'
 import { FormError } from './Feedback'
 import { fieldErrorMap, focusFirstInvalid } from './Form'
@@ -22,19 +23,29 @@ interface ClaimFormProps {
   onCancel?: () => void
   /** Class for the actions row (drawers make it sticky). */
   actionsClassName?: string
+  /** Something was typed that has not been saved (the drawer asks before closing). */
+  onDirtyChange?: (dirty: boolean) => void
 }
 
 /**
  * Creates a SELF_CLAIMED claim with an optional evidence link (POST /candidates/me/claims). The new claim is put at
  * the top of the claims list straight away (optimistic) and the list is refetched; matching re-runs on the server.
  */
-export function ClaimForm({ initialType = 'SKILL', initialValue = '', submitLabel = 'Add claim', onCreated, onCancel, actionsClassName }: ClaimFormProps) {
+export function ClaimForm({ initialType = 'SKILL', initialValue = '', submitLabel = 'Add claim', onCreated, onCancel, actionsClassName, onDirtyChange }: ClaimFormProps) {
   const queryClient = useQueryClient()
   const formRef = useRef<HTMLFormElement>(null)
   const [claimType, setClaimType] = useState<ClaimType>(initialType)
   const [value, setValue] = useState(initialValue)
   const [evidenceUrl, setEvidenceUrl] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const dirty = (value.trim() !== '' && value !== initialValue) || evidenceUrl.trim() !== ''
+  useBeforeUnload(dirty)
+  const dirtyChange = useRef(onDirtyChange)
+  dirtyChange.current = onDirtyChange
+  useEffect(() => {
+    dirtyChange.current?.(dirty)
+  }, [dirty])
+  useEffect(() => () => dirtyChange.current?.(false), [])
 
   const create = useMutation({
     mutationFn: () => claimsApi.create({ claimType, value: value.trim(), evidenceUrl: evidenceUrl.trim() || null }),

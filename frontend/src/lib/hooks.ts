@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import brand from '../design/brand/active'
 import { stagger } from '../design/motion'
 
@@ -49,6 +50,31 @@ export function useBeforeUnload(when: boolean): void {
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [])
+}
+
+/**
+ * Scrolls to the element named by the URL hash (`/verification#references`) once the page content is `ready`.
+ * React Router does not do this, and the shell scrolls to the top after each navigation, so links with a hash used to
+ * land at the top of the page. Runs once per hash; the target's heading (or the target) takes focus.
+ */
+export function useScrollToHash(ready: boolean): void {
+  const { hash } = useLocation()
+  const done = useRef<string | null>(null)
+  useEffect(() => {
+    if (!ready || !hash || done.current === hash) return
+    const id = decodeURIComponent(hash.slice(1))
+    // After the shell's own scroll-to-top (a 0 ms timer on navigation).
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(id)
+      if (!target) return
+      done.current = hash
+      target.scrollIntoView?.({ block: 'start' })
+      const heading = target.querySelector<HTMLElement>('h2, h3') ?? target
+      if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1')
+      heading.focus({ preventScroll: true })
+    }, 50)
+    return () => window.clearTimeout(timer)
+  }, [ready, hash])
 }
 
 /**

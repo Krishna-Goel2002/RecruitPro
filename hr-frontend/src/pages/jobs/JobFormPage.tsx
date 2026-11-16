@@ -16,6 +16,7 @@ import { formatDate, formatNumber, plural, relativeTime } from '../../design/lib
 import { ArrowLeft, ArrowRight, BriefcaseBusiness, Check, CircleAlert, FileText, Icon } from '../../design/icons'
 import { fromLocalInput, humanize, toLocalInput } from '../../lib/format'
 import { clearDraft, readDraft, writeDraft } from '../../lib/localDraft'
+import { useLeaveGuard } from '../../lib/leaveGuard'
 import { useSearchState } from '../../lib/useSearchState'
 import { useAuth } from '../../auth/AuthContext'
 import { CompileSkeleton, CompileSuggestions } from './CompileSuggestions'
@@ -307,12 +308,8 @@ function JobWizard({ job }: { job?: JobStaff }) {
   useEffect(() => {
     if (startedAsDraft.current && job?.status === 'PUBLISHED') navigate(`/jobs/${job.id}`, { replace: true })
   }, [job?.status, job?.id, navigate])
-  useEffect(() => {
-    if (!unsaved) return
-    const onUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
-    window.addEventListener('beforeunload', onUnload)
-    return () => window.removeEventListener('beforeunload', onUnload)
-  }, [unsaved])
+  // Tab close/reload asks the browser; in-app links (sidebar, breadcrumb, Cancel) ask in a dialog.
+  const leaveGuard = useLeaveGuard(unsaved)
 
   // ------------------------------------------------------------------ compiler
   const compile = useMutation({
@@ -595,6 +592,7 @@ function JobWizard({ job }: { job?: JobStaff }) {
       </ActionDialog>
 
       {actions.dialog}
+      {leaveGuard}
     </div>
   )
 }

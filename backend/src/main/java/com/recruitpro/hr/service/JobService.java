@@ -176,10 +176,67 @@ public class JobService {
         return staffResponse(job);
     }
 
+    /**
+     * DELETE /api/v1/jobs/{id}: DRAFT jobs without applications only (a draft was never published, so it has none;
+     * the check guards the history anyway). Published jobs are closed instead, never deleted. Audited (JOB_DELETED);
+     * requirements, work samples and the interview kit go with it (ON DELETE CASCADE).
+     */
     public void delete(Long id) {
-        Job job = jobAccess.requireManageAccess(id);
-        if (job.getStatus() != JobStatus.DRAFT) throw new BadRequestException("Only draft jobs can be deleted");
+        Job job = lockedJob(id);
+        if (job.getStatus() != JobStatus.DRAFT)
+            throw new BadRequestException("Only draft jobs can be deleted; close the job instead so its applicants and history are kept");
+        if (applicationRepository.countByJobId(job.getId()) > 0)
+            throw new BadRequestException("This job has applications and cannot be deleted; close it instead");
+        String title = job.getTitle();
+        Long jobId = job.getId();
         jobRepository.delete(job);
+        jobRepository.flush();
+        auditService.record(AuditActions.JOB_DELETED, "JOB", String.valueOf(jobId), "Draft job #" + jobId + " (" + title + ") deleted");
+    }
+
+    /**
+     * POST /api/v1/jobs/{id}/duplicate: a new DRAFT with the job's fields and requirements (in order), titled
+     * "… (copy)". Any status can be copied (re-opening a closed role is a copy). A deadline already in the past is
+     * dropped. Work samples, the interview kit and applications are not copied.
+     */
+    public JobStaffResponse duplicate(Long id) {
+        Job source = jobAccess.requireManageAccess(id);
+        CurrentUser current = jobAccess.requireJobManager();
+        User user = userRepository.findById(current.userId())
+                .orElseThrow(() -> new UnauthorizedException("Authentication is required"));
+        HRProfile profile = hrProfileService.ensureProfileFor(user).orElseThrow(() ->
+                new BadRequestException("Your account does not have an HR profile. Contact an administrator to provision one."));
+        Job copy = new Job();
+        copy.setCreatedBy(profile);
+        copy.setOrganizationId(source.getOrganizationId());
+        LocalDateTime deadline = source.getDeadline() != null && source.getDeadline().isAfter(UtcTime.now()) ? source.getDeadline() : null;
+        apply(copy, copyTitle(source.getTitle()), source.getDescription(), source.getDepartment(), source.getLocation(),
+                source.getJobType(), source.getExperienceLevel(), source.getMinimumSalary(), source.getMaximumSalary(),
+                Math.max(1, source.getVacancies()), deadline);
+        Job saved = jobRepository.save(copy);
+        int position = 0;
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(source.getId())) {
+            JobRequirement clone = new JobRequirement();
+            clone.setJob(saved);
+            clone.setType(requirement.getType());
+            clone.setDescription(requirement.getDescription());
+            clone.setMandatory(requirement.isMandatory());
+            clone.setKnockout(requirement.isKnockout());
+            clone.setMinimumYears(requirement.getMinimumYears());
+            clone.setAlternatives(requirement.getAlternatives() == null ? new ArrayList<>() : new ArrayList<>(requirement.getAlternatives()));
+            clone.setProficiency(requirement.getProficiency());
+            clone.setDisplayOrder(position++);
+            requirementRepository.save(clone);
+        }
+        requirementRepository.flush();
+        return staffResponse(saved);
+    }
+
+    /** "Title (copy)", cut so that it stays within the 255-character column. */
+    static String copyTitle(String title) {
+        String base = title == null || title.isBlank() ? "Untitled job" : title.trim();
+        String suffix = " (copy)";
+        return base.length() + suffix.length() > 255 ? base.substring(0, 255 - suffix.length()) + suffix : base + suffix;
     }
 
     public RequirementResponse addRequirement(Long jobId, RequirementInput request) {

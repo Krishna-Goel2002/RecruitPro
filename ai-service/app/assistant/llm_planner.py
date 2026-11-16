@@ -36,7 +36,9 @@ Step types:
 {"type":"propose","action":"<write tool>","args":{...},"summary":"<one line describing the change>"}
 {"type":"answer","text":"<concise answer, markdown-lite, <=120 words>"}
 Rules:
-1. Use only tools listed in TOOLS, with args that match their schema exactly. Read tools (writes=false) only via tool_call.
+1. Use only tools listed in TOOLS, with exactly the arg names listed there and values of the stated type (an
+   "application code" is a string like "A-3014"; date-times are ISO-8601 like "2026-11-20T15:00"; "one of" means one
+   of those exact values). Leave out optional args you do not know. Read tools (writes=false) only via tool_call.
    Write tools (writes=true) only via propose: the user confirms every change; never say a change was made.
 2. Propose a change only when the user's own latest message asks for it. If something needed is missing or ambiguous, ask.
 3. Do not repeat a tool call whose result is already in OBSERVATIONS; answer from it instead.
@@ -132,7 +134,7 @@ def validate_step(raw: dict[str, Any], request: StepRequest) -> dict[str, Any]:
         tool, args = raw.get("tool"), raw.get("args", {})
         if not isinstance(tool, str) or not catalogue.reads(tool):
             raise PlanRejected(f"tool {tool!r} is not a read tool in the catalogue")
-        problem = catalogue.validate_args(tool, args)
+        args, problem = catalogue.normalise_args(tool, args)  # synonyms renamed, unknown args dropped
         if problem:
             raise PlanRejected(problem)
         if any(item.tool == tool and item.args == args for item in request.observations):
@@ -153,7 +155,7 @@ def validate_step(raw: dict[str, Any], request: StepRequest) -> dict[str, Any]:
         action, args, summary = raw.get("action"), raw.get("args", {}), raw.get("summary")
         if not isinstance(action, str) or not catalogue.writes(action) or action == "create_job":
             raise PlanRejected(f"action {action!r} is not a write tool the planner may propose")
-        problem = catalogue.validate_args(action, args)
+        args, problem = catalogue.normalise_args(action, args)
         if problem:
             raise PlanRejected(problem)
         if not isinstance(summary, str) or not 1 <= len(summary.strip()) <= 300:

@@ -14,7 +14,7 @@ import { NotFoundPage } from './pages/StatusPages'
 import { AcceptInvitePage, ForgotPasswordPage, JobFormPage, ResetPasswordPage, SignupPage, SsoCompletePage, VerifyEmailPage, WelcomePage } from './pages/lazyRoutes'
 // Admin and account-settings screens are code-split too (bundle budget).
 import { AssistantPage } from './pages/lazyRoutes'
-import { AdminAuditPage, AdminDashboardPage, AdminFairnessPage, AdminInvitationsPage, AdminJobsPage, AdminOrganizationPage, AdminUsersPage, AdminVerificationPage, ChangePasswordPage, SecurityPage } from './pages/lazyRoutes'
+import { AdminAuditPage, AdminDashboardPage, AdminFairnessPage, AdminInvitationsPage, AdminJobsPage, AdminOrganizationPage, AdminUsersPage, AdminVerificationPage, ChangePasswordPage, NamePage, SecurityPage } from './pages/lazyRoutes'
 
 // Living style guide (hidden route, not linked from navigation). Lazy, so it never weighs on the app bundle.
 const DesignGallery = lazy(() => import('./design/gallery/DesignGallery'))
@@ -52,6 +52,7 @@ export default function App() {
         <Route path="assistant" element={<RequireAuth capability="account"><AssistantPage /></RequireAuth>} />
 
         <Route path="notifications" element={<RequireAuth capability="account"><NotificationsPage /></RequireAuth>} />
+        <Route path="account/name" element={<RequireAuth capability="account"><NamePage /></RequireAuth>} />
         <Route path="account/password" element={<RequireAuth capability="account"><ChangePasswordPage /></RequireAuth>} />
         <Route path="account/security" element={<RequireAuth capability="account"><SecurityPage /></RequireAuth>} />
 

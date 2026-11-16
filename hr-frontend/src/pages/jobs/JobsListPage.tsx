@@ -126,7 +126,7 @@ export function JobsListPage() {
       ),
     },
     { key: 'department', header: 'Department', cell: job => job.department, hideWhenStacked: true },
-    { key: 'location', header: 'Location', cell: job => <span className="hra-clamp">{job.location}</span>, hideWhenStacked: true },
+    { key: 'location', header: 'Location', cell: job => <span className="hra-clamp" title={job.location}>{job.location}</span>, hideWhenStacked: true },
     { key: 'status', header: 'Status', width: '120px', cell: job => <JobStatusBadge status={job.status} /> },
     {
       key: 'applicants',

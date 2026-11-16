@@ -124,7 +124,9 @@ function FileRow({ resume, newest, selected, onSelect }: { resume: Resume; newes
       <button type="button" className="r-file" aria-current={selected ? 'true' : undefined} onClick={onSelect}>
         <Icon icon={FileText} size={16} className="r-file-icon" />
         <span className="r-file-text">
-          <span className="r-file-name">{resume.originalFilename}</span>
+          <span className="r-file-name" title={resume.originalFilename}>
+            {resume.originalFilename}
+          </span>
           <span className="c-meta">
             {formatFileSize(resume.fileSize)} · {newest ? 'newest, ' : ''}uploaded {relativeTime(resume.uploadedAt)}
           </span>

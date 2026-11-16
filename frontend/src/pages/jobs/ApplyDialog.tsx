@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiError } from '../../api/client'
+import { ApiError, errorMessage } from '../../api/client'
 import { jobsApi, resumesApi } from '../../api/endpoints'
 import { queryKeys } from '../../api/queryKeys'
 import type { Application, JobPublic, Resume } from '../../api/types'
 import { useCurrentUser } from '../../auth/AuthProvider'
 import { ErrorState, Facts, FormError } from '../../components/Feedback'
+import { useNotify } from '../../components/Notices'
 import {
   Alert, Button, Dialog, EvidenceLadder, Field, FileDropzone, RadioCard, RadioGroup, Skeleton, Stepper, Textarea, Timeline, buttonProps,
 } from '../../design/components'
@@ -19,6 +20,8 @@ import { ledgerQuery, newestFirst, recentApplicationsQuery, resumesQuery } from 
 const COVER_LETTER_MAX = 10000
 const RESUME_MAX = 10 * 1024 * 1024
 const RESUME_ACCEPT = '.pdf,.doc,.docx'
+/** Resumes offered in the dialog; older ones stay on the Resume page. */
+const RESUME_CHOICES = 4
 
 type Step = 0 | 1 | 2
 
@@ -28,6 +31,7 @@ type Step = 0 | 1 | 2
  */
 export function ApplyDialog({ job, matches, open, onClose }: { job: JobPublic; matches: RequirementMatch[]; open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient()
+  const notify = useNotify()
   const user = useCurrentUser()
   const [step, setStep] = useState<Step>(0)
   const [resumeId, setResumeId] = useState<number | null>(null)
@@ -171,12 +175,12 @@ export function ApplyDialog({ job, matches, open, onClose }: { job: JobPublic; m
                 maxSize={RESUME_MAX}
                 onFiles={files => upload.mutate(files[0])}
                 files={upload.isPending && upload.variables ? [{ id: 'up', name: upload.variables.name, size: upload.variables.size, progress: 0.5 }] : []}
-                error={upload.error ? (upload.error as Error).message : undefined}
+                error={upload.error ? errorMessage(upload.error) : undefined}
               />
             </div>
           ) : (
             <RadioGroup legend="Resume to send" value={resumeId === null ? undefined : String(resumeId)} onChange={v => setResumeId(Number(v))}>
-              {sorted.slice(0, 4).map((resume, i) => (
+              {sorted.slice(0, RESUME_CHOICES).map((resume, i) => (
                 <RadioCard
                   key={resume.id}
                   value={String(resume.id)}
@@ -186,6 +190,11 @@ export function ApplyDialog({ job, matches, open, onClose }: { job: JobPublic; m
                 />
               ))}
             </RadioGroup>
+          )}
+          {sorted.length > RESUME_CHOICES && (
+            <p className="ap-org">
+              Showing your {RESUME_CHOICES} newest of {sorted.length} resumes. Older files are on the <Link to="/resumes">Resume page</Link>.
+            </p>
           )}
           {upload.isSuccess && <Alert tone="success">{upload.data.originalFilename} uploaded and selected.</Alert>}
 
@@ -209,6 +218,22 @@ export function ApplyDialog({ job, matches, open, onClose }: { job: JobPublic; m
               onChange={e => cover.setValue(e.target.value)}
             />
           </Field>
+          {cover.value.trim() && (
+            <div>
+              {/* The draft autosaves and comes back on every visit: this is the way to start over (Undo in the toast). */}
+              <Button
+                variant="link"
+                size="sm"
+                onClick={() => {
+                  const previous = cover.value
+                  cover.clear()
+                  notify('info', 'Cover letter cleared', { body: 'The saved draft was removed too.', action: { label: 'Undo', onClick: () => cover.setValue(previous) } })
+                }}
+              >
+                Clear cover letter
+              </Button>
+            </div>
+          )}
           <FormError error={formError} />
         </div>
       )}
@@ -233,7 +258,7 @@ export function ApplyDialog({ job, matches, open, onClose }: { job: JobPublic; m
               <ul className="ap-evidence">
                 {matches.map(m => (
                   <li key={m.requirement.id}>
-                    <span>{m.requirement.description}</span>
+                    <span title={m.requirement.description}>{m.requirement.description}</span>
                     <EvidenceLadder tier={m.tier} audience="candidate" animate={false} />
                   </li>
                 ))}

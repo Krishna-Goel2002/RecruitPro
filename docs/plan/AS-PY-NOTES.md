@@ -9,7 +9,7 @@ reviewed it, fixed the gaps listed under "Resume run", and wrote the docs and en
 
 | Check | Result |
 |---|---|
-| `cd ai-service && python3 -B -m pytest -q -p no:cacheprovider` | all pass (91 assistant tests in `tests/test_assistant.py`, no network) |
+| `cd ai-service && python3 -B -m pytest -q -p no:cacheprovider` | 434 pass (95 in `tests/test_assistant.py`, 68 in `tests/test_backend_contract.py`; no network) |
 | `python3 -B -m eval.run --check` | CHECK PASSED (unchanged resume/matching metrics) |
 | `python3 -B -m eval.assistant_intents --check` | 204 utterances, offline intent accuracy 1.000 (threshold 0.9); also asserted in pytest |
 
@@ -63,11 +63,12 @@ Request (`StepRequest`): as plan 3.1. Limits: 1-20 messages of at most 4000 char
 Over-limit requests are 422. Additive optional context fields: `applicationId` (used when it belongs to
 `applicationCode`) and `today` (`YYYY-MM-DD`, the user's local date for relative dates; the server date otherwise).
 
-Argument schemas in `tools[].args` may be strings (`"integer, required"`, `"string, optional, one of A|B|C"`) or
-objects (`{"type": "integer", "required": true, "enum": [...]}`). The planner maps its slots to whatever names the
-catalogue declares (`jobId`/`job_id`/`id`, `applicationId`/`applicantId`, `applicationIds`, `decision`/`action`,
-`reason`/`comment`, `startsAt`/`scheduledAt`, `durationMinutes`, `dueInDays`/`days`, ... see `catalogue._ALIASES`).
-An application id is derived from the code (`A-3014` -> 3014), matching the backend's `"A-" + applicationId`.
+Argument schemas in `tools[].args` are the backend's `ArgSpec.describe()` texts (`"integer, required, 1.."`,
+`"string, optional, one of A|B|C, hint"`, `"application code like A-3014, required"`, `"list of application codes,
+required"`, `"ISO-8601 date-time, optional, ..."`, `"string or list of strings, optional"`, `"list of {type, ...}"`),
+short forms (`"array of integer, required"`) or objects (`{"type": "integer", "required": true, "enum": [...],
+"format": "date-time", "minimum": 1}`). The catalogue in the request is the contract (section 9): every emitted tool
+call or proposal uses only its tool names and argument names, converted to the declared type and format.
 
 Response: exactly one of the four step types plus `meta: {planner, model, fallback}`:
 
@@ -106,13 +107,17 @@ warnings, missing salary).
 
 ## 4. Tool catalogue and observation shapes
 
-`reference_catalogue.py` holds the catalogue the planner is tested against (the backend owns the real registry):
-reads `list_jobs {status?, query?}`, `job_insights {jobId}`, `applicant_insights {applicationId}`,
-`compare_applicants {applicationIds[]}`, `attention_digest {}`, `my_interviews {range?: today|week|upcoming}`,
-`fairness_summary {jobId?}`, `explain {topic}`; writes `create_job`, `update_job_status {jobId, status}`,
-`decide_application {applicationId, decision: SHORTLIST|REJECT|INTERVIEW|SELECT, reason?}`,
-`assign_work_sample {applicationId, dueInDays?}`, `schedule_interview {applicationId, startsAt (local ISO),
-durationMinutes?}`, `generate_work_sample {jobId}`, `generate_interview_kit {jobId}`.
+`reference_catalogue.py` holds the backend's catalogue verbatim (`REFERENCE_TOOLS` = HR_MANAGER/ADMIN, 15 tools;
+`RECRUITER_TOOLS` 7; `INTERVIEWER_TOOLS` = `applicant_insights`, `my_interviews`, `explain`), kept equal to
+`tests/fixtures/backend_tools.json` by a test: reads `list_jobs {status?, search?}`, `job_insights {jobId}`,
+`applicant_insights {applicationCode}`, `compare_applicants {applicationCodes[2-4]}`, `attention_digest {}`,
+`my_interviews {upcomingOnly?: boolean}`, `fairness_summary {jobId?}`, `explain {topic: VERIFIED_COVERAGE|...}`;
+writes `create_job {...}`, `update_job_status {jobId, status}`, `decide_application {applicationCode, decision:
+SHORTLIST|REJECT|MOVE_TO_INTERVIEW|SELECT, reason?}`, `assign_work_sample {applicationCode, workSampleId?, dueAt?}`,
+`schedule_interview {applicationCode, scheduledAt, interviewerUserId?, interviewer?, durationMinutes? 5..480,
+location?}`, `generate_work_sample {jobId}`, `generate_interview_kit {jobId}` (full schemas: AS-BE-NOTES section 5).
+`LEGACY_TOOLS` is the earlier alias-named catalogue (`applicationId`, `startsAt`, decision `INTERVIEW`, `dueInDays`,
+`range`), kept only to test that a catalogue's own names are always used.
 A tool missing from the catalogue is never used: the planner says the action isn't available to the user's role
 (an INTERVIEWER catalogue of `my_interviews` + `explain` gets interview answers only).
 
@@ -139,8 +144,10 @@ Candidate blocks always carry `revealedName: null` (the backend fills names for 
   the model only writes the job summary and responsibilities there (validated, contacts scrubbed, rejected when it
   triggers a wording warning; the template is used otherwise). Everything else is planned by the model and validated
   (`validate_step`); any error falls back to offline with `fallback: true`.
-- Validation rejects: tools/actions outside the catalogue, a read used as a write or vice versa, args that do not
-  type-check or name unknown arguments, missing required args, repeated identical tool calls, a proposal when the
+- Model args are normalised first (`Catalogue.normalise_args`: synonyms renamed to the catalogue's names, values
+  converted, unknown arguments dropped). Validation then rejects: tools/actions outside the catalogue, a read used as a
+  write or vice versa, values that cannot be converted (bad enum, out-of-range integer, not an application code),
+  missing required args, repeated identical tool calls, a proposal when the
   user's latest message does not ask for a change (prompt injection in observations cannot cause a write),
   `create_job` from the model, answers with numbers absent from the inputs, and coverage described as a probability.
 - The prompt carries the de-identified context, the catalogue, the last 10 messages (<= 1200 chars each) and
@@ -181,3 +188,43 @@ Candidate blocks always carry `revealedName: null` (the backend fills names for 
 - Salary parsing assumes INR; city recognition covers major Indian cities and a few global ones (others are taken
   verbatim from "location: X" or as the answer to the location question).
 - Relative dates use `context.today` when sent, otherwise the server date (UTC in the container).
+
+## 9. Backend tool contract (integration fix, 17 Nov 2026)
+
+The backend sends its registry's names and `ArgSpec.describe()` schemas (AS-BE-NOTES section 5); the planner had been
+built against its own reference names, and `interviewer`, `workSampleId`, `dueAt`, `upcomingOnly` (AS-BE-NOTES 6.12)
+had no mapping. Now:
+
+- **Schema parsing** (`catalogue.parse_arg_spec`) understands every backend type label: application code(s), ISO-8601
+  date-time, string-or-list, requirements list, `one of A|B` followed by a hint, and integer ranges (`5..480`, `1..`).
+- **Conversion** (`coerce`): application codes are emitted as `"A-3014"` (from a code or a numeric id), code lists
+  deduplicated and capped, date-times checked as ISO dates / date-times, integers range-checked (an out-of-range
+  optional value is left out, e.g. a 600-minute interview), string lists from a string, requirement objects reduced to
+  the backend's seven keys. Enums map exact, then synonyms (`INTERVIEW` -> `MOVE_TO_INTERVIEW`, `HOLD` -> `ON_HOLD`,
+  help keys such as `evidence_ladder` -> `EVIDENCE_TIERS`), then a unique `_<word>` suffix, then a shared stem.
+- **Slots -> names** (`_ALIASES`, `Catalogue.arg_for`): new slots `upcomingOnly` ("upcoming", "next", "tomorrow"),
+  `dueAt` ("in 5 days", "within a week", "due by 30 Nov" -> ISO date, never in the past; `days` still fills
+  `dueInDays`-style names), `workSampleId` ("work sample #7", "WS-7"), `interviewer` ("with Priya Sharma",
+  "interviewer: Rahul"; never `[name]`/`[email]` placeholders, codes, weekdays or "me" — the backend defaults to the
+  user) and `location` ("location: Room 4B", "on Zoom", "in conference room 2"). `applicationCode` <-> `applicationId`
+  and the list forms convert both ways.
+- **Last line of defence**: `OfflinePlanner.tool_call`/`propose` refuse a tool absent from the request's catalogue (or
+  of the wrong kind) with the "isn't available" answer and pass every argument set through `normalise_args`;
+  `validate_step` does the same for the model, whose prompt now names the exact-argument rule and value formats.
+  Unknown model arguments are dropped instead of failing the step (a test that expected a rejection was changed).
+- Time zone: `scheduledAt` is still the user's local time without an offset (`2026-11-20T15:00`); the backend reads
+  an offset-less time as UTC. The request carries no time zone; adding one is a backend + planner follow-up.
+
+Contract test (`tests/test_backend_contract.py`, helper `tests/backend_contract.py`):
+
+- `parse_java_tools()` reads `backend/src/main/java/com/recruitpro/assistant/tool/**` (tool name, description,
+  capability, read/write, every `ArgSpec` with enum values resolved from the Java enums, `HelpTopics` and constants).
+  `test_fixture_matches_java_source` fails when the Java source and `tests/fixtures/backend_tools.json` differ (skipped
+  only when the backend tree is absent); its docstring has the one-line re-generation command.
+- `validate()` is a strict port of `ToolArgs.validate` (unknown keys, canonical values, REJECT needs a reason).
+- 36 scenarios covering every intent that calls a tool or proposes a change (multi-turn: job lookup via `list_jobs`,
+  asked reasons/times/applicants, four job-posting conversations) run through a simulated backend loop (6 steps,
+  draft kept/cleared like the orchestrator) for every role's catalogue; every one of the 14 tools the offline planner
+  uses is exercised (`explain` is answered from built-in help offline and covered on the LLM path), plus all 204
+  intent-evaluation utterances, plus 15 model replies written with synonyms (one per tool except `create_job`).
+

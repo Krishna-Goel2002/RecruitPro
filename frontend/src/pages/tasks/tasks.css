@@ -34,6 +34,9 @@
   .t-file { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
   .t-form { display: flex; flex-direction: column; gap: 20px; }
   .t-submit { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 8px; }
+  .t-submit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+  .t-unsent { display: grid; gap: 8px; }
+  .t-unsent > .t-subhead { margin-bottom: 0; }
 
   /* Sticky timer bar (M16): stays under the top bar while the candidate writes. */
   .t-timer {

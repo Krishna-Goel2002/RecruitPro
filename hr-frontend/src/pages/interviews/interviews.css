@@ -147,5 +147,9 @@
   .sc-rating-text .sc-muted { margin: 0; }
   .sc-notes { margin: var(--s-2) 0 0; color: var(--fg-default); font: var(--text-sm) / var(--lh-sm) var(--font-sans); }
 
+  .sc-revisions { display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-4); }
+  .sc-revision-list { display: flex; flex-direction: column; gap: var(--s-6); width: 100%; margin: 0; padding: 0 0 0 var(--s-5); list-style: none; border-left: 2px solid var(--border-hairline); }
+  .sc-revision-list > li { display: flex; flex-direction: column; gap: var(--s-3); }
+
   @media (prefers-reduced-motion: reduce) { .iv-row { animation: none; } }
 }

@@ -351,7 +351,9 @@
   .hra-ws-meta { grid-column: 2; color: var(--fg-muted); font-size: var(--text-sm); }
   .hra-chevron { color: var(--fg-subtle); transition: transform var(--dur-base) var(--ease-standard); }
   [aria-expanded='true'] > .hra-chevron { transform: rotate(180deg); }
-  .hra-ws-actions { display: inline-flex; align-items: center; gap: var(--s-2); }
+  .hra-ws-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--s-2); }
+  /* Same width on every row from 600 px, so the status badges line up in one column whatever actions a row has. */
+  @media (min-width: 600px) { .hra-ws-actions { min-width: 140px; } }
   .hra-expand { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-slow) var(--ease-standard); }
   .hra-expand[data-open] { grid-template-rows: 1fr; }
   .hra-expand-inner { min-height: 0; overflow: hidden; }
