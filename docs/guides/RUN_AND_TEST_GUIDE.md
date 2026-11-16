@@ -8,6 +8,10 @@ Two branches use this guide (written 16 Nov 2026, infrastructure and redesign no
 | **`Kshitij`** | The **demo** branch: plan v2 plus the demo patches (0.2) and the review fixes, original portal UI, migrations V1–V25 | AI service (8000) and PostgreSQL (5432) are published on the host; no compose networks; no domain-trust check for references; no QR code at MFA enrolment |
 | **`Kshitij-redesign`** | `Kshitij` + trust fixes (V26), retention purge, AI-service image with LibreOffice/OCR, compose network isolation, proficiency matching, and the **redesigned portals** | The steps below describe this branch; every UI difference is listed in [0.3](#03-what-is-different-on-kshitij-redesign) and marked **Redesign:** in the step |
 
+> **On `Kshitij-redesign` use [REDESIGN_TEST_GUIDE.md](REDESIGN_TEST_GUIDE.md) instead.** It has the exact
+> redesigned UI labels, the verified demo-fixture results, the current test counts and the bug-hunt behaviour
+> changes. This guide stays as the reference for `Kshitij`.
+
 This guide takes you from a Windows machine with Docker Desktop to a running RecruitPro, then through every flow that exists today, with the exact input to type and the result to expect. Commands are **Windows PowerShell** first; bash equivalents follow where they differ.
 
 If a step does not match what you see, stop, note the section number, and use [Section 10](#10-if-something-goes-wrong) and [Section 12](#12-reporting-a-problem).
@@ -40,8 +44,8 @@ If a step does not match what you see, stop, note the section number, and use [S
 |---|---|
 | Commit `9ad341a` (core platform) | `mvnw verify` passed on a Windows machine with JDK 21 on 15 Nov 2026 (239 tests, 0 failures, 6 skipped), and `docker compose up --build` started all services. **This is the known-good fallback.** |
 | Commit `2fedafb` and everything after it, on both branches (verification platform, agent-service, MFA, SSO, ICS, work-sample files, scorecard edit, fairness date range; on `Kshitij-redesign` also the trust fixes, retention and the redesign) | **No `mvnw verify` result recorded.** The sandbox it was written in has no JDK 21 or Maven Central. Static checks pass: `java_static_check.py` (0 errors) and `check_entity_schema.py` (0 errors, 0 warnings); all migrations apply on PostgreSQL 16. The first real `mvnw verify` is step 4.1 below (CI also runs it on every push to both branches). |
-| ai-service | `pytest`: 178 passed on `Kshitij`, 186 on `Kshitij-redesign`. `eval.run --check`: passed. |
-| agent-service | `pytest`: 176 passed on `Kshitij`, 205 on `Kshitij-redesign`. `eval.run --check`: exit 0, false-corroboration rate 0.0, kappa 1.0 (synthetic data, see 8.3). |
+| ai-service | `pytest`: 178 passed on `Kshitij`, 269 on `Kshitij-redesign`. `eval.run --check`: passed. |
+| agent-service | `pytest`: 176 passed on `Kshitij`, 273 on `Kshitij-redesign`. `eval.run --check`: exit 0, false-corroboration rate 0.0, kappa 1.0 (synthetic data, see 8.3). |
 | Both portals | `pnpm install --frozen-lockfile && pnpm build` (`tsc --noEmit` + `vite build`) passes; on `Kshitij-redesign` also the headless screenshot harness (`tools/ui-snapshots/`) with 0 page errors and 0 axe violations. |
 | Docker images of agent-service, the new backend, the LibreOffice/OCR AI-service image and the redesigned portals | Not built in the authoring environment (no Docker). CI's `docker-stack` job builds them and starts the stack. |
 | **Every flow in Section 6** | **Not yet clicked through against a live stack.** They were traced through the code (frontend → controller → service → agent fixture), and the agent fixtures were run in-process against the exact inputs below. Expect small surprises. Report them using Section 12. |
@@ -202,7 +206,7 @@ Select-String -Path backend-build.log -Pattern "BUILD SUCCESS","BUILD FAILURE","
 ```
 
 ```bash
-cd backend && chmod +x mvnw && ./mvnw verify > ../backend-build.log 2>&1; cd ..   # chmod: mvnw is stored without the executable bit
+cd backend && chmod +x mvnw && ./mvnw verify > ../backend-build.log 2>&1; cd ..   # chmod: only needed on Kshitij (Kshitij-redesign stores mvnw as 100755)
 grep -E "BUILD SUCCESS|BUILD FAILURE|Tests run:.*Fail" backend-build.log | tail -5
 ```
 
@@ -210,7 +214,7 @@ The first run downloads Maven and its dependencies (5 to 15 minutes).
 
 **Success looks like this:**
 - `BUILD SUCCESS` near the end of the log.
-- A summary like `Tests run: 3xx, Failures: 0, Errors: 0, Skipped: 6`. There are about 335 `@Test` methods now, against 239 at `9ad341a`.
+- A summary like `Tests run: 3xx, Failures: 0, Errors: 0, Skipped: 6`. There are about 335 `@Test` methods on `Kshitij` (441 on `Kshitij-redesign`), against 239 at `9ad341a`.
 - The 6 skipped tests are the opt-in AI end-to-end tests (`RECRUITPRO_AI_IT=true`).
 
 **If it fails:**
@@ -475,7 +479,7 @@ So most results appear **within a few seconds**, and pages refresh themselves wh
    **Redesign:** **New job** opens a wizard *Basics → Requirements → Review*. Fill in Basics and press **Continue** (this creates the draft; from then on it autosaves, "Saved · just now"). The requirement compiler runs by itself when you reach step 2 ("Reading your description…"), so there is no **Draft requirements** button: the suggestions arrive pre-selected; use **Use N suggestions**. **Review** shows pre-publish checks and **Publish**. In step 3 below, "Save draft" is automatic.
 
 2. **Draft requirements from description**.
-   - **Expect:** React and TypeScript (3 years) as suggestions, "AWS **or** Azure" as alternatives, and Python as nice-to-have.
+   - **Expect (rules engine, `LLM_PROVIDER=none`):** one Experience row "have React and TypeScript" (3 years minimum; edit it into separate React and TypeScript skill rows), "AWS" with alternative "Azure", Python as nice-to-have, and the degree.
    - **Expect** wording warnings for "young" (age-coded), "rockstar" (gender-coded), the mandatory degree, and "good communication" (vague).
 3. Accept the suggestions you want. Make sure these exist, adding them with **Add requirement** if needed:
    - SKILL **React**, must-have
@@ -830,7 +834,7 @@ cd backend; .\mvnw.cmd verify; cd ..
 cd ai-service
 python -m venv .venv; .\.venv\Scripts\Activate.ps1      # bash: python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-python -m pytest -q                 # 178 passed on Kshitij, 186 on Kshitij-redesign (a LibreOffice test may be skipped)
+python -m pytest -q                 # 178 passed on Kshitij, 269 on Kshitij-redesign (LibreOffice/POSIX-only tests are skipped on Windows)
 python -m eval.run --check          # ends with CHECK PASSED
 python ..\audit\probe_matching.py   # matching probes P1-P8
 deactivate; cd ..
@@ -842,7 +846,7 @@ deactivate; cd ..
 cd agent-service
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-python -m pytest -q                       # 176 passed on Kshitij, 205 on Kshitij-redesign; no network used
+python -m pytest -q                       # 176 passed on Kshitij, 273 on Kshitij-redesign; no network used
 python -m eval.run --check; $LASTEXITCODE # prints a JSON report; exit code 0; FCR 0.0, kappa 1.0
 python ..\tools\sync_taxonomy.py --check  # taxonomy in sync with ai-service (exit code 0, prints nothing)
 deactivate; cd ..
@@ -854,7 +858,7 @@ The eval set is synthetic, and its labels were written by the same author as the
 
 ```powershell
 python -m pip install pgserver psycopg2-binary tree-sitter tree-sitter-java
-python -B tools\check_migrations_pg.py            # every migration applies to PostgreSQL 16 (V1-V25 on Kshitij, V1-V26 on Kshitij-redesign)
+python -B tools\check_migrations_pg.py            # every migration applies to PostgreSQL 16 (V1-V25 on Kshitij, V1-V28 on Kshitij-redesign)
 python -B tools\check_entity_schema.py            # "... entities against N migrations: 0 error(s), 0 warning(s)"
 python -B tools\java_static_check.py backend\src  # "Checked N Java files: 0 error(s)"
 python -B tools\check_design_sync.py              # Kshitij-redesign: "design folders in sync"

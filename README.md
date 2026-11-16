@@ -2,7 +2,8 @@
 
 Evidence-based hiring for small and mid-sized teams. Organisations publish jobs with structured requirements; candidates apply with their resume; an offline AI service turns resumes into cited evidence; reviewers rank applicants on what is **verified** (resume, recruiter-corroborated claims, scored work samples, structured interviews, and claims checked by verification agents against GitHub/GitLab, websites, documents, Open Badges and references) rather than on what is merely claimed. Review is blind until shortlisting. AI never makes a hiring decision: every status change is a human action and is audited.
 
-- **Run and test everything, step by step:** [docs/guides/RUN_AND_TEST_GUIDE.md](docs/guides/RUN_AND_TEST_GUIDE.md)
+- **Run and test `Kshitij-redesign`, step by step (current labels, fixtures, checks):** [docs/guides/REDESIGN_TEST_GUIDE.md](docs/guides/REDESIGN_TEST_GUIDE.md)
+- Run and test guide covering both branches (older labels): [docs/guides/RUN_AND_TEST_GUIDE.md](docs/guides/RUN_AND_TEST_GUIDE.md)
 - **Handbook** (architecture, hiring core and AI, claim verification, portals and flows): [docs/handbook/](docs/handbook/)
 - Status, verification evidence and known limitations: [docs/plan/STATUS.md](docs/plan/STATUS.md)
 - Plans and API contracts: [IMPLEMENTATION_PLAN.md](docs/plan/IMPLEMENTATION_PLAN.md) (core), [IMPLEMENTATION_PLAN_V2.md](docs/plan/IMPLEMENTATION_PLAN_V2.md) (verification agents, MFA, SSO, platform hardening)
@@ -161,7 +162,7 @@ Requirements: JDK 21, Node.js 22 with pnpm 10, Python 3.10–3.12 (CI and the im
    ```bash
    cd backend
    export JWT_SECRET=<at-least-32-random-bytes> AI_SERVICE_TOKEN=<same-secret> AGENT_SERVICE_TOKEN=<same-secret> APP_ENCRYPTION_KEY=<32-bytes-base64> APP_SEED_DEMO=true
-   ./mvnw spring-boot:run          # Windows: mvnw.cmd spring-boot:run; Linux/macOS: run `chmod +x mvnw` once (it is stored without the executable bit)
+   ./mvnw spring-boot:run          # Windows: mvnw.cmd spring-boot:run (mvnw is stored as executable, 100755)
    ```
    With `MAIL_ENABLED=false` (default outside Docker) emails are not sent; verification, reset and invitation links are written to the backend log.
 5. **Portals** (two terminals, each from the repository root; `pnpm dev` keeps running)
@@ -177,15 +178,15 @@ Run all of these before merging. CI (`.github/workflows/ci.yml`, on every push t
 | Gate | Command | Status in the build environment |
 |---|---|---|
 | **G-JAVA-REAL** backend compile + unit and integration tests (H2 in PostgreSQL mode) | `cd backend && ./mvnw verify` | passed for `9ad341a` on 15 Nov 2026 (239 tests, 6 skipped); **not yet run for `2fedafb` and later** |
-| G-PY AI service tests | `cd ai-service && python -m pytest -q` | passed (178 on `Kshitij`, 186 on `Kshitij-redesign`) |
+| G-PY AI service tests | `cd ai-service && python -m pytest -q` | passed (178 on `Kshitij`, 269 on `Kshitij-redesign`) |
 | G-PY evaluation thresholds (synthetic data) | `cd ai-service && python -m eval.run --check` | passed |
-| G-AG agent service tests | `cd agent-service && python -m pytest -q` | passed (176 on `Kshitij`, 205 on `Kshitij-redesign`) |
-| G-AG evaluation (false corroboration ≤ 0.02, kappa ≥ 0.70; synthetic) | `cd agent-service && python -m eval.run --check` | passed (83 cases on `Kshitij`, 93 on `Kshitij-redesign`; FCR 0.0, kappa 1.0) |
-| G-SQL migrations on a real PostgreSQL 16 (also refuses misnamed or duplicate migration files and Flyway placeholders; warns on version gaps) | `pip install pgserver psycopg2-binary && python tools/check_migrations_pg.py` | passed (V1–V25 on `Kshitij`, V1–V26 on `Kshitij-redesign`) |
+| G-AG agent service tests | `cd agent-service && python -m pytest -q` | passed (176 on `Kshitij`, 273 on `Kshitij-redesign`) |
+| G-AG evaluation (false corroboration ≤ 0.02, kappa ≥ 0.70; synthetic) | `cd agent-service && python -m eval.run --check` | passed (83 cases on `Kshitij`, 99 on `Kshitij-redesign`; FCR 0.0, kappa 1.0) |
+| G-SQL migrations on a real PostgreSQL 16 (also refuses misnamed or duplicate migration files and Flyway placeholders; warns on version gaps) | `pip install pgserver psycopg2-binary && python tools/check_migrations_pg.py` | passed (V1–V25 on `Kshitij`, V1–V28 on `Kshitij-redesign`) |
 | Entity ↔ schema agreement | `pip install pgserver psycopg2-binary tree-sitter tree-sitter-java && python tools/check_entity_schema.py` | passed |
 | G-JAVA-STATIC syntax, imports, types | `pip install tree-sitter tree-sitter-java && python tools/java_static_check.py backend/src` | passed (0 errors) |
-| G-FE candidate portal | `cd frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | build passed |
-| G-FE HR portal | `cd hr-frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | build passed |
+| G-FE candidate portal | `cd frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | passed (`Kshitij-redesign`: 113 Vitest tests in 14 files, build OK) |
+| G-FE HR portal | `cd hr-frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | passed (`Kshitij-redesign`: 132 Vitest tests in 20 files, build OK) |
 | Shared portal files identical (`src/design`, `public/theme-init.js`, `nginx.conf`, `Dockerfile`, `.dockerignore`) | `python tools/check_design_sync.py` | passed (`Kshitij-redesign`) |
 | agent-service taxonomy = ai-service taxonomy | `python tools/sync_taxonomy.py --check` (without `--check` it copies) | passed |
 
