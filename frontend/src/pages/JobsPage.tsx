@@ -93,6 +93,7 @@ export function JobsPage() {
   const jobs = useQuery({ queryKey: queryKeys.jobs(searchParams), queryFn: () => jobsApi.search(searchParams), placeholderData: keepPreviousData })
   const applications = useQuery(recentApplicationsQuery)
   const appliedJobs = useMemo(() => new Map((applications.data?.content ?? []).filter(a => a.status !== 'WITHDRAWN').map(a => [a.jobId, a.id])), [applications.data])
+  const appliedOnPage = (jobs.data?.content ?? []).filter(j => appliedJobs.has(j.id)).length
 
   // Compared as the URL stores them: a trailing space must not leave "Updating…" on screen.
   const typing = !sameFilters(normalize(inputs), applied)
@@ -156,6 +157,7 @@ export function JobsPage() {
       <div className="c-toolbar j-results-bar">
         <p className="c-status-line" role="status">
           {jobs.data ? `${plural(jobs.data.totalElements, 'open role')}` : ''}
+          {appliedOnPage > 0 ? ` · you have applied to ${appliedOnPage} of these` : ''}
           {(typing || updating) && (
             <span className="c-status-line" aria-hidden="true">
               <Spinner size={12} /> Updating…

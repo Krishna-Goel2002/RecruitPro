@@ -7,6 +7,7 @@ import { qk } from '../../api/queryKeys'
 import { reviewApi } from '../../api/review'
 import { verificationApi } from '../../api/verification'
 import type { ApplicantDetail, DecisionAction } from '../../api/types'
+import { useOptionalAssistant } from '../../assistant/AssistantProvider'
 import { useAuth } from '../../auth/AuthContext'
 import { ActionDialog } from '../../components/ActionDialog'
 import { QueryError } from '../../components/QueryError'
@@ -15,7 +16,7 @@ import { ApplicationStatusBadge } from '../../components/StatusBadges'
 import {
   Avatar, Button, IconButton, LoadingRegion, PageHeader, Skeleton, SkeletonText, TabPanel, Tabs, Tag, useMediaQuery, useToast,
 } from '../../design/components'
-import { ChevronLeft, ChevronRight, Eye, EyeOff, FileText, Icon, Link2, ScrollText, Users } from '../../design/icons'
+import { ChevronLeft, ChevronRight, Eye, EyeOff, FileText, Icon, Link2, MessagesSquare, ScrollText, Users } from '../../design/icons'
 import { relativeTime } from '../../design/lib/format'
 import { usePendingPoll, usePollRef } from '../../lib/hooks'
 import { useSearchState } from '../../lib/useSearchState'
@@ -81,6 +82,7 @@ function ApplicantView({ jobId, jobTitle, detail, polling, pollTimedOut, onCheck
   onCheckAgain: () => void
 }) {
   const { can } = useAuth()
+  const assistant = useOptionalAssistant()
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const navigate = useNavigate()
@@ -239,6 +241,9 @@ function ApplicantView({ jobId, jobTitle, detail, polling, pollTimedOut, onCheck
         ]}
         actions={
           <>
+            {assistant && (
+              <IconButton label="Ask the assistant about this applicant" icon={MessagesSquare} variant="secondary" onClick={() => assistant.ask('Tell me about this applicant')} />
+            )}
             {canReveal && (
               <Button icon={Eye} onClick={() => { reveal.reset(); setRevealOpen(true) }}>Reveal identity</Button>
             )}

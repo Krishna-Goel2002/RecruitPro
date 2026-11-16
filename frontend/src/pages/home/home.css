@@ -92,3 +92,60 @@
     .h-check, .h-check-bar > span[data-done], .h-step-detail, .h-step[data-done] .h-step-mark svg path { animation: none; }
   }
 }
+
+/* At a glance (SITE-CAND): four linked numbers in one strip, hairline-separated; each tile lifts on hover. */
+@layer pages {
+  .h-glance-wrap { margin-bottom: 32px; }
+  .h-glance {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    background: var(--bg-surface);
+    overflow: hidden;
+  }
+  .h-glance > li + li { border-left: 1px solid var(--border-hairline); }
+  @media (max-width: 799px) {
+    .h-glance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .h-glance > li:nth-child(3) { border-left: 0; }
+    .h-glance > li:nth-child(n + 3) { border-top: 1px solid var(--border-hairline); }
+  }
+  .h-glance-tile {
+    position: relative;
+    display: grid;
+    gap: 4px;
+    height: 100%;
+    padding: 16px 20px 18px;
+    color: var(--fg-default);
+    text-decoration: none;
+    transition: background-color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+  }
+  .h-glance-tile:hover { background: var(--bg-hover); color: var(--fg-default); text-decoration: none; }
+  .h-glance-tile:active { transform: scale(.99); transition-duration: var(--dur-instant); }
+  .h-glance-tile:focus-visible { outline-offset: -2px; }
+  .h-glance-label { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); font: 500 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .h-glance-label svg { color: var(--accent-text); }
+  .h-glance-value { font: 600 var(--text-display) / var(--lh-display) var(--font-heading); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .h-glance > li[data-zero] .h-glance-value { color: var(--fg-subtle); }
+  .h-glance-hint { color: var(--fg-subtle); font: 400 var(--text-caption) / var(--lh-caption) var(--font-sans); }
+  .h-glance-go {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    color: var(--fg-subtle);
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+  }
+  .h-glance-tile:hover .h-glance-go, .h-glance-tile:focus-visible .h-glance-go { opacity: 1; transform: none; }
+  /* The attention rows nudge their action arrow and wash on hover (rows, not cards: no lift). */
+  .h-att { transition: background-color var(--dur-fast) var(--ease-standard); }
+  @media (prefers-reduced-motion: reduce) {
+    .h-glance-tile, .h-glance-go { transition: none; }
+    .h-glance-tile:active { transform: none; }
+    .h-glance-go { transform: none; }
+  }
+}

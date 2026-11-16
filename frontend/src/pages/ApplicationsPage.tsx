@@ -1,15 +1,18 @@
+import { useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { applicationsApi } from '../api/endpoints'
 import { queryKeys } from '../api/queryKeys'
 import type { Application, ApplicationStatus } from '../api/types'
 import { ErrorState } from '../components/Feedback'
-import { Badge, DataTable, EmptyState, PageHeader, Pagination, buttonProps, type Tone } from '../design/components'
+import { Badge, CountUp, DataTable, EmptyState, PageHeader, Pagination, buttonProps, type Tone } from '../design/components'
 import { ArrowRight, CalendarClock, FileText, Icon, ListChecks } from '../design/icons'
 import { formatDate, plural, relativeTime } from '../design/lib/format'
 import { applicationStatusLabel } from '../lib/labels'
+import { useInView } from '../design/motion'
 import { nextStepFor, tasksForJob, type NextStep } from '../lib/nextStep'
-import { interviewsQuery, resumesQuery, workSamplesQuery } from '../lib/queries'
+import { interviewsQuery, recentApplicationsQuery, resumesQuery, workSamplesQuery } from '../lib/queries'
+import { pipelineCounts, stageWidths } from '../lib/summary'
 import './common.css'
 import './applications/applications.css'
 
@@ -45,6 +48,38 @@ export function NextStepText({ step }: { step: NextStep }) {
 }
 
 /**
+ * Where all applications stand (SITE-CAND): one proportion bar in pipeline order with a counted legend. The bar sweeps
+ * in and the numbers count up the first time it is in view; reduced motion shows the final state.
+ */
+function PipelineSummary() {
+  const all = useQuery(recentApplicationsQuery)
+  const ref = useRef<HTMLDivElement>(null)
+  const seen = useInView(ref)
+  if (!all.data || all.data.content.length === 0) return null
+  const stages = pipelineCounts(all.data.content)
+  const widths = stageWidths(stages)
+  const label = stages.filter(s => s.count > 0).map(s => `${s.label} ${s.count}`).join(', ')
+  return (
+    <section className="a-pipe" aria-label="Where your applications are">
+      <div ref={ref} className="a-pipe-bar" data-seen={seen || undefined} role="img" aria-label={`Applications by stage: ${label}`}>
+        {stages.map((s, i) =>
+          widths[i] > 0 ? <span key={s.key} className="a-pipe-seg" data-stage={s.key} style={{ width: `${widths[i]}%` }} /> : null,
+        )}
+      </div>
+      <ul className="a-pipe-legend">
+        {stages.map(s => (
+          <li key={s.key} data-stage={s.key} data-zero={s.count === 0 || undefined}>
+            <span className="a-pipe-key" aria-hidden="true" />
+            <span className="a-pipe-label">{s.label}</span>
+            <CountUp value={s.count} className="a-pipe-n" />
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/**
  * Applications (REDESIGN_PLAN A6): a table with a Next step column, whole rows open the detail (↑/↓/Enter work),
  * stacked rows on phones. The next step joins work samples and interviews by job title (API gap §14.1).
  */
@@ -76,6 +111,7 @@ export function ApplicationsPage() {
         meta={applications.data && total > 0 ? [plural(total, 'application')] : undefined}
         description="Follow each application and see exactly what happens next."
       />
+      {total > 0 && <PipelineSummary />}
       {applications.isError && !applications.data ? (
         <ErrorState error={applications.error} onRetry={() => void applications.refetch()} title="Your applications could not be loaded" />
       ) : (

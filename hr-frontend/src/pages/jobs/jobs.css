@@ -205,6 +205,9 @@
   .hra-kbd-hints > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); }
   .hra-jobs-panel.ui-tabpanel { padding-top: 0; outline: none; }
   .hra-first-job { margin-top: var(--s-9); }
+  .hra-empty-actions { display: inline-flex; flex-wrap: wrap; gap: var(--s-3); }
+  .hra-meta-new { color: var(--accent-text); font-weight: 500; }
+  .hra-meta-soon { color: var(--warning-fg); }
   .hra-kbd-hints .hra-kbd:first-child { margin-left: 0; }
   @media (min-width: 900px) {
     .hra-kbd-hints { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1); }

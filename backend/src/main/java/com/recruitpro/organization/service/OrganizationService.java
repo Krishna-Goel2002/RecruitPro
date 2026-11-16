@@ -214,6 +214,12 @@ public class OrganizationService {
                 organization.setSsoAllowedDomains(domains);
             }
         }
+        if (request.assistantExternalModel() != null
+                && request.assistantExternalModel() != organization.isAssistantExternalModel()) {
+            changes.add("assistantExternalModel " + organization.isAssistantExternalModel() + " -> "
+                    + request.assistantExternalModel());
+            organization.setAssistantExternalModel(request.assistantExternalModel());
+        }
         Organization saved = organizationRepository.save(organization);
         if (!changes.isEmpty()) {
             auditService.record(AuditActions.ORGANIZATION_UPDATED, "ORGANIZATION", String.valueOf(saved.getId()),

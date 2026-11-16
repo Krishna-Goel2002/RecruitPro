@@ -209,6 +209,13 @@
   --ease-settle: cubic-bezier(.34, 1.36, .64, 1);
   --ease-linear: linear;
   --travel: 4px;
+  /* Motion v2 (HR-UX): route rise, emphasized enters, a gentle spring for dialogs, hover lift. */
+  --dur-route: 180ms;
+  --travel-route: 8px;
+  --ease-emphasized: cubic-bezier(.16, 1, .3, 1);
+  --ease-spring: cubic-bezier(.3, 1.24, .52, 1);
+  --lift: -2px;
+  --shadow-lift: var(--shadow-pop);
 }
 
 @media (min-width: 900px) {
@@ -222,5 +229,6 @@
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-base: 120ms; --dur-slow: 120ms; --dur-slower: 0ms; --dur-count: 0ms; --stagger-step: 0ms; --travel: 0px;
+    --dur-route: 120ms; --travel-route: 0px; --lift: 0px;
   }
 }

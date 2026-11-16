@@ -6,7 +6,7 @@
 //   node snap.mjs --portal hr --dist ../../hr-frontend/dist --out out/hr --theme both --only applicant-revealed,jobs
 //
 // Flags
-//   --portal candidate|hr       which fixture set (required)
+//   --portal candidate|hr|site  which fixture set (required; site = the public landing page, no API)
 //   --dist <dir>                built portal (pnpm build) (required)
 //   --out <dir>                 where PNGs go (default out/<portal>)
 //   --theme light|dark|both     emulated prefers-color-scheme + localStorage['theme-preference'] (default light)
@@ -40,8 +40,8 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, cur, i, all) 
 }, []))
 
 const portal = args.portal
-if (!['candidate', 'hr'].includes(portal) || !args.dist) {
-  console.error('usage: node snap.mjs --portal candidate|hr --dist <built dist dir> [--out dir] [--theme light|dark|both] [--only a,b]')
+if (!['candidate', 'hr', 'site'].includes(portal) || !args.dist) {
+  console.error('usage: node snap.mjs --portal candidate|hr|site --dist <built dist dir> [--out dir] [--theme light|dark|both] [--only a,b]')
   process.exit(2)
 }
 const dist = path.resolve(args.dist)

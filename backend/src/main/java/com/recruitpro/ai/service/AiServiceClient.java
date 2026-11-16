@@ -1,5 +1,7 @@
 package com.recruitpro.ai.service;
 
+import com.recruitpro.ai.dto.AiAssistantStepRequest;
+import com.recruitpro.ai.dto.AiAssistantStepResponse;
 import com.recruitpro.ai.dto.AiCompileRequest;
 import com.recruitpro.ai.dto.AiCompileResponse;
 import com.recruitpro.ai.dto.AiInterviewKitRequest;
@@ -42,8 +44,16 @@ public class AiServiceClient {
      */
     static final int DEFAULT_PARSE_TIMEOUT_MS = 120_000;
 
+    /**
+     * AS-BE: read time-out of one assistant planner step ({@code app.assistant.step-timeout-ms}). The planner's own
+     * LLM call is limited by {@code ASSISTANT_LLM_TIMEOUT_SECONDS} (20 s), so the default leaves room for its offline
+     * fallback; the orchestrator additionally caps every user message at 60 s in total.
+     */
+    static final int DEFAULT_ASSISTANT_STEP_TIMEOUT_MS = 25_000;
+
     private final RestClient restClient;
     private final RestClient parseClient;
+    private final RestClient assistantClient;
     private final String serviceToken;
     /** Set by Spring when Micrometer is present (timer recruitpro.ai.call); null in plain unit tests. */
     private volatile MeterRegistry meterRegistry;
@@ -52,14 +62,22 @@ public class AiServiceClient {
         this(builder, baseUrl, serviceToken, timeoutMs, DEFAULT_PARSE_TIMEOUT_MS);
     }
 
+    public AiServiceClient(RestClient.Builder builder, String baseUrl, String serviceToken, int timeoutMs,
+                           int parseTimeoutMs) {
+        this(builder, baseUrl, serviceToken, timeoutMs, parseTimeoutMs, DEFAULT_ASSISTANT_STEP_TIMEOUT_MS);
+    }
+
     @Autowired
     public AiServiceClient(RestClient.Builder builder,
                            @Value("${app.ai-service.base-url}") String baseUrl,
                            @Value("${app.ai-service.service-token:}") String serviceToken,
                            @Value("${app.ai-service.timeout-ms:30000}") int timeoutMs,
-                           @Value("${app.ai-service.parse-timeout-ms:120000}") int parseTimeoutMs) {
+                           @Value("${app.ai-service.parse-timeout-ms:120000}") int parseTimeoutMs,
+                           @Value("${app.assistant.step-timeout-ms:25000}") int assistantStepTimeoutMs) {
         this.restClient = build(builder.clone(), baseUrl, timeoutMs, timeoutMs);
         this.parseClient = build(builder.clone(), baseUrl, timeoutMs, Math.max(timeoutMs, parseTimeoutMs));
+        int assistantTimeout = assistantStepTimeoutMs > 0 ? assistantStepTimeoutMs : DEFAULT_ASSISTANT_STEP_TIMEOUT_MS;
+        this.assistantClient = build(builder.clone(), baseUrl, Math.min(timeoutMs, assistantTimeout), assistantTimeout);
         this.serviceToken = serviceToken;
     }
 
@@ -133,6 +151,19 @@ public class AiServiceClient {
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(request)
                 .retrieve().body(AiInterviewKitResponse.class);
+    }
+
+    /**
+     * One step of the HR assistant planner (ASSISTANT_PLAN 3.1; AS-BE). The request is de-identified by the caller.
+     * Uses its own read time-out ({@code app.assistant.step-timeout-ms}).
+     */
+    public AiAssistantStepResponse assistantStep(AiAssistantStepRequest request) {
+        requireToken();
+        return assistantClient.post().uri("/api/v1/assistant/step")
+                .header("X-Internal-Service-Token", serviceToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve().body(AiAssistantStepResponse.class);
     }
 
     /** "resume.&lt;extension&gt;" (lower case letters and digits only, at most 10), or "resume" without one. */

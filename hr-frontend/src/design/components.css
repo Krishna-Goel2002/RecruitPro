@@ -228,12 +228,18 @@
 .ui-input:disabled { background: var(--bg-sunken); border-color: var(--border-default); color: var(--fg-disabled); cursor: not-allowed; }
 .ui-input[readonly] { background: var(--bg-sunken); border-color: transparent; }
 
+/* Textareas always scroll when their content is taller than the box (HR-UX: a hidden overflow left long work-sample
+   instructions unreachable), can be resized vertically, and never grow past most of the viewport. Auto-grow sets the
+   height from JS; the scrollbar only appears once maxRows is reached. */
 textarea.ui-input {
   height: auto;
+  max-height: min(70vh, 720px);
   padding: 6px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   resize: vertical;
 }
-textarea.ui-input[data-autogrow] { resize: none; overflow-y: hidden; }
+textarea.ui-input[data-autogrow] { overflow-y: auto; }
 .ui-textarea { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .ui-textarea-count { align-self: flex-end; color: var(--fg-subtle); font: 400 var(--text-caption) / var(--lh-caption) var(--font-sans); }
 .ui-textarea-count[data-over] { color: var(--danger-fg); }
@@ -1280,6 +1286,53 @@ textarea.ui-input[data-autogrow] { resize: none; overflow-y: hidden; }
 @media (max-width: 599px) {
   .ui-breadcrumb li[data-middle] { display: none; }
 }
+
+/* ============================================================================================ back link */
+.ui-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin-left: -8px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--r-sm);
+  color: var(--fg-muted);
+  font: 500 var(--text-sm) / var(--lh-sm) var(--font-sans);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.ui-back:hover { background: var(--bg-hover); color: var(--fg-default); text-decoration: none; }
+.ui-back:active { background: var(--bg-active); }
+.ui-back-icon { transition: transform var(--dur-fast) var(--ease-standard); }
+@media (hover: hover) {
+  .ui-back:hover .ui-back-icon { transform: translateX(-2px); }
+}
+.ui-back-label { color: inherit; }
+
+/* ============================================================================================ stacked bar */
+/* The track clips its fill, so only the two outer corners are rounded; segments have exact percentage widths, no gap,
+   and a 1 px hairline (inset shadow in the track colour of the page) separates neighbours without taking width. */
+.ui-stackbar {
+  --stackbar-sep: var(--bg-surface);
+  position: relative;
+  height: 10px;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: var(--bg-active);
+}
+.ui-stackbar[data-size='sm'] { height: 6px; }
+.ui-stackbar-fill { display: flex; width: 100%; height: 100%; }
+.ui-stackbar-seg { display: block; flex: 0 0 auto; height: 100%; min-width: 0; }
+.ui-stackbar-seg[data-last] { flex-grow: 1; }
+.ui-stackbar-seg:not([data-first]) { box-shadow: inset 1px 0 0 var(--stackbar-sep); }
+.ui-stackbar-seg[data-tone='1'], .ui-stackbar-swatch[data-tone='1'] { background: var(--accent); }
+.ui-stackbar-seg[data-tone='2'], .ui-stackbar-swatch[data-tone='2'] { background: color-mix(in srgb, var(--accent) 72%, var(--bg-surface)); }
+.ui-stackbar-seg[data-tone='3'], .ui-stackbar-swatch[data-tone='3'] { background: color-mix(in srgb, var(--accent) 48%, var(--bg-surface)); }
+.ui-stackbar-seg[data-tone='4'], .ui-stackbar-swatch[data-tone='4'] { background: var(--success-fg); }
+.ui-stackbar-seg[data-tone='5'], .ui-stackbar-swatch[data-tone='5'] { background: var(--fg-subtle); }
+.ui-stackbar-seg[data-tone='6'], .ui-stackbar-swatch[data-tone='6'] { background: var(--border-strong); }
+.ui-stackbar-swatch { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: var(--r-xs); }
 
 /* ============================================================================================ stepper */
 .ui-stepper { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; list-style: none; font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }

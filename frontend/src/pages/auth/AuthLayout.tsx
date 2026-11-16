@@ -4,6 +4,8 @@ import brand from '../../design/brand/active'
 import { EvidenceLadder, Spinner, ThemeSwitch, VerdictChip } from '../../design/components'
 import { useDocumentTitle } from '../../design/components/PageHeader'
 import { reduced } from '../../design/motion'
+import { ArrowLeft, Icon } from '../../design/icons'
+import { siteUrl } from '../../lib/site'
 import './auth.css'
 
 /**
@@ -31,7 +33,13 @@ export function AuthLayout() {
             <brand.Mark size={20} />
             <span className="p-wordmark">{brand.name}</span>
           </Link>
-          <ThemeSwitch variant="icon" />
+          <span className="auth-top-end">
+            <a href={siteUrl()} className="auth-site-link">
+              <Icon icon={ArrowLeft} size={14} />
+              About {brand.name}
+            </a>
+            <ThemeSwitch variant="icon" />
+          </span>
         </div>
         <div className="auth-form-wrap">
           <div className="auth-form" key={location.pathname}>

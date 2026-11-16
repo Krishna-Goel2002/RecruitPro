@@ -220,6 +220,18 @@ app:
     health-timeout-ms: 2000
     service-token: ${AI_SERVICE_TOKEN:}
 
+  # HR assistant orchestrator (docs/plan/ASSISTANT_PLAN.md, AS-BE): the backend runs tools as the signed-in user and
+  # calls the ai-service planner (POST /api/v1/assistant/step) in a loop. The planner's provider is configured in the
+  # ai-service (ASSISTANT_LLM_PROVIDER, default offline); organisations allow the external model with the
+  # assistantExternalModel setting (default false).
+  assistant:
+    step-timeout-ms: ${ASSISTANT_STEP_TIMEOUT_MS:25000}   # read time-out of one planner call
+    max-steps: 6                                         # planner calls per user message
+    message-budget-ms: 60000                             # wall-clock limit of one user message (all steps)
+    max-messages-per-hour: ${ASSISTANT_MAX_MESSAGES_PER_HOUR:30}  # per user; 429 with Retry-After above; 0 = off
+    action-ttl-minutes: 30                               # proposed actions expire after this
+    history-messages: 20                                 # last N messages sent to the planner (de-identified)
+
   # Verification agent service (plan v2 section 4, WP-AG): fetches evidence and drafts verdicts; the backend stores
   # them. Called only by the VERIFY_SOURCE / VERIFY_REFERENCE jobs and the candidate's ownership check.
   agent-service:
@@ -265,6 +277,7 @@ app:
     rate-limit-days: 1                          # rate_limit_buckets windows
     reference-days: 365                         # EXPIRED/CANCELLED/DECLINED reference requests: referee PII removed
     audit-days: ${RETENTION_AUDIT_DAYS:730}     # audit_events; 0 = keep forever
+    assistant-conversation-days: 180            # HR assistant conversations (+ messages, actions) since last activity
 
   file-storage:
     upload-dir: ${FILE_STORAGE_PATH:./uploads}

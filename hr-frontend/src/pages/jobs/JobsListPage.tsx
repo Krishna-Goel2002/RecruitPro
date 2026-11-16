@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { jobsApi } from '../../api/jobs'
 import { qk } from '../../api/queryKeys'
 import type { JobListParams, JobStaff, JobStatus } from '../../api/types'
+import { useOptionalAssistant } from '../../assistant/AssistantProvider'
 import { useAuth } from '../../auth/AuthContext'
 import { QueryError } from '../../components/QueryError'
 import { useShortcuts } from '../../components/Shortcuts'
@@ -12,7 +13,7 @@ import {
   Button, DataTable, EmptyState, IconButton, Input, Menu, PageHeader, Pagination, TabPanel, Tabs, buttonProps, type Column,
 } from '../../design/components'
 import { formatDate, formatNumber, plural, relativeTime } from '../../design/lib/format'
-import { BriefcaseBusiness, Ellipsis, Icon, Plus, Search, X } from '../../design/icons'
+import { BriefcaseBusiness, Ellipsis, Icon, MessagesSquare, Plus, Search, X } from '../../design/icons'
 import { humanize } from '../../lib/format'
 import { useDebouncedValue } from '../../lib/hooks'
 import { newSince } from '../../lib/lastSeen'
@@ -49,6 +50,7 @@ export function JobsListPage() {
   const canManage = can('jobs.manage')
   const canExport = can('audit.jobExport')
   const navigate = useNavigate()
+  const assistant = useOptionalAssistant()
   const state = useSearchState()
   const status = oneOf<StatusTab>(state.get('status'), TABS.map(t => t.value), 'ALL')
   const search = state.get('q')
@@ -84,6 +86,21 @@ export function JobsListPage() {
 
   const filtered = Boolean(search) || status !== 'ALL'
   const data = list.data
+  // Header summary from what is on screen: new applicants since your last visit, deadlines in the next 7 days.
+  const summary = useMemo(() => {
+    const rows = data?.content ?? []
+    let fresh = 0
+    let closing = 0
+    for (const job of rows) {
+      const n = job.applicationCount != null ? newSince(job.id, job.applicationCount) : null
+      if (n && n > 0) fresh += n
+      if (job.status === 'PUBLISHED' && job.deadline) {
+        const ms = new Date(job.deadline).getTime() - Date.now()
+        if (ms > 0 && ms < 7 * 86_400_000) closing++
+      }
+    }
+    return { fresh, closing }
+  }, [data])
   const noJobsAtAll = counts.ALL === 0 && !search
 
   const columns = useMemo<Column<JobStaff>[]>(() => [
@@ -155,7 +172,17 @@ export function JobsListPage() {
     <div className="hra-jobs" data-width="wide">
       <PageHeader
         title="Jobs"
-        actions={canManage && <Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>}
+        meta={counts.ALL != null && counts.ALL > 0 ? [
+          <span key="pub">{plural(counts.PUBLISHED ?? 0, 'published job')}</span>,
+          summary.fresh > 0 ? <span key="new" className="hra-meta-new">{plural(summary.fresh, 'new applicant')} since your last visit</span> : null,
+          summary.closing > 0 ? <span key="cl" className="hra-meta-soon">{plural(summary.closing, 'job closes', 'jobs close')} within 7 days</span> : null,
+        ] : undefined}
+        actions={<>
+          {assistant && counts.ALL != null && counts.ALL > 0 && (
+            <Button icon={MessagesSquare} onClick={() => assistant.ask('How are my published jobs doing?')}>Ask about jobs</Button>
+          )}
+          {canManage && <Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>}
+        </>}
       />
 
       <Tabs
@@ -174,7 +201,12 @@ export function JobsListPage() {
             icon={BriefcaseBusiness}
             title="Create your first job"
             description="Describe the role, and we suggest requirements from your description. Applicants are ranked by the evidence they show for each one."
-            action={<Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>}
+            action={
+              <span className="hra-empty-actions">
+                <Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>
+                {assistant && <Button icon={MessagesSquare} onClick={() => assistant.ask('Post a new job')}>Draft it with the assistant</Button>}
+              </span>
+            }
             className="hra-first-job"
           />
         ) : (

@@ -1,5 +1,6 @@
 package com.recruitpro.retention;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -21,7 +22,15 @@ public class RetentionSettings {
     private final int rateLimitDays;
     private final int referenceDays;
     private final int auditDays;
+    private final int assistantConversationDays;
 
+    public RetentionSettings(int batchSize, int maxBatchesPerTable, int tokenDays, int jobDoneDays, int jobFailedDays,
+                             int notificationDays, int stateDays, int rateLimitDays, int referenceDays, int auditDays) {
+        this(batchSize, maxBatchesPerTable, tokenDays, jobDoneDays, jobFailedDays, notificationDays, stateDays,
+                rateLimitDays, referenceDays, auditDays, 180);
+    }
+
+    @Autowired
     public RetentionSettings(@Value("${app.retention.batch-size:500}") int batchSize,
                              @Value("${app.retention.max-batches-per-table:200}") int maxBatchesPerTable,
                              @Value("${app.retention.token-days:30}") int tokenDays,
@@ -31,7 +40,8 @@ public class RetentionSettings {
                              @Value("${app.retention.state-days:1}") int stateDays,
                              @Value("${app.retention.rate-limit-days:1}") int rateLimitDays,
                              @Value("${app.retention.reference-days:365}") int referenceDays,
-                             @Value("${app.retention.audit-days:730}") int auditDays) {
+                             @Value("${app.retention.audit-days:730}") int auditDays,
+                             @Value("${app.retention.assistant-conversation-days:180}") int assistantConversationDays) {
         this.batchSize = require("batch-size", batchSize, 1, 10_000);
         this.maxBatchesPerTable = require("max-batches-per-table", maxBatchesPerTable, 1, 100_000);
         this.tokenDays = require("token-days", tokenDays, 1, 36_500);
@@ -42,6 +52,7 @@ public class RetentionSettings {
         this.rateLimitDays = require("rate-limit-days", rateLimitDays, 1, 36_500);
         this.referenceDays = require("reference-days", referenceDays, 1, 36_500);
         this.auditDays = require("audit-days", auditDays, 0, 36_500);
+        this.assistantConversationDays = require("assistant-conversation-days", assistantConversationDays, 1, 36_500);
     }
 
     private static int require(String name, int value, int min, int max) {
@@ -91,5 +102,10 @@ public class RetentionSettings {
     /** 0 = audit events are kept forever. */
     public int auditDays() {
         return auditDays;
+    }
+
+    /** HR assistant conversations (with their messages and actions) without activity for this many days (AS-BE). */
+    public int assistantConversationDays() {
+        return assistantConversationDays;
     }
 }

@@ -1,28 +1,37 @@
 #!/usr/bin/env python3
-"""Fail if frontend/src/design and hr-frontend/src/design (and the other shared portal files) differ.
+"""Fail if the shared design system or the other shared web files differ between the portals and the landing site.
 
-Shared byte for byte: src/design/, public/theme-init.js, and the serving setup (nginx.conf with the CSP and
-security headers, Dockerfile, .dockerignore), so a header or cache fix cannot land in one portal only.
+Source of truth: hr-frontend/ (the HR workstream owns src/design). Copies that must be byte-identical:
 
-The design system is copied byte for byte between the two portals (DESIGN_SYSTEM.md §12). Workflow: change
-src/design in one portal, copy the folder to the other, run this check, then rebuild and snapshot both portals.
+  hr-frontend/src/design          ->  frontend/src/design, site/src/design
+  hr-frontend/public/theme-init.js -> frontend/public/theme-init.js, site/public/theme-init.js
+  hr-frontend/{nginx.conf, Dockerfile, .dockerignore} -> frontend/ (the two portals share their serving setup, so a
+  header or cache fix cannot land in one portal only; the site has its own stricter nginx.conf and Dockerfile
+  because it calls no API)
 
-PER_PORTAL lists paths (relative to src/design) that are allowed to differ. It is empty on purpose: portal-specific
-code (navigation, pages, API) lives outside src/design.
+Workflow (DESIGN_SYSTEM.md §12): change src/design in hr-frontend, copy the folder to frontend/ and site/, run this
+check, then rebuild and snapshot all three apps.
+
+PER_COPY lists paths (relative to src/design) that are allowed to differ. It is empty on purpose: app-specific code
+(navigation, pages, API, landing sections) lives outside src/design.
+
+Exit code 1 on any difference; each problem names the copy that drifted.
 """
 import filecmp
 import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-PAIRS = [
-    ("frontend/src/design", "hr-frontend/src/design"),
-    ("frontend/public/theme-init.js", "hr-frontend/public/theme-init.js"),
-    ("frontend/nginx.conf", "hr-frontend/nginx.conf"),
-    ("frontend/Dockerfile", "hr-frontend/Dockerfile"),
-    ("frontend/.dockerignore", "hr-frontend/.dockerignore"),
+SOURCE = "hr-frontend"
+# (path relative to each app, copies that must match the source)
+SHARED = [
+    ("src/design", ["frontend", "site"]),
+    ("public/theme-init.js", ["frontend", "site"]),
+    ("nginx.conf", ["frontend"]),
+    ("Dockerfile", ["frontend"]),
+    (".dockerignore", ["frontend", "site"]),
 ]
-PER_PORTAL: set[str] = set()
+PER_COPY: set[str] = set()
 IGNORED_PARTS = {"__pycache__", ".DS_Store"}
 
 
@@ -34,24 +43,30 @@ def walk(base: pathlib.Path) -> set[str]:
     }
 
 
+def compare(rel: str, copy: str) -> list[str]:
+    src, dst = ROOT / SOURCE / rel, ROOT / copy / rel
+    a, b = f"{SOURCE}/{rel}", f"{copy}/{rel}"
+    if not src.exists():
+        return [f"missing (source of truth): {a}"]
+    if src.is_file():
+        if not dst.is_file():
+            return [f"missing: {b}"]
+        return [] if filecmp.cmp(src, dst, shallow=False) else [f"differs: {b} (from {a})"]
+    if not dst.is_dir():
+        return [f"missing folder: {b}"]
+    fa, fb = walk(src) - PER_COPY, walk(dst) - PER_COPY
+    problems = [f"only in {a}: {f}  (copy it to {copy}/)" for f in sorted(fa - fb)]
+    problems += [f"only in {b}: {f}" for f in sorted(fb - fa)]
+    problems += [f"differs: {b}/{f}" for f in sorted(fa & fb) if not filecmp.cmp(src / f, dst / f, shallow=False)]
+    return problems
+
+
 def main() -> int:
     problems: list[str] = []
-    for a, b in PAIRS:
-        pa, pb = ROOT / a, ROOT / b
-        if not (pa.is_dir() or pb.is_dir()):  # single file (a name without a suffix, e.g. Dockerfile, too)
-            if not (pa.is_file() and pb.is_file()):
-                problems.append(f"missing: {a if not pa.is_file() else b}")
-            elif not filecmp.cmp(pa, pb, shallow=False):
-                problems.append(f"differs: {a} <> {b}")
-            continue
-        if not pa.is_dir() or not pb.is_dir():
-            problems.append(f"missing folder: {a if not pa.is_dir() else b}")
-            continue
-        fa, fb = walk(pa) - PER_PORTAL, walk(pb) - PER_PORTAL
-        problems += [f"only in {a}: {f}" for f in sorted(fa - fb)]
-        problems += [f"only in {b}: {f}" for f in sorted(fb - fa)]
-        problems += [f"differs: {f}" for f in sorted(fa & fb) if not filecmp.cmp(pa / f, pb / f, shallow=False)]
-    print("\n".join(problems) or "design folders in sync")
+    for rel, copies in SHARED:
+        for copy in copies:
+            problems += compare(rel, copy)
+    print("\n".join(problems) or f"design folders in sync ({SOURCE} -> frontend, site)")
     return 1 if problems else 0
 
 

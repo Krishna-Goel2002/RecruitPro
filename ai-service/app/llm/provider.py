@@ -1,4 +1,8 @@
-"""Optional LLM provider (``LLM_PROVIDER=none|anthropic|openai_compatible``) over plain httpx.
+"""Optional LLM providers over plain httpx.
+
+``LLM_PROVIDER=none|anthropic|openai_compatible`` serves resume/requirement/kit authoring;
+``ASSISTANT_LLM_PROVIDER=none|gemini|groq|anthropic|openai_compatible`` serves the HR assistant planner
+(``get_assistant_provider``). Gemini and Groq are reached through their OpenAI-compatible chat APIs.
 
 Contract for every caller:
 
@@ -17,7 +21,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from app.core.config import ConfigError, Settings, validate_settings
+from app.core.config import ConfigError, Settings, validate_assistant_settings, validate_settings
 
 logger = logging.getLogger(__name__)
 ANTHROPIC_VERSION = "2023-06-01"
@@ -36,14 +40,16 @@ class LLMProvider(Protocol):
 class _HttpProvider:
     name = "http"
 
-    def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None) -> None:
-        self.model = settings.llm_model or ""
+    def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None, *,
+                 model: str | None = None, timeout: float | None = None) -> None:
+        self.model = model if model is not None else (settings.llm_model or "")
+        self._timeout = timeout if timeout is not None else settings.llm_timeout_seconds
         self._settings = settings
         self._transport = transport
 
     def _post(self, url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
         try:
-            with httpx.Client(timeout=self._settings.llm_timeout_seconds, transport=self._transport) as client:
+            with httpx.Client(timeout=self._timeout, transport=self._transport) as client:
                 response = client.post(url, headers=headers, json=body)
                 response.raise_for_status()
                 payload = response.json()
@@ -74,10 +80,15 @@ class AnthropicProvider(_HttpProvider):
 class OpenAICompatibleProvider(_HttpProvider):
     name = "openai_compatible"
 
+    def _endpoint(self) -> tuple[str, str | None]:
+        """(base URL, API key) of the chat-completions API."""
+        return self._settings.openai_base_url or "", self._settings.openai_api_key
+
     def complete_json(self, system: str, user: str, *, max_tokens: int = 2000) -> dict[str, Any]:
-        headers = {"Authorization": f"Bearer {self._settings.openai_api_key}"} if self._settings.openai_api_key else {}
+        base_url, api_key = self._endpoint()
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         payload = self._post(
-            f"{self._settings.openai_base_url}/chat/completions", headers,
+            f"{base_url.rstrip('/')}/chat/completions", headers,
             {"model": self.model, "temperature": 0, "max_tokens": max_tokens,
              "response_format": {"type": "json_object"},
              "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
@@ -87,6 +98,22 @@ class OpenAICompatibleProvider(_HttpProvider):
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError("openai-compatible response has no message content") from exc
         return parse_json_object(str(content))
+
+
+class GeminiProvider(OpenAICompatibleProvider):
+    """Google Gemini through its OpenAI-compatible endpoint (``GEMINI_BASE_URL``, Bearer ``GEMINI_API_KEY``)."""
+    name = "gemini"
+
+    def _endpoint(self) -> tuple[str, str | None]:
+        return self._settings.gemini_base_url, self._settings.gemini_api_key
+
+
+class GroqProvider(OpenAICompatibleProvider):
+    """Groq through its OpenAI-compatible endpoint (``GROQ_BASE_URL``, Bearer ``GROQ_API_KEY``)."""
+    name = "groq"
+
+    def _endpoint(self) -> tuple[str, str | None]:
+        return self._settings.groq_base_url, self._settings.groq_api_key
 
 
 def parse_json_object(text: str) -> dict[str, Any]:
@@ -125,3 +152,23 @@ def get_provider(settings: Settings, transport: httpx.BaseTransport | None = Non
     if settings.llm_provider == "anthropic":
         return AnthropicProvider(settings, transport)
     return OpenAICompatibleProvider(settings, transport)
+
+
+_ASSISTANT_PROVIDERS: dict[str, type[_HttpProvider]] = {
+    "gemini": GeminiProvider, "groq": GroqProvider, "anthropic": AnthropicProvider,
+    "openai_compatible": OpenAICompatibleProvider,
+}
+
+
+def get_assistant_provider(settings: Settings, transport: httpx.BaseTransport | None = None) -> LLMProvider | None:
+    """The HR assistant planner's provider (``ASSISTANT_LLM_*``), or None for the offline planner."""
+    if not settings.assistant_llm_enabled:
+        return None
+    try:
+        validate_assistant_settings(settings)
+    except ConfigError as exc:
+        logger.error("Assistant LLM disabled: %s", exc)
+        return None
+    provider_class = _ASSISTANT_PROVIDERS[settings.assistant_llm_provider]
+    return provider_class(settings, transport, model=settings.assistant_llm_model or "",
+                          timeout=settings.assistant_llm_timeout_seconds)

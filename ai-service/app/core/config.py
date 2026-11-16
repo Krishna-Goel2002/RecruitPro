@@ -10,6 +10,10 @@ from typing import Mapping
 VERSION = "2.0.0"
 PARSER_VERSION = "rule-parser-2"
 LLM_PROVIDERS = ("none", "anthropic", "openai_compatible")
+# The HR assistant planner has its own provider setting (plan ASSISTANT_PLAN.md section 2); none = offline rules.
+ASSISTANT_LLM_PROVIDERS = ("none", "gemini", "groq", "anthropic", "openai_compatible")
+GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
 
 class ConfigError(ValueError):
@@ -31,10 +35,23 @@ class Settings:
     parse_workers: int
     parse_timeout_seconds: float
     max_upload_bytes: int
+    # HR assistant planner (gemini and groq speak the OpenAI-compatible chat API).
+    gemini_api_key: str | None = None
+    gemini_base_url: str = GEMINI_DEFAULT_BASE_URL
+    groq_api_key: str | None = None
+    groq_base_url: str = GROQ_DEFAULT_BASE_URL
+    assistant_llm_provider: str = "none"
+    assistant_llm_model: str | None = None
+    assistant_llm_timeout_seconds: float = 20.0
+    assistant_max_output_tokens: int = 1024
 
     @property
     def llm_enabled(self) -> bool:
         return self.llm_provider != "none"
+
+    @property
+    def assistant_llm_enabled(self) -> bool:
+        return self.assistant_llm_provider != "none"
 
 
 def _flag(value: str | None) -> bool:
@@ -69,6 +86,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         parse_workers=max(1, int(_number(env, "PARSE_WORKERS", 2, int))),
         parse_timeout_seconds=_number(env, "PARSE_TIMEOUT_SECONDS", 60),
         max_upload_bytes=int(_number(env, "MAX_UPLOAD_BYTES", 10 * 1024 * 1024, int)),
+        gemini_api_key=env.get("GEMINI_API_KEY") or None,
+        gemini_base_url=(env.get("GEMINI_BASE_URL") or GEMINI_DEFAULT_BASE_URL).strip().rstrip("/"),
+        groq_api_key=env.get("GROQ_API_KEY") or None,
+        groq_base_url=(env.get("GROQ_BASE_URL") or GROQ_DEFAULT_BASE_URL).strip().rstrip("/"),
+        assistant_llm_provider=(env.get("ASSISTANT_LLM_PROVIDER") or "none").strip().lower(),
+        assistant_llm_model=(env.get("ASSISTANT_LLM_MODEL") or "").strip() or None,
+        assistant_llm_timeout_seconds=_number(env, "ASSISTANT_LLM_TIMEOUT_SECONDS", 20),
+        assistant_max_output_tokens=int(_number(env, "ASSISTANT_MAX_OUTPUT_TOKENS", 1024, int)),
     )
 
 
@@ -106,6 +131,7 @@ def validate_settings(settings: Settings) -> None:
     if not 1 <= settings.max_upload_bytes <= 10 * 1024 * 1024:
         # The parser itself refuses files over 10 MiB (ingest.MAX_FILE_BYTES); a larger limit only wastes memory.
         raise ConfigError("MAX_UPLOAD_BYTES must be between 1 and 10485760")
+    validate_assistant_settings(settings)
     if not settings.llm_enabled:
         return
     if not settings.llm_model:
@@ -114,3 +140,31 @@ def validate_settings(settings: Settings) -> None:
         raise ConfigError("ANTHROPIC_API_KEY is required for LLM_PROVIDER=anthropic")
     if settings.llm_provider == "openai_compatible" and not settings.openai_base_url:
         raise ConfigError("OPENAI_BASE_URL is required for LLM_PROVIDER=openai_compatible")
+
+
+def validate_assistant_settings(settings: Settings) -> None:
+    """The HR assistant planner's own provider settings (independent of LLM_PROVIDER)."""
+    provider = settings.assistant_llm_provider
+    if provider not in ASSISTANT_LLM_PROVIDERS:
+        raise ConfigError(f"ASSISTANT_LLM_PROVIDER must be one of {', '.join(ASSISTANT_LLM_PROVIDERS)}")
+    if not 0 < settings.assistant_llm_timeout_seconds <= 120:
+        raise ConfigError("ASSISTANT_LLM_TIMEOUT_SECONDS must be between 0 and 120")
+    if not 64 <= settings.assistant_max_output_tokens <= 8192:
+        raise ConfigError("ASSISTANT_MAX_OUTPUT_TOKENS must be between 64 and 8192")
+    if provider == "none":
+        return
+    if not settings.assistant_llm_model:
+        # No default model name on purpose: provider model names change; check the provider's model list.
+        raise ConfigError("ASSISTANT_LLM_MODEL is required when ASSISTANT_LLM_PROVIDER is set")
+    required = {
+        "gemini": (settings.gemini_api_key, "GEMINI_API_KEY"),
+        "groq": (settings.groq_api_key, "GROQ_API_KEY"),
+        "anthropic": (settings.anthropic_api_key, "ANTHROPIC_API_KEY"),
+        "openai_compatible": (settings.openai_base_url, "OPENAI_BASE_URL"),
+    }
+    value, name = required[provider]
+    if not value:
+        raise ConfigError(f"{name} is required for ASSISTANT_LLM_PROVIDER={provider}")
+    base = {"gemini": settings.gemini_base_url, "groq": settings.groq_base_url}.get(provider)
+    if base is not None and not base.startswith(("https://", "http://")):
+        raise ConfigError(f"{provider.upper()}_BASE_URL must be an http(s) URL")

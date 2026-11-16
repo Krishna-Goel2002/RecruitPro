@@ -82,7 +82,12 @@ public class DemoDataSeeder {
             throw new IllegalStateException("app.seed.password does not meet the password policy: " + PasswordPolicy.MESSAGE);
         }
         Organization organization = organizationRepository.findBySlug(ORGANIZATION_SLUG)
-                .orElseGet(() -> organizationService.createOrganization(ORGANIZATION_NAME, ORGANIZATION_SLUG));
+                .orElseGet(() -> {
+                    Organization created = organizationService.createOrganization(ORGANIZATION_NAME, ORGANIZATION_SLUG);
+                    // AS-BE: the demo organisation may use the assistant's external model (ASSISTANT_PLAN 1).
+                    created.setAssistantExternalModel(true);
+                    return organizationRepository.save(created);
+                });
         Long organizationId = organization.getId();
 
         staff(organizationId, ADMIN_EMAIL, "Ada", "Admin", Role.ADMIN, password);

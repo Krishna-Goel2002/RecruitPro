@@ -39,6 +39,8 @@ import java.util.stream.Collectors;
  *   <li>{@code verification_reference_requests} that ended EXPIRED, CANCELLED or DECLINED more than
  *       {@code reference-days} (365) ago: the row stays (verdict history, counts), the referee's name and e-mail are
  *       replaced by placeholders and the answers and comment are cleared;</li>
+ *   <li>{@code assistant_conversations} (with their messages and proposed actions) whose last activity is more than
+ *       {@code assistant-conversation-days} (180) ago (AS-BE);</li>
  *   <li>{@code audit_events} older than {@code audit-days} (730; 0 keeps them forever).</li>
  * </ul>
  *
@@ -132,6 +134,10 @@ public class RetentionPurgeService {
                 List.<Object>of(REMOVED_NAME, REMOVED_EMAIL, Timestamp.valueOf(now)),
                 "status IN ('EXPIRED', 'CANCELLED', 'DECLINED') AND updated_at < ? AND referee_email <> ?",
                 cutoff(now, settings.referenceDays()), REMOVED_EMAIL));
+        // AS-BE: HR assistant conversations without activity for assistant-conversation-days (180); their messages and
+        // proposed actions go with them (ON DELETE CASCADE).
+        rules.add(Rule.delete("assistant_conversations", "assistant_conversations", "id",
+                "updated_at < ?", cutoff(now, settings.assistantConversationDays())));
         if (settings.auditDays() > 0) {
             rules.add(Rule.delete("audit_events", "audit_events", "id",
                     "created_at < ?", cutoff(now, settings.auditDays())));

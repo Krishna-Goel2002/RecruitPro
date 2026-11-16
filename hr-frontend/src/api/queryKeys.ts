@@ -43,6 +43,10 @@ export const qk = {
   ssoProviders: ['auth', 'ssoProviders'] as const,
   mfaStatus: ['account', 'mfa'] as const,
 
+  assistant: ['assistant'] as const,
+  assistantConversations: ['assistant', 'conversations'] as const,
+  assistantConversation: (id: string | number) => ['assistant', 'conversation', String(id)] as const,
+
   notifications: ['notifications'] as const,
   notificationPage: (page: number) => ['notifications', 'page', page] as const,
   unreadCount: ['notifications', 'unread'] as const,

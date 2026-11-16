@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import brand from '../brand/active'
+import { BackLink, useBackTarget, type BackTarget } from './BackLink'
 import { Breadcrumb, type Crumb } from './Breadcrumb'
 import { cx } from './cx'
 
@@ -26,19 +27,32 @@ export interface PageHeaderProps {
   description?: ReactNode
   /** Right-aligned actions: primary LAST, at most two visible, the rest in a "⋯" Menu. */
   actions?: ReactNode
+  /**
+   * "← Back to …" above the title. Omitted: the target the layout provides for this route (BackNavProvider);
+   * `null`: no back control (top-level pages); an object: this exact target.
+   */
+  back?: BackTarget | null
   className?: string
 }
 
 /**
- * Page header (§6): breadcrumb → H1 + status → meta line → actions on the right. The H1 is the focus target after
- * navigation (tabIndex -1, data-page-heading), so screen-reader users hear the new page.
+ * Page header (§6): back control + breadcrumb → H1 + status → meta line → actions on the right. The H1 is the focus
+ * target after navigation (tabIndex -1, data-page-heading), so screen-reader users hear the new page.
  */
-export function PageHeader({ title, documentTitle, breadcrumb, status, meta, description, actions, className }: PageHeaderProps) {
+export function PageHeader({ title, documentTitle, breadcrumb, status, meta, description, actions, back, className }: PageHeaderProps) {
   useDocumentTitle(documentTitle ?? (typeof title === 'string' ? title : null))
+  const provided = useBackTarget()
+  const target = back === undefined ? provided : back
   const metaItems = (meta ?? []).filter(Boolean)
+  const crumbs = breadcrumb && breadcrumb.length > 0
   return (
     <header className={cx('p-page-header', className)}>
-      {breadcrumb && breadcrumb.length > 0 && <Breadcrumb items={breadcrumb} />}
+      {(target || crumbs) && (
+        <div className="p-page-nav">
+          {target && <BackLink {...target} />}
+          {crumbs && <Breadcrumb items={breadcrumb} />}
+        </div>
+      )}
       <div className="p-page-header-row">
         <div className="p-page-header-main">
           <div className="p-page-title-line">

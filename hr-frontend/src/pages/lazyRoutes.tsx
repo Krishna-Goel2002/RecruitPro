@@ -35,3 +35,6 @@ export const AdminUsersPage = page(() => import('./admin/AdminUsersPage').then(m
 export const AdminVerificationPage = page(() => import('./admin/AdminVerificationPage').then(m => m.AdminVerificationPage))
 export const SecurityPage = page(() => import('./account/SecurityPage').then(m => m.SecurityPage))
 export const ChangePasswordPage = page(() => import('./account/ChangePasswordPage').then(m => m.ChangePasswordPage))
+
+// Assistant full page (the side panel itself is in the main bundle).
+export const AssistantPage = page(() => import('../assistant/AssistantPage').then(m => m.AssistantPage))

@@ -38,7 +38,8 @@ def asgi_call(scope_headers: list[tuple[bytes, bytes]], body_chunks: list[bytes]
 class TestAuthentication:
     def test_health_is_public(self, token):
         body = TestClient(app).get("/health").json()
-        assert body == {"status": "ok", "version": "2.0.0", "llmProvider": "none", "ocrAvailable": False}
+        assert body == {"status": "ok", "version": "2.0.0", "llmProvider": "none", "assistantPlanner": "offline",
+                        "ocrAvailable": False}
 
     def test_fails_closed_without_configured_token(self, monkeypatch):
         monkeypatch.delenv("AI_SERVICE_TOKEN", raising=False)

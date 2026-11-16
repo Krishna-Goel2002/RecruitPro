@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { useAuth } from '../../auth/AuthContext'
 import { interviewsApi } from '../../api/assessments'
 import { qk } from '../../api/queryKeys'
 import type { Interview } from '../../api/types'
 import { QueryError } from '../../components/QueryError'
 import { Badge, EmptyState, LoadingRegion, PageHeader, Skeleton, SkeletonText, buttonProps } from '../../design/components'
-import { CalendarClock, ChevronRight, Icon, Link2, Building2 } from '../../design/icons'
+import { ArrowUpRight, CalendarClock, ChevronRight, Icon, Link2, Building2 } from '../../design/icons'
 import { plural, relativeTime } from '../../design/lib/format'
 import { safeHttpUrl } from '../../lib/format'
 import { dayLabel, timeOf, timeZoneLabel } from '../../lib/when'
@@ -13,6 +14,7 @@ import './interviews.css'
 
 /** /interviews: interviews assigned to me (FLOWS-HR-B §3 step 4). Scorecards waiting first, then upcoming by day. */
 export function InterviewsPage() {
+  const { can } = useAuth()
   const query = useQuery({ queryKey: qk.myInterviews, queryFn: ({ signal }) => interviewsApi.mine(signal) })
   const now = Date.now()
   const all = query.data ?? []
@@ -21,6 +23,7 @@ export function InterviewsPage() {
   const upcoming = all.filter(i => i.status === 'SCHEDULED' && new Date(i.scheduledAt).getTime() > now).sort(byTime)
   const past = all.filter(i => i.status !== 'SCHEDULED' || ((i.scorecard || i.scorecardEditable === false) && new Date(i.scheduledAt).getTime() <= now)).sort((a, b) => byTime(b, a))
   const days = groupByDay(upcoming)
+  const next = upcoming[0] && new Date(upcoming[0].scheduledAt).getTime() - now < 7 * 86_400_000 ? upcoming[0] : null
 
   return (
     <div className="iv" data-width="wide">
@@ -39,13 +42,23 @@ export function InterviewsPage() {
       ) : query.isError ? (
         <QueryError error={query.error} title="We couldn’t load your interviews" onRetry={() => void query.refetch()} retrying={query.isFetching} />
       ) : all.length === 0 ? (
-        <EmptyState icon={CalendarClock} title="No interviews assigned to you" description="When an HR manager schedules you as an interviewer, it appears here and you get a notification." />
+        <EmptyState
+          icon={CalendarClock}
+          title="No interviews assigned to you"
+          description={can('interviews.schedule')
+            ? 'Interviews you are the interviewer for appear here. To schedule one, open an applicant who is shortlisted.'
+            : 'When an HR manager schedules you as an interviewer, it appears here and you get a notification.'}
+          action={can('jobs.view')
+            ? <Link {...buttonProps('secondary', 'sm')} to="/jobs">Go to jobs</Link>
+            : <Link {...buttonProps('secondary', 'sm')} to="/notifications">Open your inbox</Link>}
+        />
       ) : (
         <div className="iv-groups">
+          {next && <NextUp interview={next} />}
           {waiting.length > 0 && (
             <section className="iv-group" aria-labelledby="iv-wait" data-tone="warning">
               <h2 id="iv-wait" className="iv-group-title">Waiting for your scorecard <span className="iv-count numeric">{waiting.length}</span></h2>
-              <ul className="iv-list">{waiting.map(i => <Row key={i.id} interview={i} waiting />)}</ul>
+              <ul className="iv-list ui-stagger">{waiting.map(i => <Row key={i.id} interview={i} waiting />)}</ul>
             </section>
           )}
           <section className="iv-group" aria-labelledby="iv-up">
@@ -53,14 +66,14 @@ export function InterviewsPage() {
             {upcoming.length === 0 ? <p className="iv-none">Nothing scheduled ahead.</p> : days.map(([day, items]) => (
               <div key={day} className="iv-day">
                 <h3 className="iv-day-label">{day}</h3>
-                <ul className="iv-list">{items.map(i => <Row key={i.id} interview={i} />)}</ul>
+                <ul className="iv-list ui-stagger">{items.map(i => <Row key={i.id} interview={i} />)}</ul>
               </div>
             ))}
           </section>
           {past.length > 0 && (
             <section className="iv-group" aria-labelledby="iv-past">
               <h2 id="iv-past" className="iv-group-title">Completed and cancelled <span className="iv-count numeric">{past.length}</span></h2>
-              <ul className="iv-list">{past.map(i => <Row key={i.id} interview={i} past />)}</ul>
+              <ul className="iv-list ui-stagger">{past.map(i => <Row key={i.id} interview={i} past />)}</ul>
             </section>
           )}
         </div>
@@ -80,6 +93,34 @@ function groupByDay(items: Interview[]): [string, Interview[]][] {
     map.set(key, [...(map.get(key) ?? []), i])
   }
   return [...map.entries()]
+}
+
+/** The next interview within a week: when, who, where, and the two things you need (kit, call link). */
+function NextUp({ interview: i }: { interview: Interview }) {
+  const link = safeHttpUrl(i.location)
+  const end = new Date(new Date(i.scheduledAt).getTime() + i.durationMinutes * 60_000).toISOString()
+  return (
+    <section className="iv-next" aria-labelledby="iv-next-h">
+      <div className="iv-next-main">
+        <p id="iv-next-h" className="iv-next-label">Next up · <span className="iv-next-rel">{relativeTime(i.scheduledAt)}</span></p>
+        <p className="iv-next-when numeric">{dayLabel(i.scheduledAt)}, {timeOf(i.scheduledAt)}–{timeOf(end)}</p>
+        <p className="iv-next-who"><strong>{i.candidateName}</strong> · {i.jobTitle}</p>
+        {i.location && (
+          <p className="iv-next-where">
+            {link ? <><Icon icon={Link2} size={14} />Video call</> : <><Icon icon={Building2} size={14} />{i.location}</>}
+          </p>
+        )}
+      </div>
+      <div className="iv-next-actions">
+        {link && (
+          <a {...buttonProps('secondary')} href={link} target="_blank" rel="noopener noreferrer">
+            Join call<Icon icon={ArrowUpRight} size={16} />
+          </a>
+        )}
+        <Link {...buttonProps('primary')} to={`/interviews/${i.id}`}>Open interview</Link>
+      </div>
+    </section>
+  )
 }
 
 function Row({ interview: i, waiting, past }: { interview: Interview; waiting?: boolean; past?: boolean }) {

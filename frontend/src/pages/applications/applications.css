@@ -64,3 +64,61 @@
   .a-cover-text { margin-top: 8px; padding: 12px; border-left: 2px solid var(--border-strong); background: var(--bg-sunken); color: var(--fg-default); white-space: pre-line; font: 400 var(--text-sm) / var(--lh-body) var(--font-sans); }
   .j-pagination { margin-top: 20px; }
 }
+
+/* Pipeline summary (SITE-CAND): a proportion bar in stage order, hairlines between segments, outer corners rounded by
+   the track; it sweeps in from the left on first view. Stage hues: accent ramp for the open stages, success for
+   Selected, neutral for Closed (never red: closing is not a verdict on the person). */
+@layer pages {
+  .a-pipe { margin: 0 0 24px; }
+  .a-pipe-bar {
+    display: flex;
+    height: 8px;
+    overflow: hidden;
+    border-radius: var(--r-full);
+    background: var(--bg-active);
+    clip-path: inset(0 100% 0 0);
+  }
+  .a-pipe-bar[data-seen] { clip-path: inset(0 0 0 0); transition: clip-path var(--dur-slower) var(--ease-decelerate); }
+  .a-pipe-seg { height: 100%; }
+  .a-pipe-seg + .a-pipe-seg { box-shadow: inset 1px 0 0 var(--bg-surface); }
+  .a-pipe [data-stage='review'] { --stage: color-mix(in srgb, var(--tier-fill) 45%, var(--bg-active)); }
+  .a-pipe [data-stage='shortlisted'] { --stage: color-mix(in srgb, var(--tier-fill) 72%, var(--bg-active)); }
+  .a-pipe [data-stage='interviewing'] { --stage: var(--tier-fill); }
+  .a-pipe [data-stage='selected'] { --stage: var(--success-fg); }
+  .a-pipe [data-stage='closed'] { --stage: var(--border-strong); }
+  .a-pipe-seg { background: var(--stage); }
+  .a-pipe-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 12px 0 0; padding: 0; list-style: none; font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .a-pipe-legend li { display: inline-flex; align-items: center; gap: 6px; }
+  .a-pipe-key { width: 10px; height: 10px; border-radius: 2px; background: var(--stage); }
+  .a-pipe-label { color: var(--fg-muted); }
+  .a-pipe-n { color: var(--fg-default); font-weight: 600; }
+  .a-pipe-legend li[data-zero] .a-pipe-n { color: var(--fg-subtle); font-weight: 400; }
+  .a-pipe-legend li[data-zero] .a-pipe-key { opacity: .5; }
+  @media (prefers-reduced-motion: reduce) {
+    .a-pipe-bar { clip-path: none; }
+    .a-pipe-bar[data-seen] { transition: none; }
+  }
+}
+
+/* Requirement summary on the application detail (SITE-CAND): count-up headline and one segment per requirement that
+   rises in left to right (verified = filled, own claim = outline, the rest empty). */
+@layer pages {
+  .a-req-summary { margin: 4px 0 12px; }
+  .a-req-summary-main { margin: 0; color: var(--fg-muted); }
+  .a-req-summary-n { color: var(--fg-default); font: 600 var(--text-h2) / var(--lh-h2) var(--font-sans); letter-spacing: -.01em; }
+  .a-req-bar { display: flex; gap: 3px; max-width: 420px; margin-top: 10px; }
+  .a-req-bar > span {
+    flex: 1;
+    height: 6px;
+    border-radius: 1px;
+    background: var(--bg-active);
+    transform-origin: bottom;
+    animation: ui-rung-in var(--dur-slow) var(--ease-decelerate) both;
+    animation-delay: calc(var(--i) * 50ms + 120ms);
+  }
+  .a-req-bar > span[data-on] { background: var(--tier-fill); }
+  .a-req-bar > span[data-claim] { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-subtle); }
+  @media (prefers-reduced-motion: reduce) {
+    .a-req-bar > span { animation: none; }
+  }
+}

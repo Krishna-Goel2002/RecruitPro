@@ -5,6 +5,7 @@ import { errorMessage } from '../../api/client'
 import { qk } from '../../api/queryKeys'
 import { reviewApi } from '../../api/review'
 import type { ApplicantListParams, ApplicantSummary, ApplicationStatus, JobStaff, RankGroup } from '../../api/types'
+import { useOptionalAssistant } from '../../assistant/AssistantProvider'
 import { useAuth } from '../../auth/AuthContext'
 import { QueryError } from '../../components/QueryError'
 import { Kbd, ShortcutSheet, useShortcuts } from '../../components/Shortcuts'
@@ -15,7 +16,7 @@ import {
 } from '../../design/components'
 import { formatDate, formatNumber, plural, relativeTime } from '../../design/lib/format'
 import {
-  ArrowRight, ChevronDown, Ellipsis, Eye, EyeOff, Icon, Info, LayoutGrid, Link2, RefreshCw, Search, TriangleAlert, UserRoundCheck, Users, X,
+  ArrowRight, ChevronDown, Ellipsis, Eye, EyeOff, Icon, Info, LayoutGrid, Link2, MessagesSquare, RefreshCw, Search, TriangleAlert, UserRoundCheck, Users, X,
 } from '../../design/icons'
 import { flagInfo } from '../../lib/format'
 import { usePendingPoll, usePollRef } from '../../lib/hooks'
@@ -52,6 +53,7 @@ const MORE_VIEWS: { value: ApplicationStatus; label: string }[] = [
  */
 export function ApplicantsTab({ job }: { job: JobStaff }) {
   const { can } = useAuth()
+  const assistant = useOptionalAssistant()
   const canDecide = can('applicants.decide')
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -362,6 +364,11 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
       </div>
       <div className="hra-rank-tools">
         <p className="hra-count numeric" aria-live="polite">{data ? plural(data.totalElements, 'applicant') : ''}</p>
+        {assistant && (
+          <Button size="sm" variant="ghost" icon={MessagesSquare} onClick={() => assistant.ask("Summarise this job's applicants")}>
+            Summarise
+          </Button>
+        )}
         <DensityToggle value={density} onChange={setDensity} />
         <IconButton
           label="Copy link to this view"

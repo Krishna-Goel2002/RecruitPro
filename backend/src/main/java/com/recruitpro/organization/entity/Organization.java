@@ -40,4 +40,12 @@ public class Organization extends BaseEntity {
      */
     @Column(name = "sso_allowed_domains", length = 500)
     private String ssoAllowedDomains;
+
+    /**
+     * HR assistant privacy switch (ASSISTANT_PLAN 1, V29): whether the assistant may use the configured external LLM
+     * planner (with de-identified data). False: only the offline planner is used. Default false; the demo organisation
+     * is true.
+     */
+    @Column(name = "assistant_external_model", nullable = false)
+    private boolean assistantExternalModel = false;
 }

@@ -129,9 +129,7 @@
       min-width: 0;
       padding: var(--s-12) var(--s-10);
       border-left: 1px solid var(--border-hairline);
-      background:
-        linear-gradient(var(--border-hairline), var(--border-hairline)) 0 calc(100% - 64px) / 100% 1px no-repeat,
-        var(--bg-sunken);
+      background: var(--bg-sunken);
     }
   }
   @media (min-width: 1200px) {

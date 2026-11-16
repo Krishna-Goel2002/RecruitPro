@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { NavLink, Outlet } from 'react-router-dom'
 import { accountApi } from '../api/account'
@@ -6,11 +6,14 @@ import { qk } from '../api/queryKeys'
 import { useAuth, useCurrentUser } from '../auth/AuthContext'
 import { Capability } from '../auth/permissions'
 import brand from '../design/brand/active'
-import { AccountMenu, AppShell, Tooltip, type NavGroup, type NavItem } from '../design/components'
+import { AccountMenu, AppShell, BackNavProvider, Tooltip, type NavGroup, type NavItem } from '../design/components'
 import {
-  BadgeCheck, Bell, BriefcaseBusiness, Building2, CalendarClock, Icon, Inbox, KeyRound, LadderMark, LayoutGrid, ListChecks, MailPlus,
+  BadgeCheck, Bell, BriefcaseBusiness, Building2, CalendarClock, Icon, Inbox, KeyRound, LadderMark, LayoutGrid, ListChecks, MailPlus, MessagesSquare,
   Scale, ScrollText, ShieldCheck, Users,
 } from '../design/icons'
+import { AssistantProvider } from '../assistant/AssistantProvider'
+import { AskButton, AssistantPanel } from '../assistant/AssistantPanel'
+import { useBackNav } from '../lib/backNav'
 import { fullName, roleLabel } from '../lib/format'
 import { readFlag } from '../lib/lastSeen'
 import { SETUP_HIDDEN_FLAG, useSetupProgress } from '../pages/home/setup'
@@ -20,6 +23,7 @@ type StaffNavItem = NavItem & { capability: Capability }
 const WORKSPACE_NAV: StaffNavItem[] = [
   { to: '/jobs', label: 'Jobs', icon: BriefcaseBusiness, capability: 'jobs.view' },
   { to: '/interviews', label: 'My interviews', icon: CalendarClock, capability: 'interviews.view' },
+  { to: '/assistant', label: 'Assistant', icon: MessagesSquare, capability: 'account' },
 ]
 
 const ADMIN_NAV: StaffNavItem[] = [
@@ -58,8 +62,20 @@ export function Brand({ dark = false }: { dark?: boolean }) {
   )
 }
 
-/** Authenticated shell: the shared design-system AppShell with role-based navigation and the account menu. */
+/**
+ * Authenticated shell: the shared design-system AppShell with role-based navigation, the assistant ("Ask" in the top
+ * bar, Ctrl/⌘ + K, right-side panel) and the account menu. Every page header gets its "← Back to …" target from here.
+ */
 export function AppLayout() {
+  return (
+    <AssistantProvider>
+      <Shell />
+      <AssistantPanel />
+    </AssistantProvider>
+  )
+}
+
+function Shell() {
   const { can, signOut } = useAuth()
   const user = useCurrentUser()
   const [signingOut, setSigningOut] = useState(false)
@@ -81,6 +97,7 @@ export function AppLayout() {
   ]
 
   const name = fullName(user)
+  const back = useBackNav()
 
   return (
     <AppShell
@@ -91,6 +108,7 @@ export function AppLayout() {
       sidebarFooter={user.organizationName ?? undefined}
       topbarEnd={
         <>
+          {can('account') && <AskButton />}
           {can('account') && (
             <Tooltip content="Notifications" labelOnly>
               <NavLink to="/notifications" className="p-bell" aria-label={unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}>
@@ -120,21 +138,9 @@ export function AppLayout() {
         </>
       }
     >
-      <Outlet />
+      <BackNavProvider value={back}>
+        <Outlet />
+      </BackNavProvider>
     </AppShell>
-  )
-}
-
-/** Page heading row used by every (legacy) screen. New screens use PageHeader from src/design/components. */
-export function PageHeader({ eyebrow, title, subtitle, actions }: { eyebrow?: string; title: ReactNode; subtitle?: ReactNode; actions?: ReactNode }) {
-  return (
-    <div className="page-title-row">
-      <div>
-        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
-        <h1>{title}</h1>
-        {subtitle && <p className="page-subtitle">{subtitle}</p>}
-      </div>
-      {actions && <div className="page-actions">{actions}</div>}
-    </div>
   )
 }

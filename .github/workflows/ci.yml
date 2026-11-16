@@ -188,7 +188,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Shared portal files (src/design, theme-init.js, nginx.conf, Dockerfile) are identical
+      - name: Shared files are identical (src/design in both portals and the site; theme-init.js; portal nginx.conf, Dockerfile)
         run: python -B tools/check_design_sync.py
       - name: agent-service taxonomy matches ai-service
         run: python -B tools/sync_taxonomy.py --check
@@ -199,13 +199,13 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml config --quiet
 
   frontends:
-    name: Portal (${{ matrix.app }}) install, test, build
+    name: Web app (${{ matrix.app }}) install, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        app: [frontend, hr-frontend]
+        app: [frontend, hr-frontend, site]
     defaults:
       run:
         working-directory: ${{ matrix.app }}
@@ -252,6 +252,10 @@ jobs:
           for port in 5173 5174; do
             curl -fsS -D - -o /dev/null "http://localhost:$port/jobs/1" | tee /dev/stderr | grep -i "content-security-policy:.*connect-src 'self' http://localhost:8080"
           done
+          # The landing site is up, serves its theme script and has the strict CSP (no API origin: it calls nothing).
+          curl -fsS -D - -o /dev/null http://localhost:5170/ | tee /dev/stderr | grep -i "content-security-policy:.*connect-src 'self';"
+          curl -fsS http://localhost:5170/ | grep -q '<div id="root">'
+          curl -fsS http://localhost:5170/theme-init.js > /dev/null
           # The backend (non-root) can write to the uploads volume.
           docker compose exec -T backend sh -c 'touch /data/uploads/.ci-write-test && rm /data/uploads/.ci-write-test'
       - name: Logs

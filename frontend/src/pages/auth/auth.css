@@ -15,6 +15,17 @@
     .auth-main { padding: 24px 40px 32px; }
   }
   .auth-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 40px; }
+  .auth-top-end { display: inline-flex; align-items: center; gap: 4px; }
+  /* Back to the public landing site (SITE-CAND). */
+  .auth-site-link {
+    display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border-radius: var(--r-sm);
+    color: var(--fg-muted); font: 500 var(--text-sm) / var(--lh-sm) var(--font-sans); text-decoration: none;
+    transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+  }
+  .auth-site-link:hover { color: var(--fg-default); background: var(--bg-hover); text-decoration: none; }
+  .auth-site-link svg { transition: transform var(--dur-fast) var(--ease-standard); }
+  .auth-site-link:hover svg { transform: translateX(-2px); }
+  @media (prefers-reduced-motion: reduce) { .auth-site-link svg { transition: none; } .auth-site-link:hover svg { transform: none; } }
   .auth-brand { display: inline-flex; align-items: center; gap: 9px; color: var(--fg-default); text-decoration: none; border-radius: var(--r-sm); white-space: nowrap; }
   .auth-brand:hover { text-decoration: none; }
 

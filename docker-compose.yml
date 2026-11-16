@@ -1,6 +1,7 @@
 # RecruitPro local stack: `docker compose up --build`
 #   Candidate portal  http://localhost:5173
 #   HR portal         http://localhost:5174
+#   Landing site      http://localhost:5170  (static; links to both portals)
 #   Backend API       http://localhost:8080/api/v1  (Swagger UI: /swagger-ui.html)
 #   Agent service     http://localhost:8100/health  (bound to 127.0.0.1)
 #   Mailpit (email)   http://localhost:8025         (bound to 127.0.0.1; SMTP 1025)
@@ -15,7 +16,7 @@
 #   agent         backend, agent-service                   - the agent cannot reach postgres or the AI service
 #   egress        backend                                  - SMTP, GitHub OAuth, OIDC providers; publishes 8080
 #   agent-egress  agent-service                            - candidate URLs, GitHub/GitLab, badge issuers; publishes 8100
-#   edge          candidate-portal, hr-portal, mailpit     - published ports only
+#   edge          candidate-portal, hr-portal, site, mailpit - published ports only
 # The AI service has no egress. For LLM_PROVIDER=anthropic|openai_compatible add the override:
 #   docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d
 name: recruitpro
@@ -164,6 +165,18 @@ services:
       - backend
     ports:
       - "5174:80"
+    networks: [edge]
+
+  # Public landing page (site/): static, calls no API. The portal URLs are compiled in; change them together with
+  # the published portal addresses.
+  site:
+    build:
+      context: ./site
+      args:
+        VITE_CANDIDATE_URL: http://localhost:5173
+        VITE_HR_URL: http://localhost:5174
+    ports:
+      - "5170:80"
     networks: [edge]
 
 networks:

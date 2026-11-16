@@ -1,0 +1,159 @@
+/* Document defaults, the type scale, links, focus, selection, scrollbars, reduced motion (DESIGN_SYSTEM §4, §5). */
+
+html {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--lh-body);
+  font-weight: 400;
+  color: var(--fg-default);
+  background: var(--bg-canvas);
+  font-synthesis: none;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+body {
+  min-width: 320px;
+  background: var(--bg-canvas);
+  color: var(--fg-default);
+}
+
+/* A subtree that forces a theme also needs its own text colour (the custom properties resolve on that element). */
+[data-theme] {
+  color: var(--fg-default);
+}
+
+/* ------------------------------------------------------------------------------------------------ type scale */
+h1, h2, h3, h4 {
+  color: var(--fg-default);
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+h1 { font: 600 var(--text-h1) / var(--lh-h1) var(--font-heading); letter-spacing: var(--font-display-tracking, -.015em); }
+h2 { font: 600 var(--text-h2) / var(--lh-h2) var(--font-h2, var(--font-sans)); letter-spacing: -.01em; }
+h3 { font-size: var(--text-h3); line-height: var(--lh-h3); }
+h4 { font-size: var(--text-body); line-height: var(--lh-body); }
+
+.t-display { font: var(--font-display-weight, 600) var(--text-display) / var(--lh-display) var(--font-heading); letter-spacing: -.02em; }
+.t-h1      { font: var(--font-display-weight, 600) var(--text-h1) / var(--lh-h1) var(--font-heading); letter-spacing: var(--font-display-tracking, -.015em); }
+.t-h2      { font: 600 var(--text-h2) / var(--lh-h2) var(--font-h2, var(--font-sans)); letter-spacing: -.01em; }
+.t-h3      { font: 600 var(--text-h3) / var(--lh-h3) var(--font-sans); letter-spacing: 0; }
+.t-body-lg { font: 400 var(--text-body-lg) / var(--lh-body-lg) var(--font-sans); }
+.t-body    { font: 400 var(--text-body) / var(--lh-body) var(--font-sans); }
+.t-strong  { font: 500 var(--text-body) / var(--lh-body) var(--font-sans); }
+.t-sm      { font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+.t-label   { font: 500 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+.t-caption { font: 500 var(--text-caption) / var(--lh-caption) var(--font-sans); letter-spacing: .01em; }
+.t-overline {
+  font: 600 var(--text-overline) / var(--lh-overline) var(--font-sans);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.t-mono    { font: 400 var(--text-sm) / var(--lh-body) var(--font-mono); font-feature-settings: 'zero' 1; }
+
+p { text-wrap: pretty; }
+
+strong, b { font-weight: 600; }
+
+small { font-size: var(--text-sm); }
+
+code, kbd, samp, pre {
+  font-family: var(--font-mono);
+  font-size: .929em;
+  font-feature-settings: 'zero' 1;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border-default);
+  border-bottom-width: 2px;
+  border-radius: var(--r-xs);
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  line-height: 16px;
+  text-align: center;
+}
+
+hr {
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--border-hairline);
+}
+
+/* ---------------------------------------------------------------------------------------------------- links */
+a {
+  color: var(--accent-text);
+  text-decoration-line: var(--link-decoration, none);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+a:hover {
+  text-decoration-line: underline;
+  text-decoration-color: currentColor;
+}
+
+/* --------------------------------------------------------------------------------------------- focus, selection */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Programmatic focus targets (page headings, main) do not show a ring after route changes. */
+[tabindex='-1']:focus:not(:focus-visible) {
+  outline: none;
+}
+
+::selection {
+  background: var(--selection-bg);
+  color: var(--fg-emphasis);
+}
+
+/* ------------------------------------------------------------------------------------------------- scrollbars */
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar);
+    border: 3px solid transparent;
+    border-radius: var(--r-full);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar-hover); }
+}
+
+/* ----------------------------------------------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    /* Components already shorten their own durations through the tokens; this catches anything hand-written. */
+    animation-iteration-count: 1;
+    scroll-behavior: auto;
+  }
+}
+
+/* Theme-switch fallback (no View Transitions): a short colour crossfade, removed by theme.ts after 250 ms. */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: background-color var(--dur-base) var(--ease-standard), border-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard), fill var(--dur-base) var(--ease-standard) !important;
+}
+
+/* View-transition theme switch (M14): theme.ts animates the new snapshot with a circular clip-path. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}

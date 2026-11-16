@@ -12,6 +12,10 @@ import java.util.List;
 public final class TestDatabase {
 
     private static final List<String> TABLES_CHILDREN_FIRST = List.of(
+            // AS-BE HR assistant tables (children first).
+            "assistant_actions",
+            "assistant_messages",
+            "assistant_conversations",
             // WP-VBE verification tables (children first).
             "claim_verdict_labels",
             "claim_verdict_reviews",

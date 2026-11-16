@@ -7,7 +7,7 @@ import { queryKeys } from '../api/queryKeys'
 import type { Requirement } from '../api/types'
 import { ErrorState, Facts } from '../components/Feedback'
 import {
-  Button, EmptyState, EvidenceLadder, LoadingRegion, PageHeader, ReqMarker, Skeleton, SkeletonText, buttonProps,
+  Button, CountUp, EmptyState, EvidenceLadder, LoadingRegion, PageHeader, ReqMarker, Skeleton, SkeletonText, buttonProps,
 } from '../design/components'
 import { ArrowRight, BriefcaseBusiness, CircleCheck, Icon } from '../design/icons'
 import { formatDate, plural, relativeTime } from '../design/lib/format'
@@ -245,7 +245,7 @@ function MatchBlock({ matches, haveEvidence, loading }: { matches: RequirementMa
       </div>
       <p className="c-muted">
         <span className="jd-match-count numeric">
-          {covered} of {matches.length}
+          <CountUp value={covered} /> of {matches.length}
         </span>{' '}
         requirements found in your resume and claims
       </p>
@@ -258,7 +258,7 @@ function MatchBlock({ matches, haveEvidence, loading }: { matches: RequirementMa
         {matches.map(m => (
           <li key={m.requirement.id}>
             <span title={m.requirement.description}>{m.requirement.description}</span>
-            <EvidenceLadder tier={m.tier} audience="candidate" animate={false} />
+            <EvidenceLadder tier={m.tier} audience="candidate" />
           </li>
         ))}
       </ul>

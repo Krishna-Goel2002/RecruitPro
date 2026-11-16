@@ -7,10 +7,11 @@ import { queryKeys } from '../api/queryKeys'
 import type { ApplicationDetail, ApplicationRequirement, ApplicationStatus } from '../api/types'
 import { ClaimForm } from '../components/ClaimForm'
 import { ConfirmDialog } from '../components/Dialog'
+import { EnterList } from '../components/EnterList'
 import { ErrorState, Facts } from '../components/Feedback'
 import { useNotify } from '../components/Notices'
 import {
-  Badge, Button, Drawer, EmptyState, IconButton, LoadingRegion, Menu, PageHeader, Panel, ReqMarker, Skeleton, SkeletonText, Timeline,
+  Badge, Button, CountUp, Drawer, EmptyState, IconButton, LoadingRegion, Menu, PageHeader, Panel, ReqMarker, Skeleton, SkeletonText, Timeline,
   buttonProps, type TimelineItem,
 } from '../design/components'
 import {
@@ -145,7 +146,9 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
             ) : detail.requirements.length === 0 ? (
               <p className="c-muted">This job has no structured requirements.</p>
             ) : (
-              <ul className="c-rows" data-closed="">
+              <>
+              <RequirementSummary requirements={detail.requirements} />
+              <EnterList className="c-rows" data-closed="">
                 {detail.requirements.map(r => (
                   <li key={r.requirementId} className="a-req">
                     <div className="a-req-main">
@@ -181,7 +184,8 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
                     </div>
                   </li>
                 ))}
-              </ul>
+              </EnterList>
+              </>
             )}
           </section>
         </div>
@@ -380,5 +384,33 @@ function DetailSkeleton() {
         <SkeletonText lines={5} />
       </div>
     </LoadingRegion>
+  )
+}
+
+/** "3 of 5 verified · must-haves 2 of 3": the summary before the per-requirement rows (count-up on first view). */
+function RequirementSummary({ requirements }: { requirements: ApplicationRequirement[] }) {
+  const verified = requirements.filter(r => r.verification === 'VERIFIED').length
+  const must = requirements.filter(r => r.mandatory)
+  const mustVerified = must.filter(r => r.verification === 'VERIFIED').length
+  return (
+    <div className="a-req-summary">
+      <p className="a-req-summary-main">
+        <span className="a-req-summary-n numeric">
+          <CountUp value={verified} /> of {requirements.length}
+        </span>{' '}
+        requirements verified
+      </p>
+      {must.length > 0 && (
+        <p className="c-meta">
+          Must-haves: {mustVerified} of {must.length} verified
+          {mustVerified < must.length ? ' · add evidence to the others below' : ''}
+        </p>
+      )}
+      <div className="a-req-bar" aria-hidden="true">
+        {requirements.map((r, i) => (
+          <span key={r.requirementId} style={{ ['--i' as string]: i }} data-on={r.verification === 'VERIFIED' || undefined} data-claim={r.verification === 'CLAIMED' || undefined} />
+        ))}
+      </div>
+    </div>
   )
 }

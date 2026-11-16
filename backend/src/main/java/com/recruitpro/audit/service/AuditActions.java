@@ -39,6 +39,8 @@ public final class AuditActions {
     public static final String WORK_SAMPLE_CANCELLED = "WORK_SAMPLE_CANCELLED";
     public static final String WORK_SAMPLE_FILE_DOWNLOADED = "WORK_SAMPLE_FILE_DOWNLOADED";
     public static final String SCORECARD_UPDATED = "SCORECARD_UPDATED";
+    // AS-BE (HR assistant): a confirmed proposed action; details start with "via=ASSISTANT".
+    public static final String ASSISTANT_ACTION_CONFIRMED = "ASSISTANT_ACTION_CONFIRMED";
 
     private AuditActions() {
     }

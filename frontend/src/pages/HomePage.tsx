@@ -12,12 +12,15 @@ import {
   Button, CountUp, EvidenceLadder, FileDropzone, IconButton, LoadingRegion, PageHeader, Panel, Skeleton, Spinner, buttonProps,
 } from '../design/components'
 import {
-  ArrowRight, BadgeCheck, CalendarClock, Check, ChevronRight, Clock, FileText, Icon, ListChecks, X, type IconComponent,
+  ArrowRight, BadgeCheck, BriefcaseBusiness, CalendarClock, Check, ChevronRight, Clock, FileText, Icon, ListChecks, ShieldCheck, X,
+  type IconComponent,
 } from '../design/icons'
 import { TIERS, tierOrdinal } from '../design/lib/labels'
 import { useInView } from '../design/motion'
 import { formatDate, plural, relativeTime } from '../design/lib/format'
 import { timeRange } from '../lib/calendar'
+import { useEnterOnce } from '../lib/hooks'
+import { glanceCounts } from '../lib/summary'
 import { interviewEnd, nextStepFor, tasksForJob } from '../lib/nextStep'
 import {
   interviewsQuery, latestResume, ledgerQuery, recentApplicationsQuery, resumesQuery, sourcesQuery, workSamplesQuery,
@@ -81,6 +84,7 @@ export function HomePage() {
         />
       ) : (
         <>
+          {settled || (applications.data?.totalElements ?? 0) > 0 || (ledger.data?.length ?? 0) > 0 ? <AtAGlance /> : null}
           <Checklist
             emailVerified={user.emailVerified}
             email={user.email}
@@ -98,6 +102,50 @@ export function HomePage() {
         </>
       )}
     </div>
+  )
+}
+
+// ------------------------------------------------------------------------------------------------- at a glance
+
+/**
+ * Four numbers a returning candidate checks first, each a link to where it is handled. The numbers count up on
+ * first view (M4) and the tiles rise in one after another (M2); hover lifts a tile, press settles it.
+ */
+function AtAGlance() {
+  const applications = useQuery(recentApplicationsQuery)
+  const samples = useQuery(workSamplesQuery)
+  const interviews = useQuery(interviewsQuery)
+  const ledger = useQuery(ledgerQuery)
+  const g = glanceCounts({ applications: applications.data?.content, samples: samples.data, interviews: interviews.data, ledger: ledger.data })
+  const samplesToDo = (samples.data ?? []).some(s => s.status === 'ASSIGNED' || s.status === 'STARTED')
+  const tiles: { key: string; icon: IconComponent; value: number; label: string; hint: string; to: string }[] = [
+    { key: 'progress', icon: BriefcaseBusiness, value: g.inProgress, label: 'In progress', hint: g.inProgress === 1 ? 'application with an employer' : 'applications with employers', to: '/applications' },
+    { key: 'todo', icon: ListChecks, value: g.toDo, label: 'To do', hint: 'work samples and interviews', to: samplesToDo || g.toDo === 0 ? '/work-samples' : '/interviews' },
+    { key: 'review', icon: BadgeCheck, value: g.toReview, label: 'To review', hint: g.toReview === 1 ? 'result only you can see' : 'results only you can see', to: g.toReview ? '/verification?review=first' : '/verification' },
+    { key: 'strong', icon: ShieldCheck, value: g.strong, label: 'Strong evidence', hint: 'claims corroborated or better', to: '/verification' },
+  ]
+  const ref = useRef<HTMLUListElement>(null)
+  useEnterOnce(ref, true)
+  return (
+    <section className="h-glance-wrap" aria-label="At a glance">
+      <ul ref={ref} className="h-glance">
+        {tiles.map(t => (
+          <li key={t.key} data-zero={t.value === 0 || undefined}>
+            <Link to={t.to} className="h-glance-tile">
+              <span className="h-glance-label">
+                <Icon icon={t.icon} size={16} />
+                {t.label}
+              </span>
+              <span className="h-glance-value">
+                <CountUp value={t.value} />
+              </span>
+              <span className="h-glance-hint">{t.hint}</span>
+              <Icon icon={ChevronRight} size={16} className="h-glance-go" />
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -334,6 +382,8 @@ function Attention({ quietWhenEmpty }: { quietWhenEmpty: boolean }) {
     items.push({ key: 'review', icon: BadgeCheck, title: `${plural(awaiting, 'verification result')} waiting for your review`, meta: 'Only you can see them until you share.', to: '/verification?review=first', action: 'Review', urgency: 3 })
   }
   items.sort((a, b) => a.urgency - b.urgency)
+  const listRef = useRef<HTMLUListElement>(null)
+  useEnterOnce(listRef, items.length > 0)
   if (items.length === 0 && quietWhenEmpty) return null
 
   return (
@@ -346,7 +396,7 @@ function Attention({ quietWhenEmpty }: { quietWhenEmpty: boolean }) {
           <Icon icon={Check} size={16} /> Nothing needs you right now. We will notify you when an employer moves forward.
         </p>
       ) : (
-        <ul className="c-rows" data-closed="">
+        <ul ref={listRef} className="c-rows" data-closed="">
           {items.map(item => (
             <li key={item.key} className="c-linkrow h-att">
               <span className="h-att-icon">

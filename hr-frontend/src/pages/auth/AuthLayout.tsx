@@ -75,7 +75,7 @@ export function AuthLayout({ title, intro, overline, children, footer, stepKey, 
 function AuthSpecimen() {
   return (
     <aside className="hra-auth-aside" aria-hidden="true">
-      <div className="hra-auth-specimen">
+      <div className="hra-auth-specimen ui-stagger">
         <p className="hra-specimen-kicker">Evidence ladder</p>
         <p className="hra-specimen-line">Every rank shows the evidence behind it.</p>
         <p className="hra-specimen-sub">
