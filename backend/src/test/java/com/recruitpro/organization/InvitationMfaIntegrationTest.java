@@ -34,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * challenge like {@code /auth/login}; it used to hand out a full session (access token and refresh cookie) without
  * a second factor. Same context configuration as {@code MfaIntegrationTest} (encryption key set).
  */
-@SpringBootTest(properties = "app.encryption.key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+@SpringBootTest(properties = "app.encryption.key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class InvitationMfaIntegrationTest {

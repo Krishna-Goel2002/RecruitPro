@@ -1,0 +1,16 @@
+# ggshield / GitGuardian configuration (https://docs.gitguardian.com/ggshield-docs/reference/gitguardian-yaml).
+# Test folders contain only fake credentials (unit-test fixtures); real secrets live only in the git-ignored .env.
+version: 2
+secret:
+  ignored_paths:
+    - "backend/src/test/**"
+    - "ai-service/tests/**"
+    - "agent-service/tests/**"
+    - "agent-service/eval/**"
+    - "frontend/src/**/__tests__/**"
+    - "frontend/src/**/*.test.ts"
+    - "frontend/src/**/*.test.tsx"
+    - "hr-frontend/src/**/*.test.ts"
+    - "hr-frontend/src/**/*.test.tsx"
+    - "tools/ui-snapshots/fixtures/**"
+    - "**/pnpm-lock.yaml"

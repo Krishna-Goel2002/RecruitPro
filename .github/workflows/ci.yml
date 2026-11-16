@@ -70,9 +70,7 @@ jobs:
       DB_URL: jdbc:postgresql://localhost:5432/recruitpro
       DB_USERNAME: recruitpro
       DB_PASSWORD: recruitpro
-      JWT_SECRET: ci-only-jwt-secret-not-for-production-0123456789
-      # Base64 of 32 fixed bytes (CI only), so start-up validates the key like the compose stack does.
-      APP_ENCRYPTION_KEY: Y2ktb25seS1yZWNydWl0cHJvLWVuY3J5cHQta2V5ISE=
+      # JWT_SECRET and APP_ENCRYPTION_KEY are generated per run (step "Fresh secrets"); none are stored in the repository.
       APP_SEED_DEMO: "true"
       BACKGROUND_JOBS_ENABLED: "false"
     steps:
@@ -82,6 +80,14 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      - name: Fresh secrets for this run (masked in logs)
+        run: |
+          jwt="$(openssl rand -base64 48 | tr -d '\n')"
+          key="$(openssl rand -base64 32 | tr -d '\n')"
+          echo "::add-mask::$jwt"
+          echo "::add-mask::$key"
+          echo "JWT_SECRET=$jwt" >> "$GITHUB_ENV"
+          echo "APP_ENCRYPTION_KEY=$key" >> "$GITHUB_ENV"
       - name: Package
         run: |
           chmod +x mvnw
@@ -188,6 +194,7 @@ jobs:
         run: python -B tools/sync_taxonomy.py --check
       - name: Compose files are valid (base and with the AI egress override)
         run: |
+          python -B tools/generate_env.py
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml config --quiet
 
@@ -224,6 +231,8 @@ jobs:
     # Independent of the other jobs: the images compile without running tests.
     steps:
       - uses: actions/checkout@v4
+      - name: Fresh secrets in a throw-away .env
+        run: python3 -B tools/generate_env.py
       - name: Build every image and start the stack (waits for all health checks)
         run: docker compose up --build --detach --wait --wait-timeout 600
       - name: Health and network isolation

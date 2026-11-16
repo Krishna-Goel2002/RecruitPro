@@ -63,7 +63,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * verification), linking only to existing enabled staff whose organisation allows the e-mail domain.
  */
 @SpringBootTest(properties = {
-        "app.encryption.key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+        "app.encryption.key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         "app.frontend.hr-url=http://hr.test",
         "app.sso.redirect-base-url=http://api.test",
         "app.sso.providers.test.name=Test IdP",

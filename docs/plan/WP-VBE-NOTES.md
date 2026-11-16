@@ -190,7 +190,7 @@ timeout, cached 15 s) — in the admin dashboard it is `health.agentService`.
 timeout-ms 60000, connect-timeout-ms 5000, health-timeout-ms 2000}`;
 `app.verification.{consent-version, storage-dir (VERIFICATION_STORAGE_PATH, default $FILE_STORAGE_PATH/verification),
 max-runs-per-day 10, github.{client-id, client-secret, redirect-uri} (GITHUB_*), reference-expiry.{enabled, interval-ms
-900000, initial-delay-ms}}`. Docker: `APP_ENCRYPTION_KEY` dev default `ZGV2LW9ubHktcmVjcnVpdHByby1lbmNyeXB0LWtleSE=`
+900000, initial-delay-ms}}`. Docker: `APP_ENCRYPTION_KEY` dev default `(removed; published value, now refused at start-up)`
 (Base64 of a fixed 32-byte string, DEV ONLY), `AGENT_SERVICE_TOKEN` default equal to the agent-service entry.
 
 ## 6. Tests (JUnit 5; H2; `AgentServiceClient` and `GitHubOAuthClient` are `@MockitoBean`s)

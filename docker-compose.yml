@@ -7,7 +7,8 @@
 #   AI service        not published (no-egress network); check it with
 #                     docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"
 #   PostgreSQL        not published; docker compose exec postgres psql -U recruitpro -d recruitpro
-# Development values only. Copy .env.example to .env to override secrets.
+# Secrets have NO defaults here: run `python tools/generate_env.py` (or `.\tools\generate-env.ps1`) once to create a
+# git-ignored .env with fresh random values. Compose stops with a clear message when one is missing.
 #
 # Networks (least privilege; "internal: true" = no route out of Docker and no published ports):
 #   internal      postgres, mailpit, ai-service, backend   - the backend's private services
@@ -47,7 +48,7 @@ services:
   ai-service:
     build: ./ai-service
     environment:
-      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-dev-only-ai-service-token-change-me-0123456789}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?AI_SERVICE_TOKEN Missing - run tools/generate_env.py or tools/generate-env.ps1 to create .env}
       LLM_PROVIDER: ${LLM_PROVIDER:-none}
       # Only read when LLM_PROVIDER is anthropic or openai_compatible (a provider without LLM_MODEL refuses to start).
       LLM_MODEL: ${LLM_MODEL:-}
@@ -62,7 +63,7 @@ services:
   agent-service:
     build: ./agent-service
     environment:
-      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-dev-only-agent-service-token-change-me-0123456789}
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:?AGENT_SERVICE_TOKEN Missing - run tools/generate_env.py or tools/generate-env.ps1 to create .env}
       LLM_PROVIDER: ${AGENT_LLM_PROVIDER:-none}
       AGENT_DEMO_FIXTURES: ${AGENT_DEMO_FIXTURES:-true}
       # Only read when AGENT_LLM_PROVIDER is not none (same model/keys as the AI service).
@@ -93,15 +94,14 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/recruitpro
       DB_USERNAME: recruitpro
       DB_PASSWORD: recruitpro
-      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-0123456789abcdef}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET Missing - run tools/generate_env.py or tools/generate-env.ps1 to create .env}
       AI_SERVICE_URL: http://ai-service:8000
-      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-dev-only-ai-service-token-change-me-0123456789}
-      # Verification agent service (WP-VBE); the token default matches the agent-service entry above.
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:?AI_SERVICE_TOKEN Missing - run tools/generate_env.py or tools/generate-env.ps1 to create .env}
+      # Verification agent service (WP-VBE); the same AGENT_SERVICE_TOKEN as the agent-service entry above.
       AGENT_SERVICE_URL: http://agent-service:8100
-      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-dev-only-agent-service-token-change-me-0123456789}
-      # AES-256-GCM key for connector tokens and MFA secrets. DEV ONLY default (Base64 of 32 fixed bytes);
-      # set APP_ENCRYPTION_KEY=$(openssl rand -base64 32) anywhere else.
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-ZGV2LW9ubHktcmVjcnVpdHByby1lbmNyeXB0LWtleSE=}
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:?AGENT_SERVICE_TOKEN Missing - run tools/generate_env.py or tools/generate-env.ps1 to create .env}
+      # AES-256-GCM key for connector tokens and MFA secrets: exactly 32 random bytes, Base64 (from .env).
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY Missing - run tools/generate_env.py or tools/generate-env.ps1 to create .env}
       # GitHub OAuth app for "Connect with GitHub" (optional; empty = username + bio code only).
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}

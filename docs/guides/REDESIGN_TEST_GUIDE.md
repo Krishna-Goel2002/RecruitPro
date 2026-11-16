@@ -230,29 +230,31 @@ When the backend job fails, the run page has an artifact **surefire-reports** at
 
 ## 3. The `.env` file
 
-**For local testing you do not need a `.env` at all.** Every variable has a development default in
-`docker-compose.yml`. Those defaults include:
-- the JWT secret and both service tokens;
-- a **dev-only** `APP_ENCRYPTION_KEY`, so MFA, SSO and GitHub OAuth work;
-- Mailpit, `APP_SEED_DEMO=true`, `LLM_PROVIDER=none` and `AGENT_DEMO_FIXTURES=true`.
-
-> **Note:** copying `.env.example` to `.env` unchanged is safe: its secrets are empty, so the dev-only defaults in
-> `docker-compose.yml` apply (fixed after this guide was first written; see 12, item 1). Set real values for anything
-> other than local development.
-
-Create one only to override something:
+**You need a `.env` with four secrets before the first start.** `docker-compose.yml` has no default secrets (security
+fix of 17 Nov 2026: the old development defaults were public in the Git history, and the backend, AI service and
+agent service now refuse them). Generate fresh random values once, from the repository root:
 
 ```powershell
-Copy-Item .env.example .env          # bash: cp .env.example .env
-notepad .env                         # then fix JWT_SECRET, AI_SERVICE_TOKEN, AGENT_SERVICE_TOKEN (or delete those lines)
+python tools\generate_env.py        # or, without Python:  .\tools\generate-env.ps1
 ```
+
+**Expected:** `Created ...\.env` and `Generated new values for: JWT_SECRET, AI_SERVICE_TOKEN, AGENT_SERVICE_TOKEN,
+APP_ENCRYPTION_KEY (not shown)`. Running it again keeps the values; `--force` (`-Force`) rotates them. `.env` is
+git-ignored: never commit it or paste it anywhere.
+
+If you started the stack before this change, its database holds MFA secrets and tokens encrypted with the old key.
+Reset it once after generating the new key: `docker compose down -v`, then `docker compose up -d` (the demo data is
+seeded again).
+
+Everything else keeps a safe development default in `docker-compose.yml` (Mailpit, `APP_SEED_DEMO=true`,
+`LLM_PROVIDER=none`, `AGENT_DEMO_FIXTURES=true`). To override one, edit `.env` (`notepad .env`).
 
 | Variable | Required? | Default from `docker-compose.yml` | Notes |
 |---|---|---|---|
-| `JWT_SECRET` | no | `dev-only-jwt-secret-…` | ≥ 32 bytes |
-| `AI_SERVICE_TOKEN` | no | `dev-only-ai-service-token-…` | compose passes the same value to the backend and the AI service |
-| `AGENT_SERVICE_TOKEN` | no | `dev-only-agent-service-token-…` | ≥ 16 characters, not starting with `replace-with` or `changeme` |
-| `APP_ENCRYPTION_KEY` | no | dev-only Base64 key | empty = dev default. Otherwise Base64 of **exactly 32 bytes**, or the backend stops. Changing it later makes existing MFA enrolments unreadable (then `docker compose down -v`) |
+| `JWT_SECRET` | **yes** | none (generated) | ≥ 32 bytes |
+| `AI_SERVICE_TOKEN` | **yes** | none (generated) | compose passes the same value to the backend and the AI service |
+| `AGENT_SERVICE_TOKEN` | **yes** | none (generated) | ≥ 16 characters; compose passes the same value to the backend and the agent service |
+| `APP_ENCRYPTION_KEY` | **yes** | none (generated) | Base64 of **exactly 32 bytes**, or the backend stops. Changing it later makes existing MFA enrolments and stored tokens unreadable (then `docker compose down -v`) |
 | `APP_SEED_DEMO` / `APP_SEED_PASSWORD` | no | `true` / `ChangeMe-123!` | demo organisation "Acme Labs" and accounts |
 | `AGENT_DEMO_FIXTURES` | no | `true` | answers `demo-…` identifiers offline. **Never `true` outside local testing** |
 | `LLM_PROVIDER`, `AGENT_LLM_PROVIDER`, `LLM_MODEL`, keys | no | `none` | see 9.3 |

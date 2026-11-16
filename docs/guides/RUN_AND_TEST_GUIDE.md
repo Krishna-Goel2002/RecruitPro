@@ -153,21 +153,31 @@ checkout works whatever `git config core.autocrlf` says.
 
 ## 3. The `.env` file
 
-**For a local demo you do not need a `.env` at all.** Every variable has a development default in `docker-compose.yml`, including the database, the JWT secret, both service tokens, a **dev-only** `APP_ENCRYPTION_KEY`, Mailpit, demo seeding, `LLM_PROVIDER=none` and `AGENT_DEMO_FIXTURES=true`.
-
-Create one only to override something. It lives next to `docker-compose.yml`:
+**You need a `.env` with four secrets before the first start.** `docker-compose.yml` has no default secrets (security
+fix of 17 Nov 2026: the old development defaults were public in the Git history, and the backend, AI service and
+agent service now refuse them). Generate fresh random values once, from the repository root:
 
 ```powershell
-Copy-Item .env.example .env      # bash: cp .env.example .env
-notepad .env
+python tools\generate_env.py        # or, without Python:  .\tools\generate-env.ps1
 ```
+
+**Expected:** `Created ...\.env` and `Generated new values for: JWT_SECRET, AI_SERVICE_TOKEN, AGENT_SERVICE_TOKEN,
+APP_ENCRYPTION_KEY (not shown)`. Running it again keeps the values; `--force` (`-Force`) rotates them. `.env` is
+git-ignored: never commit it or paste it anywhere.
+
+If you started the stack before this change, its database holds MFA secrets and tokens encrypted with the old key.
+Reset it once after generating the new key: `docker compose down -v`, then `docker compose up -d` (the demo data is
+seeded again).
+
+Everything else keeps a safe development default in `docker-compose.yml` (Mailpit, `APP_SEED_DEMO=true`,
+`LLM_PROVIDER=none`, `AGENT_DEMO_FIXTURES=true`). To override one, edit `.env` (`notepad .env`).
 
 | Variable | Required? | Dev default (docker-compose) | Notes |
 |---|---|---|---|
-| `JWT_SECRET` | no | `dev-only-jwt-secret-...` | At least 32 bytes. |
-| `AI_SERVICE_TOKEN` | no | `dev-only-ai-service-token-...` | Shared by backend and ai-service automatically. |
-| `AGENT_SERVICE_TOKEN` | no | `dev-only-agent-service-token-...` | Shared by backend and agent-service automatically. |
-| `APP_ENCRYPTION_KEY` | no | dev-only fixed key | Must be Base64 of **exactly 32 bytes**, or empty. Anything else stops the backend. Needed for MFA, SSO and GitHub OAuth. |
+| `JWT_SECRET` | **yes** | none (generated) | At least 32 bytes. |
+| `AI_SERVICE_TOKEN` | **yes** | none (generated) | Shared by backend and ai-service automatically. |
+| `AGENT_SERVICE_TOKEN` | **yes** | none (generated) | Shared by backend and agent-service automatically. |
+| `APP_ENCRYPTION_KEY` | **yes** | none (generated) | Must be Base64 of **exactly 32 bytes**. Anything else stops the backend. Needed for MFA, SSO and GitHub OAuth. |
 | `APP_SEED_DEMO` / `APP_SEED_PASSWORD` | no | `true` / `ChangeMe-123!` | Demo organisation and accounts. |
 | `LLM_PROVIDER`, `AGENT_LLM_PROVIDER` | no | `none` | See 9.3. |
 | `AGENT_DEMO_FIXTURES` | no | `true` | Serves synthetic data for `demo-` logins and hosts. **Never `true` outside a local demo.** |

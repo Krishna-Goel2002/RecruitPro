@@ -136,7 +136,7 @@ the same set). "Compose" = value supplied by `docker-compose.yml`.
 | `AUTH_REQUIRE_VERIFIED_EMAIL_TO_APPLY` | `false`; prod default `true` | Candidates must verify email before applying |
 | `RATE_LIMIT_ENABLED` | `true` (test `false`) | Per-IP limits on auth routes, sign-up, account deletion |
 | `RATE_LIMIT_STORE` | `memory` | `memory` (single instance) or `database` (`rate_limit_buckets`, multi-instance) |
-| `APP_ENCRYPTION_KEY` | empty; compose has a dev-only fixed key | AES-256-GCM key, Base64 of exactly 32 bytes. Without it: MFA, SSO and the GitHub connector are unavailable (503 / hidden). A malformed key stops startup (`…/common/crypto/SecretCipher.java`) |
+| `APP_ENCRYPTION_KEY` | none; generated into `.env` by `tools/generate_env.py` | AES-256-GCM key, Base64 of exactly 32 bytes. Without it: MFA, SSO and the GitHub connector are unavailable (503 / hidden). A malformed key stops startup (`…/common/crypto/SecretCipher.java`) |
 | `MFA_ISSUER` | `RecruitPro` | Issuer label in authenticator apps |
 | `SSO_REDIRECT_BASE_URL` | `http://localhost:8080` | Base of `/api/v1/auth/sso/<id>/callback` |
 | `SSO_GOOGLE_CLIENT_ID/SECRET`, `SSO_MICROSOFT_CLIENT_ID/SECRET/TENANT_ID` (tenant default `organizations`), `SSO_OIDC_NAME/CLIENT_ID/CLIENT_SECRET/ISSUER/SCOPES` | empty | A provider is offered only when id and secret are set |

@@ -31,7 +31,7 @@ import java.util.List;
 public class VerificationFixtures {
 
     /** Base64 of 32 fixed bytes; tests only. */
-    public static final String TEST_ENCRYPTION_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
+    public static final String TEST_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
     private final VerificationSourceRepository sources;
     private final ClaimVerdictRepository verdicts;

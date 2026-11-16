@@ -47,7 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * replay guard, single-use recovery codes, lockout on wrong codes, the organisation requirement with first enrolment
  * through the mfaToken, disabling, and candidates being unaffected.
  */
-@SpringBootTest(properties = "app.encryption.key=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+@SpringBootTest(properties = "app.encryption.key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class MfaIntegrationTest {

@@ -1,6 +1,7 @@
 """Service configuration, read from the environment on every call (cheap, and test friendly)."""
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 from dataclasses import dataclass
@@ -71,8 +72,29 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     )
 
 
+# SHA-256 of internal-service tokens that were published in the repository (security incident of 17 Nov 2026).
+# The values are not repeated here; the service refuses to start with any of them. Generate fresh secrets with
+# tools/generate_env.py (or tools/generate-env.ps1).
+PUBLISHED_TOKEN_SHA256 = frozenset({
+    "597c069b0ad74c2a1023941f12539446d3726a2bf8899854519782f2d44942d3",  # old compose AI-service token
+    "2fa1faee3a707f0be22c198c3193edb9dba756bdbc5877b4d6ed8bcf7c4dd200",  # old compose agent-service token
+    "be47c8e96320c1f4fa8e22ff9c93968d141f539ff091a45af0adde67ad1654ae",  # old README example agent token
+    "5a92543aaf0b4adcd3d2cec4faf715daab501b536869c3d2288a2460332e0eb9",  # old .env.example placeholder
+})
+
+
+def is_published_token(token: str | None) -> bool:
+    """True when the token is one of the values published in the repository."""
+    if not token:
+        return False
+    return hashlib.sha256(token.strip().encode("utf-8")).hexdigest() in PUBLISHED_TOKEN_SHA256
+
+
 def validate_settings(settings: Settings) -> None:
     """Raise ConfigError for configurations that must stop the service from starting."""
+    if is_published_token(settings.ai_service_token):
+        raise ConfigError("AI_SERVICE_TOKEN is a value that was published in the repository; generate a new one with "
+                          "tools/generate_env.py")
     if settings.llm_provider not in LLM_PROVIDERS:
         raise ConfigError(f"LLM_PROVIDER must be one of {', '.join(LLM_PROVIDERS)}")
     if not 0 < settings.parse_timeout_seconds <= 600:

@@ -69,7 +69,7 @@ All `/api/*` routes need `X-Internal-Service-Token: $AGENT_SERVICE_TOKEN`. Respo
 
 ```bash
 pip install -r requirements-dev.txt
-AGENT_SERVICE_TOKEN=dev-only-local-agent-token-0123 uvicorn app.main:app --port 8100
+AGENT_SERVICE_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" uvicorn app.main:app --port 8100
 python -m pytest -q                 # no network: MockTransport, fake resolvers, real DNS is refused
 python -m eval.run --check          # synthetic gold set; fails if FCR > 0.02 or kappa < 0.70
 python ../tools/sync_taxonomy.py    # re-vendor the skills taxonomy from ai-service (a test fails on drift)

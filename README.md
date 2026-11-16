@@ -25,6 +25,7 @@ The rest of this README describes `Kshitij-redesign`; where `Kshitij` differs it
 Requirements: Docker with Compose v2.
 
 ```bash
+python tools/generate_env.py   # once: writes a git-ignored .env with fresh random secrets (Windows without Python: .\tools\generate-env.ps1)
 docker compose up --build
 ```
 
@@ -42,7 +43,7 @@ On branch `Kshitij` the AI service (8000) and PostgreSQL (5432) are published on
 
 Networks: PostgreSQL, Mailpit, the AI service and the backend share an `internal` network without internet access; the agent service reaches the backend over its own internal network and the internet over a separate one; only the backend has general egress (SMTP, GitHub OAuth, OIDC). An LLM provider for the AI service needs `docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d` (or `COMPOSE_FILE` in `.env`, see `.env.example`). The backend starts once PostgreSQL, the AI service and the agent service report healthy. To reach PostgreSQL from the host (e.g. a backend started with `mvnw`), add a `docker-compose.override.yml` that gives `postgres` `ports: ["127.0.0.1:5432:5432"]` and `networks: [internal, egress]`. Details: [WP-OPS-NOTES.md](docs/plan/WP-OPS-NOTES.md).
 
-The compose file uses development secrets. To change them, copy `.env.example` to `.env` next to `docker-compose.yml` and edit it. Data lives in the `postgres-data` and `resume-uploads` volumes; `docker compose down -v` removes them.
+The compose file has no default secrets: `tools/generate_env.py` creates `.env` with fresh random values for `JWT_SECRET`, `AI_SERVICE_TOKEN`, `AGENT_SERVICE_TOKEN` and `APP_ENCRYPTION_KEY` (never commit it). Values that were ever published in this repository are refused at start-up by the backend and both Python services. Data lives in the `postgres-data` and `resume-uploads` volumes; `docker compose down -v` removes them.
 
 ### Demo accounts
 
@@ -99,7 +100,7 @@ Candidates register themselves in the candidate portal; public registration alwa
 
 ## Configuration (environment variables)
 
-Every variable has a development default; the full lists with comments are in [`.env.example`](.env.example) (Docker Compose), [`backend/.env.example`](backend/.env.example) and [`ai-service/.env.example`](ai-service/.env.example).
+Every variable except the four generated secrets has a development default; the full lists with comments are in [`.env.example`](.env.example) (Docker Compose), [`backend/.env.example`](backend/.env.example) and [`ai-service/.env.example`](ai-service/.env.example).
 
 | Variable | Used by | Default (dev) | Purpose |
 |---|---|---|---|

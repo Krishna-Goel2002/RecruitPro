@@ -1191,8 +1191,8 @@ Gold support: VERIFIED 30, PARTLY_VERIFIED 32, NOT_FOUND 31, CONTRADICTED 8, NOT
 | GitHub OAuth token | AES-256-GCM, `v1:` + Base64(IV 12 bytes, ciphertext, 16-byte tag), associated data `vsrc:<sourceId>` so a copied ciphertext fails on another row (`common/crypto/SecretCipher.java`). Key `app.encryption.key` (32 bytes Base64). Without a key, OAuth reports itself not configured instead of storing plaintext. Never in export or logs (`TokenResponse.toString` omits it) |
 | OAuth state | only SHA-256 stored; 10 min; single use |
 | Reference token | only SHA-256 stored; 14 days; one answer; e-mail has no inbox copy; links redacted in logs unless `log-links` |
-| Agent service token | shared secret, constant-time compare; docker-compose has a dev default `dev-only-agent-service-token-change-me-...` |
-| Dev encryption key | docker-compose dev default `ZGV2LW9ubHktcmVjcnVpdHByby1lbmNyeXB0LWtleSE=` (DEV ONLY, WP-VBE notes section 5) |
+| Agent service token | shared secret, constant-time compare; docker-compose has a dev default (removed; published value, now refused at start-up) |
+| Dev encryption key | docker-compose dev default `(removed; published value, now refused at start-up)` (DEV ONLY, WP-VBE notes section 5) |
 
 ### 7.2 Data minimisation
 
