@@ -18,6 +18,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
@@ -40,6 +41,8 @@ public class AuditService {
 
     private final AuditEventRepository repository;
     private final SecurityUtils securityUtils;
+    /** Row cap of one CSV export ({@link #MAX_EXPORT_ROWS}; lowered only by tests). */
+    private int maxExportRows = MAX_EXPORT_ROWS;
 
     public AuditService(AuditEventRepository repository, SecurityUtils securityUtils) {
         this.repository = repository;
@@ -108,14 +111,34 @@ public class AuditService {
      */
     @Transactional
     public String exportCsvForCurrentOrganization(String from, String to) {
+        return exportForCurrentOrganization(from, to).csv();
+    }
+
+    /**
+     * As {@link #exportCsvForCurrentOrganization}; {@link AuditExport#truncated()} tells whether the row cap
+     * ({@value #MAX_EXPORT_ROWS}) cut the export off (R1-U8: the controller sends {@code X-Export-Truncated: true}).
+     */
+    @Transactional
+    public AuditExport exportForCurrentOrganization(String from, String to) {
         Long organizationId = securityUtils.requireOrganizationId();
         LocalDateTime end = parseBound(to, UtcTime.now());
+        if (isPlainDate(to)) {
+            // A plain 'to' date means the whole of that UTC day (inclusive), not its first instant. The last
+            // microsecond keeps the bound exact on PostgreSQL, whose timestamps have microsecond precision.
+            end = end.plusDays(1).minusNanos(1_000);
+        }
         LocalDateTime start = parseBound(from, end.minusDays(90));
         if (start.isAfter(end)) {
             throw new BadRequestException("'from' must not be after 'to'");
         }
+        int cap = maxExportRows;
         List<AuditEvent> events = repository.findAllByOrganizationIdAndCreatedAtBetween(organizationId, start, end,
-                PageRequest.of(0, MAX_EXPORT_ROWS, Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id"))));
+                PageRequest.of(0, cap + 1, Sort.by(Sort.Order.asc("createdAt"), Sort.Order.asc("id"))));
+        boolean truncated = events.size() > cap;
+        if (truncated) {
+            events = events.subList(0, cap);
+            AUDIT_LOGGER.warn("Audit export of organisation {} cut off at {} rows; narrow the date range", organizationId, cap);
+        }
         StringBuilder csv = new StringBuilder(256 + events.size() * 128);
         csv.append("id,createdAt,action,actorEmail,actorUserId,targetType,targetId,ipAddress,details\n");
         for (AuditEvent event : events) {
@@ -130,8 +153,13 @@ public class AuditService {
                     .append(cell(event.getDetails())).append('\n');
         }
         record(AuditActions.AUDIT_EXPORTED, "ORGANIZATION", String.valueOf(organizationId),
-                "Exported " + events.size() + " audit events from " + UtcTime.format(start) + " to " + UtcTime.format(end));
-        return csv.toString();
+                "Exported " + events.size() + " audit events from " + UtcTime.format(start) + " to " + UtcTime.format(end)
+                        + (truncated ? " (cut off at the row limit)" : ""));
+        return new AuditExport(csv.toString(), truncated);
+    }
+
+    /** A CSV export and whether the row cap cut it off. */
+    public record AuditExport(String csv, boolean truncated) {
     }
 
     /** Masks secrets and truncates; details must never carry passwords, tokens or resume text. */
@@ -166,6 +194,19 @@ public class AuditService {
             return UtcTime.parse(value);
         } catch (DateTimeParseException ex) {
             throw new BadRequestException("Dates must be ISO-8601, e.g. 2026-11-08 or 2026-11-08T10:15:30Z");
+        }
+    }
+
+    /** Whether the bound is an ISO date without a time part (e.g. {@code 2026-11-08}). */
+    static boolean isPlainDate(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            LocalDate.parse(value.trim());
+            return true;
+        } catch (DateTimeParseException notAPlainDate) {
+            return false;
         }
     }
 

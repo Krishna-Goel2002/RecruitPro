@@ -1,6 +1,6 @@
 package com.recruitpro.organization.controller;
 
-import com.recruitpro.auth.dto.AuthResponse;
+import com.recruitpro.auth.service.AuthSession;
 import com.recruitpro.auth.web.Portal;
 import com.recruitpro.auth.web.RefreshTokenCookies;
 import com.recruitpro.common.exception.ForbiddenException;
@@ -38,15 +38,19 @@ public class InvitationAuthController {
     }
 
     @PostMapping("/accept-invite")
-    @Operation(summary = "Accept an invitation: creates the staff account and signs it in (sets the portal's refresh cookie; 403 on the candidate portal)")
-    public ApiResponse<AuthResponse> accept(@Valid @RequestBody AcceptInvitationRequest request,
-                                            HttpServletRequest httpRequest, HttpServletResponse response) {
+    @Operation(summary = "Accept an invitation: creates the staff account and signs it in (sets the portal's refresh cookie; 403 on the candidate portal), or returns {mfaRequired, mfaEnrollmentRequired, mfaToken} when the organisation requires staff MFA")
+    public ApiResponse<Object> accept(@Valid @RequestBody AcceptInvitationRequest request,
+                                      HttpServletRequest httpRequest, HttpServletResponse response) {
         Portal portal = Portal.from(httpRequest);
         // Invitations always create staff accounts; refuse them on the candidate portal before anything is written.
         if (portal == Portal.CANDIDATE) {
             throw new ForbiddenException("Invitations are accepted in the RecruitPro HR portal, not the candidate portal.");
         }
-        return ApiResponse.success(refreshTokenCookies.complete(invitationService.accept(request), portal, response),
-                "Invitation accepted");
+        AuthSession session = invitationService.accept(request);
+        if (session.requiresMfa()) {
+            // Same shape as /auth/login: no access token and no cookie until the second factor is enrolled.
+            return ApiResponse.success(session.mfaChallenge(), "Invitation accepted; two-factor enrolment required");
+        }
+        return ApiResponse.success(refreshTokenCookies.complete(session, portal, response), "Invitation accepted");
     }
 }

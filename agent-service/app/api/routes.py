@@ -94,13 +94,13 @@ async def document(file: UploadFile = File(...), request: str = Form(...), setti
                    clock: Clock = Depends(get_clock)) -> VerifyResponse:
     try:
         parsed = DocumentVerifyRequest.model_validate(json.loads(request))
-    except (ValueError, ValidationError) as exc:
+    except (ValueError, ValidationError, RecursionError) as exc:  # deeply nested JSON raises RecursionError
         raise HTTPException(status_code=422, detail={"code": "BAD_REQUEST", "message": "request must be valid JSON"}) \
             from exc
     content = await file.read(settings.max_document_bytes + 1)
     if len(content) > settings.max_document_bytes:
         raise HTTPException(status_code=413, detail={"code": "DOCUMENT_TOO_LARGE", "message": "documents are limited "
-                                                     "to 15 MB"})
+                                                     f"to {settings.max_document_bytes} bytes"})
     try:
         output = verify_document(content, file.filename or "", parsed, now=clock())
     except ExtractionError as exc:

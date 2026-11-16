@@ -2,7 +2,8 @@
 # /api/* requires the X-Internal-Service-Token header (AGENT_SERVICE_TOKEN).
 # This service needs outbound internet access (code hosts, candidate websites, badge issuers); every candidate-supplied
 # URL goes through the SSRF guard. Run it on a network segment with no route to internal services where possible.
-FROM python:3.12-slim
+# Pinned to Debian bookworm like the AI service image, so a new Debian release does not change the base silently.
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

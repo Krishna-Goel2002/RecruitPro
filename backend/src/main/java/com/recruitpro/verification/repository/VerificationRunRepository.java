@@ -22,6 +22,16 @@ public interface VerificationRunRepository extends JpaRepository<VerificationRun
 
     long countByCandidateIdAndCreatedAtAfter(Long candidateId, LocalDateTime after);
 
+    /** The oldest run inside the window (its age tells when the 24-hour limit frees up: Retry-After). */
+    Optional<VerificationRun> findFirstByCandidateIdAndCreatedAtAfterOrderByCreatedAtAsc(Long candidateId, LocalDateTime after);
+
+    /**
+     * The run's candidate without loading the run (R3-B01): the result writer locks the candidate first and only then
+     * reads the run and its source, so a concurrent revoke is never missed.
+     */
+    @Query("select r.candidateId from VerificationRun r where r.id = :id")
+    Optional<Long> findCandidateIdById(@Param("id") Long id);
+
     List<VerificationRun> findAllByCandidateIdOrderByIdAsc(Long candidateId);
 
     @Modifying(flushAutomatically = true)

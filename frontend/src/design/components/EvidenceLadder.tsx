@@ -141,8 +141,9 @@ export function EvidenceLadder({
 
   return (
     <span ref={ref} className={cx('ui-ladder', className)} role="img" aria-label={aria} data-gate={gateOpen || undefined} data-waiting={waiting || undefined}>
-      <Rungs key={play?.key ?? 0} ordinal={ordinal} from={play?.from ?? ordinal} play={!!play} claimed={claimed} />
-      <span key={labelKey} className="ui-ladder-label" data-swap={labelKey > 0 || undefined}>
+      {/* Distinct key prefixes: the two siblings both started at key 0 (React duplicate-key warning, unstable reconcile). */}
+      <Rungs key={`rungs-${play?.key ?? 0}`} ordinal={ordinal} from={play?.from ?? ordinal} play={!!play} claimed={claimed} />
+      <span key={`label-${labelKey}`} className="ui-ladder-label" data-swap={labelKey > 0 || undefined}>
         {label}
       </span>
     </span>

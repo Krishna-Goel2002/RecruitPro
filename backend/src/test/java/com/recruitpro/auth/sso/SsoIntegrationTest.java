@@ -12,6 +12,7 @@ import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
 import com.sun.net.httpserver.HttpServer;
 import io.jsonwebtoken.Jwts;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -165,7 +166,7 @@ class SsoIntegrationTest {
         assertEquals("http://api.test/api/v1/auth/sso/test/callback",
                 URLDecoder.decode(start.params().getFirst("redirect_uri"), StandardCharsets.UTF_8));
         NEXT_ID_TOKEN.set(token(claims(start.nonce()), KEYS.getPrivate(), KID));
-        MvcResult result = callback(start.state());
+        MvcResult result = callback(start);
         assertEquals("http://hr.test/sso/complete", result.getResponse().getHeader("Location"));
         assertNotNull(AuthTestSupport.refreshCookie(result, "rp_refresh_staff"));
 
@@ -179,14 +180,15 @@ class SsoIntegrationTest {
         assertEquals(1, auditEvents.findAllByActionOrderByIdAsc(AuditActions.SSO_IDENTITY_LINKED).size());
         assertEquals(1, auditEvents.findAllByActionOrderByIdAsc(AuditActions.SSO_LOGIN).size());
 
-        // The state is single use.
-        assertEquals("http://hr.test/login?ssoError=invalid_state", callback(start.state()).getResponse().getHeader("Location"));
+        // The state is single use (even when the same browser presents it again), and the binding cookie is cleared.
+        assertEquals("", AuthTestSupport.refreshCookie(result, SsoController.STATE_COOKIE));
+        assertEquals("http://hr.test/login?ssoError=invalid_state", callback(start).getResponse().getHeader("Location"));
         assertEquals("http://hr.test/login?ssoError=invalid_state", callback("unknown-state").getResponse().getHeader("Location"));
 
         // Second sign-in goes through the linked identity.
         Start again = start();
         NEXT_ID_TOKEN.set(token(claims(again.nonce()), KEYS.getPrivate(), KID));
-        assertEquals("http://hr.test/sso/complete", callback(again.state()).getResponse().getHeader("Location"));
+        assertEquals("http://hr.test/sso/complete", callback(again).getResponse().getHeader("Location"));
         assertEquals(1, identities.findAll().size());
     }
 
@@ -194,6 +196,8 @@ class SsoIntegrationTest {
     void invalidTokensAreRefused() throws Exception {
         expectError(claimsWith("nonce", "another-nonce"), KEYS.getPrivate(), KID, "invalid_token");
         expectError(claimsWith("aud", "someone-else"), KEYS.getPrivate(), KID, "invalid_token");
+        // R1-L6: an authorised party other than this client is refused even with a single audience.
+        expectError(claimsWith("azp", "another-client"), KEYS.getPrivate(), KID, "invalid_token");
         expectError(claimsWith("iss", "https://evil.example"), KEYS.getPrivate(), KID, "invalid_token");
         Map<String, Object> expired = claimsWith("exp", Instant.now().minusSeconds(600));
         expired.put("iat", Instant.now().minusSeconds(1200));
@@ -222,6 +226,7 @@ class SsoIntegrationTest {
     void providerErrorsAndMissingCodesRedirectWithACode() throws Exception {
         Start start = start();
         MvcResult cancelled = mvc.perform(get("/api/v1/auth/sso/test/callback")
+                        .cookie(new Cookie(SsoController.STATE_COOKIE, start.binding()))
                         .param("state", start.state()).param("error", "access_denied"))
                 .andExpect(status().isFound()).andReturn();
         assertEquals("http://hr.test/login?ssoError=cancelled", cancelled.getResponse().getHeader("Location"));
@@ -229,12 +234,49 @@ class SsoIntegrationTest {
         Start second = start();
         NEXT_ID_TOKEN.set(null);
         assertEquals("http://hr.test/login?ssoError=token_exchange_failed",
-                callback(second.state()).getResponse().getHeader("Location"));
+                callback(second).getResponse().getHeader("Location"));
+    }
+
+    @Test
+    void aCallbackFromAnotherBrowserIsRefusedAsLoginCsrf() throws Exception {
+        // R1-M1: the attacker starts a sign-in, signs in at the provider with their own account and sends the
+        // victim the callback link. The victim's browser does not hold the attacker's binding cookie.
+        Start attacker = start();
+        Start victim = start();
+        NEXT_ID_TOKEN.set(token(claims(attacker.nonce()), KEYS.getPrivate(), KID));
+        MvcResult noCookie = mvc.perform(get("/api/v1/auth/sso/test/callback")
+                        .param("code", "the-code").param("state", attacker.state()))
+                .andExpect(status().isFound()).andReturn();
+        assertEquals("http://hr.test/login?ssoError=invalid_state", noCookie.getResponse().getHeader("Location"));
+        assertNull(AuthTestSupport.refreshCookie(noCookie, "rp_refresh_staff"));
+        MvcResult otherCookie = mvc.perform(get("/api/v1/auth/sso/test/callback")
+                        .cookie(new Cookie(SsoController.STATE_COOKIE, victim.binding()))
+                        .param("code", "the-code").param("state", attacker.state()))
+                .andExpect(status().isFound()).andReturn();
+        assertEquals("http://hr.test/login?ssoError=invalid_state", otherCookie.getResponse().getHeader("Location"));
+        assertNull(AuthTestSupport.refreshCookie(otherCookie, "rp_refresh_staff"));
+        assertTrue(identities.findAll().isEmpty(), "nothing was linked");
+        // The refused attempts did not use up the state: the browser that started it can still finish.
+        assertEquals("http://hr.test/sso/complete", callback(attacker).getResponse().getHeader("Location"));
+    }
+
+    @Test
+    void startBindsTheStateToTheBrowserWithAnHttpOnlyLaxCookie() throws Exception {
+        MvcResult result = mvc.perform(get("/api/v1/auth/sso/test/start")).andExpect(status().isFound()).andReturn();
+        String setCookie = result.getResponse().getHeaders("Set-Cookie").stream()
+                .filter(header -> header.startsWith(SsoController.STATE_COOKIE + "=")).findFirst().orElseThrow();
+        assertTrue(setCookie.contains("HttpOnly"), setCookie);
+        assertTrue(setCookie.contains("SameSite=Lax"), setCookie);
+        assertTrue(setCookie.contains("Path=/api/v1/auth/sso"), setCookie);
+        String location = result.getResponse().getHeader("Location");
+        String state = UriComponentsBuilder.fromUriString(location).build().getQueryParams().getFirst("state");
+        assertEquals(state, AuthTestSupport.refreshCookie(result, SsoController.STATE_COOKIE));
     }
 
     // ---- helpers ----
 
-    record Start(String state, String nonce, MultiValueMap<String, String> params) {
+    /** A started sign-in: the state and nonce sent to the provider and the browser-binding cookie value. */
+    record Start(String state, String nonce, MultiValueMap<String, String> params, String binding) {
     }
 
     private Start start() throws Exception {
@@ -243,9 +285,19 @@ class SsoIntegrationTest {
         String url = AuthTestSupport.data(mapper, result).path("authorizeUrl").asText();
         assertTrue(url.startsWith("http://127.0.0.1:" + SERVER.getAddress().getPort() + "/authorize?"));
         MultiValueMap<String, String> params = UriComponentsBuilder.fromUriString(url).build().getQueryParams();
-        return new Start(params.getFirst("state"), params.getFirst("nonce"), params);
+        String binding = AuthTestSupport.refreshCookie(result, SsoController.STATE_COOKIE);
+        assertNotNull(binding, "start binds the state to the browser");
+        return new Start(params.getFirst("state"), params.getFirst("nonce"), params, binding);
     }
 
+    /** The provider's redirect arriving in the browser that started the sign-in (binding cookie included). */
+    private MvcResult callback(Start start) throws Exception {
+        return mvc.perform(get("/api/v1/auth/sso/test/callback").cookie(new Cookie(SsoController.STATE_COOKIE, start.binding()))
+                        .param("code", "the-code").param("state", start.state()))
+                .andExpect(status().isFound()).andReturn();
+    }
+
+    /** A redirect with only a state (no binding cookie). */
     private MvcResult callback(String state) throws Exception {
         return mvc.perform(get("/api/v1/auth/sso/test/callback").param("code", "the-code").param("state", state))
                 .andExpect(status().isFound()).andReturn();
@@ -259,7 +311,7 @@ class SsoIntegrationTest {
             claims.put("nonce", start.nonce());
         }
         NEXT_ID_TOKEN.set(token(claims, key, kid));
-        MvcResult result = callback(start.state());
+        MvcResult result = callback(start);
         assertEquals("http://hr.test/login?ssoError=" + code, result.getResponse().getHeader("Location"),
                 "expected " + code + " for " + claims);
         assertNull(AuthTestSupport.refreshCookie(result, "rp_refresh_staff"));

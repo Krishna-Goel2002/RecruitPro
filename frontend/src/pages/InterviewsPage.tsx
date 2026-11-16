@@ -85,7 +85,8 @@ function InterviewRows({ interviews, past }: { interviews: CandidateInterview[];
               {(past || i.status !== 'SCHEDULED') && (
                 <span>
                   <Badge tone="neutral" variant={i.status === 'CANCELLED' ? 'struck' : 'solid'}>
-                    {humanize(i.status)}
+                    {/* A past interview still SCHEDULED on the server has taken place; "Scheduled" read as upcoming. */}
+                    {i.status === 'SCHEDULED' ? 'Ended' : humanize(i.status)}
                   </Badge>
                 </span>
               )}

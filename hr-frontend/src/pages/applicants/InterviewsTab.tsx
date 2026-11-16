@@ -14,7 +14,7 @@ import {
 } from '../../design/components'
 import { Building2, CalendarClock, ChevronDown, Ellipsis, Icon, Link2 } from '../../design/icons'
 import { fromLocalInput, roleLabel, safeHttpUrl, toLocalInput } from '../../lib/format'
-import { slotLabel, timeZoneLabel } from '../../lib/when'
+import { fullDateTime, slotLabel, timeZoneLabel } from '../../lib/when'
 import { ScorecardView } from '../interviews/ScorecardView'
 import { recommendationWord } from './DecisionBar'
 
@@ -103,8 +103,8 @@ export function InterviewsTab({ jobId, detail, onSchedule }: { jobId: number; de
                     )}
                     {i.status === 'SCHEDULED' && can('interviews.schedule') && (
                       <Menu
-                        label="Interview actions"
-                        trigger={props => <IconButton {...props} label="More actions" icon={Ellipsis} size="sm" />}
+                        label={`Actions for the interview on ${fullDateTime(i.scheduledAt)}`}
+                        trigger={props => <IconButton {...props} label={`More actions for the interview on ${fullDateTime(i.scheduledAt)}`} icon={Ellipsis} size="sm" />}
                         items={[
                           { label: 'Reschedule', icon: CalendarClock, onSelect: () => setRescheduling(i) },
                           { label: 'Cancel interview', danger: true, separated: true, onSelect: () => { cancel.reset(); setCancelling(i) } },

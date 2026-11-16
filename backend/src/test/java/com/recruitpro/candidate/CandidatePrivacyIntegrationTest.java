@@ -14,6 +14,8 @@ import com.recruitpro.assessment.entity.WorkSampleAssignmentStatus;
 import com.recruitpro.assessment.entity.WorkSampleStatus;
 import com.recruitpro.assessment.repository.WorkSampleAssignmentRepository;
 import com.recruitpro.assessment.repository.WorkSampleRepository;
+import com.recruitpro.assessment.repository.WorkSampleSubmissionFileRepository;
+import com.recruitpro.assessment.entity.WorkSampleSubmissionFile;
 import com.recruitpro.audit.entity.AuditEvent;
 import com.recruitpro.audit.repository.AuditEventRepository;
 import com.recruitpro.audit.service.AuditActions;
@@ -117,6 +119,7 @@ class CandidatePrivacyIntegrationTest {
     @Autowired EeoResponseRepository eeoResponses;
     @Autowired ApplicationRepository applications;
     @Autowired ApplicationDecisionHistoryRepository history;
+    @Autowired WorkSampleSubmissionFileRepository submissionFiles;
     @Autowired WorkSampleRepository workSamples;
     @Autowired WorkSampleAssignmentRepository assignments;
     @Autowired InterviewRepository interviews;
@@ -264,6 +267,29 @@ class CandidatePrivacyIntegrationTest {
     }
 
     @Test
+    void theExportListsSubmittedWorkSampleFilesAndFactAttributes() throws Exception {
+        // R2-L04: WP-PLAT submission files and the parser attributes of facts are personal data too.
+        WorkSampleSubmissionFile file = new WorkSampleSubmissionFile();
+        file.setAssignmentId(assignment.getId());
+        file.setOriginalName("payroll-answer.pdf");
+        file.setContentType("application/pdf");
+        file.setSizeBytes(12);
+        file.setStoragePath(java.util.UUID.randomUUID().toString());
+        file.setSha256("a".repeat(64));
+        submissionFiles.save(file);
+        var tally = facts.findAllByAnalysisIdOrderById(analysis.getId()).get(0);
+        tally.setAttributesJson("{\"skillId\":\"tally\",\"domain\":\"FINANCE\"}");
+        facts.save(tally);
+
+        JsonNode export = mapper.readTree(mvc.perform(get("/api/v1/candidates/me/export").with(candidate()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        JsonNode files = export.path("workSamples").path(0).path("files");
+        assertEquals(1, files.size());
+        assertEquals("payroll-answer.pdf", files.path(0).path("originalName").asText());
+        assertEquals("tally", export.path("facts").path(0).path("attributes").path("skillId").asText());
+    }
+
+    @Test
     void deletionNeedsThePasswordAndAnonymisesWhileKeepingAuditableRecords() throws Exception {
         long auditRowsBefore = auditEvents.count();
         mvc.perform(deleteAccount("{\"password\":\"wrong-password-1\"}")).andExpect(status().isBadRequest());
@@ -333,6 +359,32 @@ class CandidatePrivacyIntegrationTest {
                 .andExpect(jsonPath("$.data.candidate.fullName", org.hamcrest.Matchers.is("Deleted Candidate")))
                 .andExpect(jsonPath("$.data.applicationStatus", org.hamcrest.Matchers.is("WITHDRAWN")))
                 .andExpect(jsonPath("$.data.coverLetter").doesNotExist());
+    }
+
+    @Test
+    void anInvalidPortalHeaderIsRefusedBeforeTheAccountIsDeleted() throws Exception {
+        // Integration pass (R5#2): the portal header was resolved after the deletion, so a bad header deleted the
+        // account and then answered 400 with the refresh cookie left in place.
+        mvc.perform(delete("/api/v1/candidates/me").with(candidate()).header("X-RecruitPro-Portal", "kiosk")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"password\":\"" + PASSWORD + "\"}"))
+                .andExpect(status().isBadRequest());
+        User intact = users.findById(user.getId()).orElseThrow();
+        assertEquals(EMAIL, intact.getEmail());
+        assertNull(intact.getDeletedAt());
+        assertArrayEquals(FILE, resumeStorage.load(resume.getStorageKey()));
+    }
+
+    @Test
+    void theExportWritesNullsOfTheProfileAndClaimsExplicitly() throws Exception {
+        // Integration pass (R5#7): the profile and claims used the API's non_null records, so empty fields vanished.
+        JsonNode export = mapper.readTree(mvc.perform(get("/api/v1/candidates/me/export").with(candidate()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertTrue(export.path("profile").has("portfolioUrl"), "an empty profile field is written");
+        assertTrue(export.path("profile").get("portfolioUrl").isNull());
+        assertTrue(export.path("claims").path(0).has("evidenceUrl"));
+        assertTrue(export.path("claims").path(0).get("evidenceUrl").isNull());
+        assertTrue(export.path("claims").path(0).get("verifiedAt").isNull());
+        assertEquals("UNVERIFIED", export.path("claims").path(0).path("verificationStatus").asText());
     }
 
     private org.springframework.test.web.servlet.RequestBuilder deleteAccount(String body) {

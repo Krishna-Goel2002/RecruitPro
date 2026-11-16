@@ -154,6 +154,6 @@ def parse_manifest(path: str, text: str) -> list[str]:
             return _unique(_composer(text))
         if name.endswith(".csproj"):
             return _unique(_CSPROJ.findall(text))
-    except (ValueError, TypeError, AttributeError, _toml.TOMLDecodeError):
-        return []
+    except (ValueError, TypeError, AttributeError, RecursionError, _toml.TOMLDecodeError):
+        return []  # RecursionError: deeply nested JSON/TOML in a candidate's repository
     return []

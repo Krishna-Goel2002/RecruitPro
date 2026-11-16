@@ -14,6 +14,9 @@ import com.recruitpro.security.SecurityUtils;
 import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.user.repository.UserRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -42,6 +45,9 @@ public class AdminUserService {
     private final RefreshTokenService refreshTokenService;
     private final AuditService auditService;
     private final SecurityUtils securityUtils;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Transactional(readOnly = true)
     public PageResponse<AdminUserResponse> listUsers(int page, int size, String search, Role role, Boolean enabled) {
@@ -87,19 +93,22 @@ public class AdminUserService {
 
     public AdminUserResponse updateUserStatus(Long userId, boolean enabled) {
         CurrentUser admin = securityUtils.requireOrganizationMember();
-        User user = userRepository.findByIdAndOrganizationId(userId, admin.organizationId())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+        User user = lockTarget(userId, admin.organizationId());
 
+        boolean previous = user.isEnabled();
+        if (previous == enabled) {
+            // No change: no write, no session revocation and no misleading "changed" audit row.
+            return AdminUserResponse.from(user);
+        }
         if (!enabled && user.getRole() == Role.ADMIN) {
             if (admin.userId().equals(user.getId())) {
                 throw new BadRequestException("Administrators cannot deactivate their own account");
             }
-            if (user.isEnabled() && userRepository.lockEnabledByOrganizationAndRole(admin.organizationId(), Role.ADMIN).size() <= 1) {
+            if (enabledAdministrators(admin.organizationId()) <= 1) {
                 throw new BadRequestException("Cannot deactivate the last active administrator");
             }
         }
 
-        boolean previous = user.isEnabled();
         user.setEnabled(enabled);
         User saved = userRepository.saveAndFlush(user);
         if (previous && !enabled) {
@@ -121,11 +130,10 @@ public class AdminUserService {
             throw new BadRequestException("Role is required");
         }
         CurrentUser admin = securityUtils.requireOrganizationMember();
-        User user = userRepository.findByIdAndOrganizationId(userId, admin.organizationId())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
         if (newRole == Role.CANDIDATE) {
             throw new BadRequestException("Organisation members can only be given staff roles");
         }
+        User user = lockTarget(userId, admin.organizationId());
 
         Role previousRole = user.getRole();
         if (previousRole == newRole) {
@@ -136,10 +144,10 @@ public class AdminUserService {
             if (admin.userId().equals(user.getId())) {
                 throw new BadRequestException("Administrators cannot demote their own account");
             }
-            List<User> admins = user.isEnabled()
-                    ? userRepository.lockEnabledByOrganizationAndRole(admin.organizationId(), Role.ADMIN)
-                    : userRepository.lockAllByOrganizationAndRole(admin.organizationId(), Role.ADMIN);
-            if (admins.size() <= 1) {
+            long remaining = user.isEnabled()
+                    ? enabledAdministrators(admin.organizationId())
+                    : userRepository.lockAllByOrganizationAndRole(admin.organizationId(), Role.ADMIN).size();
+            if (remaining <= 1) {
                 throw new BadRequestException("Cannot demote the last remaining administrator");
             }
         }
@@ -155,5 +163,29 @@ public class AdminUserService {
                 String.format("User %s role changed from %s to %s", user.getEmail(), previousRole, newRole));
 
         return AdminUserResponse.from(saved);
+    }
+
+    /**
+     * Loads the target user of the caller's organisation (404 otherwise) and re-reads it under a row lock, so the
+     * checks below see its committed role and status and the full-row update cannot overwrite a concurrent change
+     * (e.g. a role change racing a status change). A target that is an administrator is locked together with the
+     * other administrators, always in id order, so two administrator changes cannot deadlock.
+     */
+    private User lockTarget(Long userId, Long organizationId) {
+        User user = userRepository.findByIdAndOrganizationId(userId, organizationId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+        if (user.getRole() == Role.ADMIN) {
+            userRepository.lockAllByOrganizationAndRole(organizationId, Role.ADMIN);
+        }
+        entityManager.refresh(user, LockModeType.PESSIMISTIC_WRITE);
+        if (!organizationId.equals(user.getOrganizationId())) {
+            throw new ResourceNotFoundException("User not found: " + userId);
+        }
+        return user;
+    }
+
+    /** L3: number of enabled administrators of the organisation, counted with their rows locked. */
+    private long enabledAdministrators(Long organizationId) {
+        return userRepository.lockEnabledByOrganizationAndRole(organizationId, Role.ADMIN).size();
     }
 }

@@ -46,7 +46,10 @@ export function ActionDialog({
   const [text, setText] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
   const areaRef = useRef<HTMLTextAreaElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
   const formId = useId()
+  const danger = tone === 'danger'
+  const cancelFirst = danger || Boolean(focusCancel)
 
   useEffect(() => {
     if (open) {
@@ -54,6 +57,12 @@ export function ActionDialog({
       setProblem(null)
     }
   }, [open])
+
+  // Destructive and irreversible confirmations start on Cancel. React's autoFocus does not render an [autofocus]
+  // attribute, so the dialog's own initial focus (first field) would otherwise win; this runs after it.
+  useEffect(() => {
+    if (open && cancelFirst) cancelRef.current?.focus()
+  }, [open, cancelFirst])
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -72,7 +81,6 @@ export function ActionDialog({
     areaRef.current?.focus()
   }
 
-  const danger = tone === 'danger'
   return (
     <Dialog
       open={open}
@@ -85,7 +93,7 @@ export function ActionDialog({
       size={size}
       footer={
         <>
-          <Button variant="secondary" onClick={onCancel} disabled={busy} autoFocus={danger || focusCancel}>
+          <Button ref={cancelRef} variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
           <Button type="submit" form={formId} variant={danger ? 'danger' : 'primary'} loading={busy}>

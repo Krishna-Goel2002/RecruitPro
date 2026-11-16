@@ -43,9 +43,11 @@ public class MeController {
     @Operation(summary = "Change the password; other sessions are signed out, this one receives a new access token and refresh cookie")
     public ApiResponse<AuthResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request,
                                                     HttpServletRequest httpRequest, HttpServletResponse response) {
-        // The new session's refresh token goes into the cookie of the portal the request came from.
+        // The new session's refresh token goes into the cookie of the portal the request came from. The portal header
+        // is validated first (R5#1): an invalid one is a 400 before the password changes and every session is revoked.
+        Portal portal = Portal.from(httpRequest);
         return ApiResponse.success(refreshTokenCookies.complete(
-                authService.changePassword(request.currentPassword(), request.newPassword()), Portal.from(httpRequest),
-                response), "Password changed");
+                authService.changePassword(request.currentPassword(), request.newPassword()), portal, response),
+                "Password changed");
     }
 }

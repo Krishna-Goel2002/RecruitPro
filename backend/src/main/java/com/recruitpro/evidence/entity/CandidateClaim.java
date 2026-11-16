@@ -10,11 +10,18 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 
 /**
  * Something the candidate states about themselves (D5, C1). New claims and corrections of resume facts are
- * SELF_CLAIMED (tier 0) and never raise verified coverage; a recruiter may corroborate one (tier 2) or reject
- * it (stays tier 0 with a verification time, and is no longer used for matching).
+ * SELF_CLAIMED (tier 0) and never raise verified coverage.
+ *
+ * <p>Recruiter verification is per organisation (R2-H02): the source of truth is
+ * {@link CandidateClaimVerification} (table {@code candidate_claim_verifications}), read by matching, the staff
+ * views and the verification module. The columns {@code tier}, {@code verified_by_user_id}, {@code verified_at} and
+ * {@code verification_note} below are <b>deprecated as a decision input</b>: they hold only a derived, candidate-facing
+ * summary of all organisations' rows ({@link #summarize}), kept in sync on every verification write and cleared when
+ * the claim changes. Nothing that decides for an organisation may read them (integration pass, 16 Nov 2026).</p>
  */
 @Entity
 @Table(name = "candidate_claims")
@@ -56,12 +63,41 @@ public class CandidateClaim extends BaseEntity {
     @Column(name = "verification_note", length = 500)
     private String verificationNote;
 
-    /** A recruiter checked the claim and could not confirm it; it is excluded from matching. */
-    public boolean isRejected() {
-        return verifiedAt != null && tier == EvidenceTier.SELF_CLAIMED;
+    /**
+     * Candidate-facing summary of the per-organisation verifications (never used for an organisation's decisions):
+     * CORROBORATED when at least one organisation corroborated the claim (the most recent corroboration), otherwise
+     * a rejection (SELF_CLAIMED with the most recent rejection's time) when one organisation checked it, otherwise
+     * unverified. The result therefore does not depend on which organisation checked last.
+     */
+    public void summarize(Collection<CandidateClaimVerification> verifications) {
+        CandidateClaimVerification latestCorroboration = null;
+        CandidateClaimVerification latestRejection = null;
+        for (CandidateClaimVerification row : verifications == null ? java.util.List.<CandidateClaimVerification>of() : verifications) {
+            if (row == null || row.getVerifiedAt() == null) {
+                continue;
+            }
+            if (row.isRejected()) {
+                latestRejection = later(latestRejection, row);
+            } else {
+                latestCorroboration = later(latestCorroboration, row);
+            }
+        }
+        CandidateClaimVerification shown = latestCorroboration != null ? latestCorroboration : latestRejection;
+        if (shown == null) {
+            resetVerification();
+            return;
+        }
+        tier = shown.isRejected() ? EvidenceTier.SELF_CLAIMED : shown.getTier();
+        verifiedByUserId = shown.getVerifiedByUserId();
+        verifiedAt = shown.getVerifiedAt();
+        verificationNote = shown.getVerificationNote();
     }
 
-    /** UNVERIFIED, VERIFIED or REJECTED (derived). */
+    private static CandidateClaimVerification later(CandidateClaimVerification current, CandidateClaimVerification row) {
+        return current == null || row.getVerifiedAt().isAfter(current.getVerifiedAt()) ? row : current;
+    }
+
+    /** UNVERIFIED, VERIFIED or REJECTED: the candidate-facing summary only (see {@link #summarize}). */
     public String verificationStatus() {
         if (verifiedAt == null) {
             return "UNVERIFIED";

@@ -28,7 +28,7 @@ class TimelineRole(BaseModel):
     endDate: str | None = None
     current: bool = False
     months: int | None = None
-    skills: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list, max_length=200)
 
 
 class Timeline(BaseModel):

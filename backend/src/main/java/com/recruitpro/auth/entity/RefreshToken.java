@@ -1,6 +1,7 @@
 package com.recruitpro.auth.entity;
 
 import com.recruitpro.common.entity.BaseEntity;
+import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.user.entity.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -21,6 +22,7 @@ import java.util.UUID;
 /**
  * Refresh token (hash only). Tokens of one sign-in session share a {@code familyId}; rotation revokes the
  * presented token ({@code revokedReason = ROTATED}, {@code replacedAt}) and issues the next one in the family.
+ * {@code familyStartedAt} bounds the family's absolute lifetime.
  */
 @Entity
 @Table(name = "refresh_tokens")
@@ -52,10 +54,20 @@ public class RefreshToken extends BaseEntity {
     @Column(name = "revoked_reason", length = 30)
     private String revokedReason;
 
+    /**
+     * When the sign-in that started this family happened (R1-U2, V28); copied to every rotated token so the family
+     * ends after the absolute session lifetime however often it is rotated.
+     */
+    @Column(name = "family_started_at", nullable = false)
+    private LocalDateTime familyStartedAt;
+
     @PrePersist
     void assignFamilyIfMissing() {
         if (familyId == null || familyId.isBlank()) {
             familyId = UUID.randomUUID().toString();
+        }
+        if (familyStartedAt == null) {
+            familyStartedAt = UtcTime.now();
         }
     }
 }

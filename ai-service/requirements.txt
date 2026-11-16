@@ -16,3 +16,11 @@ pdfplumber==0.11.9
 pdfminer.six==20251230
 python-docx==1.2.0
 olefile==0.47
+
+# Security floors for transitive dependencies (not pinned by the packages above): h11 request smuggling
+# (CVE-2025-43859, fixed 0.16.0), cryptography OpenSSL advisory (CVE-2024-12797, fixed 44.0.1), Pillow
+# image-decoding fixes (>= 11.3.0). pip already picks the newest versions; the floors stop an older,
+# vulnerable version from being resolved from a cache or a constrained mirror.
+h11>=0.16.0
+cryptography>=44.0.1
+pillow>=11.3.0

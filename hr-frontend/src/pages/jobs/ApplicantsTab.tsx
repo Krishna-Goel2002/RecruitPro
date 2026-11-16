@@ -23,7 +23,7 @@ import { lastSeen, markSeen, readFlag, writeFlag } from '../../lib/lastSeen'
 import { useSearchState } from '../../lib/useSearchState'
 import { ApplicantCompare } from './ApplicantCompare'
 import { ApplicantPeek } from './ApplicantPeek'
-import { useListDecisions } from './listDecisions'
+import { applyOverride, useListDecisions } from './listDecisions'
 import {
   COVERAGE_NOTE, CoverageCell, EvidenceStrip, GROUP_COPY, MATCH_NOTE, RequirementLegend, canListDecide, stripRequirements, useApplicantDetails,
 } from './ranking'
@@ -104,10 +104,7 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
   })
 
   // Rows apply optimistic decisions (status flips at once; a thin progress line while the send window runs).
-  const view = rows.map(row => {
-    const override = decisions.overrides.get(row.applicationId)
-    return override ? { ...row, applicationStatus: override.status } : row
-  })
+  const view = rows.map(row => applyOverride(row, decisions.overrides.get(row.applicationId)))
   const order = view.map(row => row.applicationId)
 
   // M7: a row that changed ranking group since the last data gets the accent wash.
@@ -183,8 +180,8 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
       '?': () => setHelpOpen(true),
     },
     true,
-    // Inside the peek drawer j/k/s/r/space keep working.
-    peekId != null ? ['j', 'k', ' ', 's', 'r'] : [],
+    // Inside the peek drawer j/k/s/r/space keep working (only while the drawer is the one open dialog).
+    peekId != null && !decisions.isOpen && !helpOpen ? ['j', 'k', ' ', 's', 'r'] : [],
   )
 
   // DataTable handles ↑/↓/Enter; this tracks which row has focus so j/k continue from it.
@@ -372,7 +369,9 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
           size="sm"
           onClick={() => {
             const url = `${window.location.origin}${location.pathname}${location.search}`
-            void navigator.clipboard?.writeText(url).then(() => toast({ tone: 'success', title: 'Link to this view copied', duration: 3000 }), () => undefined)
+            const failed = () => toast({ tone: 'warning', title: 'Could not copy the link', body: url })
+            if (!navigator.clipboard) failed()
+            else void navigator.clipboard.writeText(url).then(() => toast({ tone: 'success', title: 'Link to this view copied', duration: 3000 }), failed)
           }}
         />
         {can('applicants.rematch') && (

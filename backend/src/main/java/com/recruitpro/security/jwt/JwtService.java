@@ -32,6 +32,11 @@ public class JwtService {
     public static final String CLAIM_USER_ID = "uid";
     public static final String CLAIM_ROLE = "role";
     public static final String CLAIM_ORGANIZATION = "org";
+    /**
+     * Issue time in milliseconds (R1-U3): the standard {@code iat} has whole seconds only, so a token issued in the
+     * same second just before a password change would otherwise outlive the change for up to 15 minutes.
+     */
+    public static final String CLAIM_ISSUED_AT_MS = "iat_ms";
 
     private static final int MINIMUM_SECRET_BYTES = 32;
 
@@ -129,10 +134,17 @@ public class JwtService {
         return null;
     }
 
+    /** The {@value #CLAIM_ISSUED_AT_MS} claim, or null for tokens issued before it existed. */
+    public static Long issuedAtMillisClaim(Claims claims) {
+        Object raw = claims.get(CLAIM_ISSUED_AT_MS);
+        return raw instanceof Number number ? number.longValue() : null;
+    }
+
     private String buildToken(Map<String, Object> extraClaims, String subject, long expiration) {
         long now = System.currentTimeMillis();
         return Jwts.builder()
                 .claims(extraClaims)
+                .claim(CLAIM_ISSUED_AT_MS, now)
                 .subject(subject)
                 .issuer(issuer)
                 .id(UUID.randomUUID().toString())

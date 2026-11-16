@@ -26,7 +26,8 @@ export function useResumeAnalysis(resumeId: number) {
     queryFn: () => resumesApi.analysis(resumeId),
     refetchInterval: current => {
       const active = isInProgress(current.state.data?.status)
-      return pollingRef.current ? pollingRef.current.nextInterval(active) : active ? POLL_INTERVAL_MS : false
+      const fetches = current.state.dataUpdateCount + current.state.errorUpdateCount
+      return pollingRef.current ? pollingRef.current.nextInterval(active, fetches) : active ? POLL_INTERVAL_MS : false
     },
     refetchIntervalInBackground: false,
   })

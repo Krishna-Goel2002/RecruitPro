@@ -65,6 +65,13 @@ public class ApplicationService {
     private final ObjectMapper objectMapper;
     /** S4: when true (prod default), candidates must verify their email address before applying. */
     private final boolean requireVerifiedEmailToApply;
+    /** R2-M01: interviews and work samples still open when the candidate withdraws. */
+    private CandidateDepartures departures;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setDepartures(CandidateDepartures departures) {
+        this.departures = departures;
+    }
 
     public ApplicationService(CandidateProfileService profileService, ApplicationRepository applicationRepository,
                               ResumeRepository resumeRepository, JobRepository jobRepository,
@@ -174,12 +181,15 @@ public class ApplicationService {
         event.setActor(candidate.getUser());
         event.setMatchRunId(matchRunRepository.findCurrentRunIds(saved.getId()).stream().findFirst().orElse(null));
         historyRepository.save(event);
+        if (departures != null) {
+            departures.candidateLeft(saved, false);
+        }
         notifier.statusChanged(saved, ApplicationStatus.WITHDRAWN);
         return ApplicationResponse.from(saved, organizationName(saved.getJob()));
     }
 
     private List<ApplicationDetailResponse.RequirementVerification> verification(Job job, Long applicationId) {
-        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderById(job.getId());
+        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId());
         Map<Long, AiMatchResponse.RequirementResult> results = new HashMap<>();
         JobMatchRun run = matchRunRepository.findFirstByApplicationIdAndCurrentRunTrueOrderByIdDesc(applicationId).orElse(null);
         if (run != null) {

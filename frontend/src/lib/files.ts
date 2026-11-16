@@ -50,6 +50,27 @@ export function validateWorkSampleFile(file: File): string | null {
 }
 
 /**
+ * Adds newly chosen files to the attached ones: keeps at most WORK_SAMPLE_MAX_FILES, skips a file that is already
+ * attached (same name and size), and returns every problem in words, including how many files were not added.
+ */
+export function mergeWorkSampleFiles(current: readonly File[], chosen: readonly File[]): { files: File[]; problems: string[] } {
+  const files = [...current]
+  let duplicates = 0
+  let overLimit = 0
+  for (const file of chosen) {
+    if (files.some(f => f.name === file.name && f.size === file.size)) duplicates += 1
+    else if (files.length >= WORK_SAMPLE_MAX_FILES) overLimit += 1
+    else files.push(file)
+  }
+  const problems = validateWorkSampleFiles(files)
+  if (overLimit > 0) {
+    problems.unshift(`You can attach at most ${WORK_SAMPLE_MAX_FILES} files, so ${overLimit} ${overLimit === 1 ? 'file was' : 'files were'} not added.`)
+  }
+  if (duplicates > 0) problems.push(`${duplicates === 1 ? 'One file is' : `${duplicates} files are`} already attached.`)
+  return { files, problems }
+}
+
+/**
  * Checks a set of files that would be attached together (already chosen + newly chosen).
  * Returns every problem found; an empty list means the set is acceptable.
  */

@@ -3,7 +3,8 @@
 Runs every SYNTHETIC gold case (eval/cases.py) through the real verifier and the shared verdict layer, offline, and
 reports claim-level metrics: false-corroboration rate (predicted VERIFIED where gold is not VERIFIED, over all
 non-VERIFIED gold claims), false-discovery share of VERIFIED predictions, Cohen's kappa over the five verdicts,
-per-verdict precision/recall, and per-verifier agreement. ``--check`` exits 1 when FCR > 0.02 or kappa < 0.70.
+per-verdict precision/recall, and per-verifier agreement. ``--check`` exits 1 when FCR > 0.02 or kappa < 0.70, or
+when any case crashes.
 
 Synthetic cases are far cleaner than real sources; the backend's shadow-mode labelling (plan section 5) must
 confirm these numbers on real data before any organisation switches to VISIBLE.
@@ -75,6 +76,8 @@ def failures(metrics: dict) -> list[str]:
             problems.append(f"{name}={value} (threshold {op} {threshold})")
     if metrics["cases"] < MIN_CASES:
         problems.append(f"only {metrics['cases']} cases (at least {MIN_CASES} required)")
+    # A crashing case is scored as NOT_FOUND, which hides the crash whenever the gold verdict is NOT_FOUND too.
+    problems += [f"case crashed: {error}" for error in metrics.get("errors", [])]
     return problems
 
 

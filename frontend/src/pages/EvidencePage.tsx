@@ -17,6 +17,7 @@ import { stagger } from '../design/motion'
 import { focusPageHeading } from '../lib/focus'
 import { CLAIM_TYPE_LABEL, TIER_DESCRIPTION, TIER_ORDER, claimTypeFor } from '../lib/labels'
 import { claimsQuery } from '../lib/queries'
+import { isHttpUrl } from '../lib/url'
 import './common.css'
 import './claims/claims.css'
 
@@ -58,6 +59,8 @@ export function EvidencePage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.claims }).then(focusPageHeading)
       void queryClient.invalidateQueries({ queryKey: ['application'] })
       void queryClient.invalidateQueries({ queryKey: queryKeys.verificationLedger })
+      // A claim made from a resume correction is gone: the fact is unreviewed again (and its row loses "Your claim").
+      void queryClient.invalidateQueries({ queryKey: ['resume-analysis'] })
     },
   })
 
@@ -122,7 +125,8 @@ export function EvidencePage() {
                     <span>Added {formatDate(claim.createdAt)}</span>
                     <span>{reviewState(claim)}</span>
                   </p>
-                  {claim.evidenceUrl && (
+                  {claim.evidenceUrl && !isHttpUrl(claim.evidenceUrl) && <p className="c-meta c-break">{claim.evidenceUrl}</p>}
+                  {isHttpUrl(claim.evidenceUrl) && (
                     <a className="cl-link" href={claim.evidenceUrl} target="_blank" rel="noopener noreferrer nofollow">
                       {claim.evidenceUrl.replace(/^https?:\/\//, '')}
                       <Icon icon={ArrowUpRight} size={12} />

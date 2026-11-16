@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { accountApi } from '../../api/account'
-import { errorMessage, isApiError } from '../../api/client'
+import { errorMessage, isApiError, isLockout, waitText } from '../../api/client'
 import { qk } from '../../api/queryKeys'
 import type { MfaEnrollment, MfaStatus } from '../../api/types'
 import { useCurrentUser } from '../../auth/AuthContext'
@@ -144,10 +144,43 @@ function EnabledPanel({ status, onCodes }: { status: MfaStatus; onCodes: (codes:
   const [problem, setProblem] = useState<string | null>(null)
   const low = status.recoveryCodesRemaining <= 2
 
+  const [regenCode, setRegenCode] = useState('')
+  const [regenProblem, setRegenProblem] = useState<string | null>(null)
+  const [regenShake, setRegenShake] = useState(0)
+  // R1-U1 (integration pass): new codes need a current authenticator code, so a stolen session alone cannot mint them.
   const regenerate = useMutation({
-    mutationFn: accountApi.regenerateRecoveryCodes,
-    onSuccess: result => { setRegenOpen(false); void queryClient.invalidateQueries({ queryKey: qk.mfaStatus }); onCodes(result.recoveryCodes) },
+    mutationFn: (value: string) => accountApi.regenerateRecoveryCodes({ code: value }),
+    onSuccess: result => { closeRegen(); void queryClient.invalidateQueries({ queryKey: qk.mfaStatus }); onCodes(result.recoveryCodes) },
+    onError: cause => {
+      setRegenCode('')
+      setRegenShake(n => n + 1)
+      if (isLockout(cause)) {
+        const wait = waitText(cause)
+        setRegenProblem(`Too many wrong attempts. Your account is paused for ${wait ?? 'a few minutes'}; try again after that.`)
+      } else if (isApiError(cause, 400)) {
+        setRegenProblem('That code did not match. Wait for the next code in your app and try again.')
+      } else {
+        setRegenProblem(errorMessage(cause))
+      }
+    },
   })
+
+  function closeRegen() {
+    setRegenOpen(false)
+    setRegenCode('')
+    setRegenProblem(null)
+    regenerate.reset()
+  }
+
+  function submitRegen(value: string) {
+    if (regenerate.isPending) return
+    if (!/^\d{6}$/.test(value.trim())) {
+      setRegenProblem('Enter the 6-digit code from your authenticator app.')
+      return
+    }
+    setRegenProblem(null)
+    regenerate.mutate(value.trim())
+  }
   const disable = useMutation({
     mutationFn: () => accountApi.mfaDisable({ password, code: code.trim() }),
     onSuccess: () => { setPassword(''); setCode(''); toast({ tone: 'success', title: 'Two-step verification is off' }); void queryClient.invalidateQueries({ queryKey: qk.mfaStatus }) },
@@ -203,14 +236,17 @@ function EnabledPanel({ status, onCodes }: { status: MfaStatus; onCodes: (codes:
       <ActionDialog
         open={regenOpen}
         title="Create new recovery codes?"
-        description="Your current recovery codes stop working immediately. You will see the new ones once."
+        description="Your current recovery codes stop working immediately. You will see the new ones once. Confirm with a code from your authenticator app."
         confirmLabel="Create new codes"
-        focusCancel
         busy={regenerate.isPending}
-        error={regenerate.error}
-        onCancel={() => { setRegenOpen(false); regenerate.reset() }}
-        onConfirm={() => regenerate.mutate()}
-      />
+        error={regenProblem}
+        onCancel={closeRegen}
+        onConfirm={() => submitRegen(regenCode)}
+      >
+        <Field label="6-digit code from your app">
+          <OtpInput value={regenCode} onChange={value => { setRegenCode(value); if (regenProblem) setRegenProblem(null) }} onComplete={submitRegen} disabled={regenerate.isPending} errorKey={regenShake} />
+        </Field>
+      </ActionDialog>
     </>
   )
 }

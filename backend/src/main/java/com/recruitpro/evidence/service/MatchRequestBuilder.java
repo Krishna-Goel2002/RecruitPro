@@ -7,6 +7,7 @@ import com.recruitpro.candidate.entity.ResumeAnalysisFact;
 import com.recruitpro.common.util.JsonText;
 import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.hr.entity.JobRequirement;
+import com.recruitpro.hr.entity.RequirementType;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -75,8 +76,10 @@ public final class MatchRequestBuilder {
             }
         }
         Integer years = requirement.getMinimumYears() == null ? null : Math.max(0, Math.min(50, requirement.getMinimumYears()));
+        // R2-H01: an OTHER requirement is never scored, so it can never gate ranking (legacy rows may still say knockout).
+        boolean knockout = requirement.isKnockout() && requirement.getType() != RequirementType.OTHER;
         return new AiMatchRequest.Requirement(requirement.getId(), requirement.getType().name(),
-                limit(requirement.getDescription(), 500), requirement.isMandatory(), requirement.isKnockout(), years,
+                limit(requirement.getDescription(), 500), requirement.isMandatory(), knockout, years,
                 List.copyOf(alternatives), requirement.getProficiency() == null ? null : requirement.getProficiency().name());
     }
 

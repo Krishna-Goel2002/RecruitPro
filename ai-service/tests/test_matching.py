@@ -83,6 +83,19 @@ class TestEvidenceLadder:
         assert (result.requirements[1].tier, result.requirements[1].provenance) == ("INTERVIEW_VERIFIED", "INTERVIEW")
         assert result.requirements[2].status == "NOT_OBSERVED"  # linked evidence counts only for its own requirement
 
+    def test_linked_interview_evidence_is_shown_on_an_other_requirement_but_never_scored(self):
+        # Integration pass (R2-U3): OTHER stays outside coverage and knockouts, but a linked rating is shown.
+        facts = [fact("fact:1", "SKILL", "Java"),
+                 fact("iv:7:r2", "OTHER", "Night-shift availability confirmed", tier="INTERVIEW_VERIFIED")]
+        reqs = [requirement(1, "SKILL", "Java"), requirement(2, "OTHER", "Night shifts", knockout=True)]
+        result = run(reqs, facts)
+        other = result.requirements[1]
+        assert (other.status, other.tier, other.provenance) == ("MATCHED", "INTERVIEW_VERIFIED", "INTERVIEW")
+        assert other.factIds == ["iv:7:r2"] and "not part of the coverage score" in other.explanation
+        assert result.verifiedCoverage == 100.0 and result.knockoutsVerified is True
+        without = run(reqs, facts[:1])
+        assert without.requirements[1].status == "NOT_OBSERVED" and without.verifiedCoverage == 100.0
+
     def test_recruiter_confirmed_verification_facts_are_corroborated_general_facts(self):
         # WP-VBE: the backend sends a confirmed verdict as "vf:<verdictId>" at tier CORROBORATED (plan v2 3.5).
         facts = [fact("fact:1", "SKILL", "React"), fact("vf:42", "SKILL", "React", tier="CORROBORATED",
@@ -94,10 +107,12 @@ class TestEvidenceLadder:
         assert result.requirements[1].status == "NOT_OBSERVED"  # not linked to a requirement: a general fact
 
     def test_knockouts_are_gates_not_rejections(self):
-        reqs = [requirement(1, "SKILL", "Java", knockout=True), requirement(2, "OTHER", "Night shifts", knockout=True)]
+        reqs = [requirement(1, "SKILL", "Java", knockout=True), requirement(2, "SKILL", "Kafka", knockout=True),
+                requirement(3, "OTHER", "Night shifts", knockout=True)]
         result = run(reqs, [fact("fact:1", "SKILL", "Java")])
+        # An OTHER requirement is never scored, so it never gates ranking (same rule as the backend, R2-H01).
         assert result.knockoutsVerified is False and result.unverifiedKnockouts == [2]
-        assert result.verifiedCoverage == 100.0
+        assert result.verifiedCoverage == 50.0
 
 
 class TestSkills:

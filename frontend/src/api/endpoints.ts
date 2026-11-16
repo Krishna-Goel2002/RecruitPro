@@ -227,6 +227,8 @@ export const resumesApi = {
     return apiRequest<Resume>('/candidates/me/resumes', { method: 'POST', body: form })
   },
   download: (id: number): Promise<DownloadedFile> => apiDownload(`/candidates/me/resumes/${id}/download`),
+  /** R2-M02: deletes the file, its analysis and its correction claims. 409 while an application uses it; 404 if not mine. */
+  remove: (id: number) => apiRequest<null>(`/candidates/me/resumes/${id}`, { method: 'DELETE' }),
   analysis: async (id: number) =>
     normalizeAnalysis(await apiRequest<ResumeAnalysis>(`/candidates/me/resumes/${id}/analysis`)),
   retryAnalysis: (id: number) => apiRequest<null>(`/candidates/me/resumes/${id}/analysis/retry`, { method: 'PATCH' }),

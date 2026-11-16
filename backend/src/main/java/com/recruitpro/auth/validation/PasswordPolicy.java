@@ -28,16 +28,10 @@ public final class PasswordPolicy {
         if (password.getBytes(StandardCharsets.UTF_8).length > MAX_BYTES) {
             return false;
         }
-        boolean letter = false;
-        boolean digit = false;
-        for (int i = 0; i < password.length(); i++) {
-            char c = password.charAt(i);
-            if (Character.isLetter(c)) {
-                letter = true;
-            } else if (Character.isDigit(c)) {
-                digit = true;
-            }
-        }
+        // Code points, not UTF-16 units (R6-B7): agrees with REGEX (\\p{L} / \\p{Nd} match whole code points), so a
+        // letter outside the Basic Multilingual Plane counts here exactly as it does in the DTO validation.
+        boolean letter = password.codePoints().anyMatch(Character::isLetter);
+        boolean digit = password.codePoints().anyMatch(Character::isDigit);
         return letter && digit;
     }
 

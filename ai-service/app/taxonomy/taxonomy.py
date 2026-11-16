@@ -34,7 +34,8 @@ CONTEXT_WINDOW = 6
 # Domains whose skills support each other as context for ambiguous names.
 _DOMAIN_GROUPS = {"SOFTWARE": "TECH", "DATA": "TECH", "CLOUD": "TECH"}
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9]+|\+\+|[+#./&'\-]")
+# Words are Unicode-aware, so "Excelência" or "Javaé" is one word and never contains the skill "Excel"/"Java".
+_TOKEN_RE = re.compile(r"[^\W_]+|\+\+|[+#./&'\-]")
 _TIGHT_PUNCT = {".", "+", "++", "#", "&", "'"}
 _LIST_LABEL_RE = re.compile(
     r"^\s*(?:tools(?: used)?|technologies(?: used)?|tech(?:nology)? stack|stack|environment|skills|key skills|"

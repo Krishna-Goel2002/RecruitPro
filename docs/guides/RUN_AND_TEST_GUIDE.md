@@ -1,6 +1,12 @@
 # RecruitPro: run and test guide
 
-Branch **`Kshitij`**, commit `2fedafb` plus the demo patches listed in [Section 0.2](#02-demo-patches-on-top-of-2fedafb). Written 16 Nov 2026.
+Two branches use this guide (written 16 Nov 2026, infrastructure and redesign notes updated by the R7 audit,
+[docs/audit/BUG_HUNT_R7_INFRA.md](../audit/BUG_HUNT_R7_INFRA.md)):
+
+| Branch | What it is | Where this guide differs |
+|---|---|---|
+| **`Kshitij`** | The **demo** branch: plan v2 plus the demo patches (0.2) and the review fixes, original portal UI, migrations V1–V25 | AI service (8000) and PostgreSQL (5432) are published on the host; no compose networks; no domain-trust check for references; no QR code at MFA enrolment |
+| **`Kshitij-redesign`** | `Kshitij` + trust fixes (V26), retention purge, AI-service image with LibreOffice/OCR, compose network isolation, proficiency matching, and the **redesigned portals** | The steps below describe this branch; every UI difference is listed in [0.3](#03-what-is-different-on-kshitij-redesign) and marked **Redesign:** in the step |
 
 This guide takes you from a Windows machine with Docker Desktop to a running RecruitPro, then through every flow that exists today, with the exact input to type and the result to expect. Commands are **Windows PowerShell** first; bash equivalents follow where they differ.
 
@@ -33,16 +39,16 @@ If a step does not match what you see, stop, note the section number, and use [S
 | Item | Status |
 |---|---|
 | Commit `9ad341a` (core platform) | `mvnw verify` passed on a Windows machine with JDK 21 on 15 Nov 2026 (239 tests, 0 failures, 6 skipped), and `docker compose up --build` started all services. **This is the known-good fallback.** |
-| Commit `2fedafb` (verification platform, agent-service, MFA, SSO, ICS, work-sample files, scorecard edit, fairness date range) | **Never compiled.** The sandbox it was written in has no JDK 21 or Maven Central. Static checks passed: `java_static_check.py` (575 files, 0 errors) and `check_entity_schema.py` (474 columns, 0 errors). The first real `mvnw verify` is step 4.1 below. |
-| ai-service | `pytest`: 178 passed. `eval.run --check`: passed. |
-| agent-service | `pytest`: 161 passed. `eval.run --check`: exit 0, false-corroboration rate 0.0, kappa 1.0 (synthetic data, see 8.3). |
-| Both portals | `pnpm build` (`tsc --noEmit` + `vite build`) passes. |
-| Docker images of agent-service and of the new backend | Not built yet. |
+| Commit `2fedafb` and everything after it, on both branches (verification platform, agent-service, MFA, SSO, ICS, work-sample files, scorecard edit, fairness date range; on `Kshitij-redesign` also the trust fixes, retention and the redesign) | **No `mvnw verify` result recorded.** The sandbox it was written in has no JDK 21 or Maven Central. Static checks pass: `java_static_check.py` (0 errors) and `check_entity_schema.py` (0 errors, 0 warnings); all migrations apply on PostgreSQL 16. The first real `mvnw verify` is step 4.1 below (CI also runs it on every push to both branches). |
+| ai-service | `pytest`: 178 passed on `Kshitij`, 186 on `Kshitij-redesign`. `eval.run --check`: passed. |
+| agent-service | `pytest`: 176 passed on `Kshitij`, 205 on `Kshitij-redesign`. `eval.run --check`: exit 0, false-corroboration rate 0.0, kappa 1.0 (synthetic data, see 8.3). |
+| Both portals | `pnpm install --frozen-lockfile && pnpm build` (`tsc --noEmit` + `vite build`) passes; on `Kshitij-redesign` also the headless screenshot harness (`tools/ui-snapshots/`) with 0 page errors and 0 axe violations. |
+| Docker images of agent-service, the new backend, the LibreOffice/OCR AI-service image and the redesigned portals | Not built in the authoring environment (no Docker). CI's `docker-stack` job builds them and starts the stack. |
 | **Every flow in Section 6** | **Not yet clicked through against a live stack.** They were traced through the code (frontend → controller → service → agent fixture), and the agent fixtures were run in-process against the exact inputs below. Expect small surprises. Report them using Section 12. |
 
 ### 0.2 Demo patches on top of 2fedafb
 
-These changes are in the working tree and not committed yet. Commit and push them before the demo.
+These changes were made for the demo and are **committed in `50e7b39`** (both branches contain them). Kept here as a record.
 
 | File | Why |
 |---|---|
@@ -52,6 +58,35 @@ These changes are in the working tree and not committed yet. Commit and push the
 | `docker-compose.yml` | The SSO variables, the LLM model and key variables, and `AGENT_GITHUB_TOKEN` were not passed into the containers, so the optional integrations in Section 9 could not be switched on. Empty defaults change nothing. |
 | `.env.example` | `APP_ENCRYPTION_KEY=replace-with-...` is not valid Base64. Copying the file unchanged **stopped the backend from starting**. It is now empty, which means "use the dev default". The SSO and LLM variables were added. |
 | `tools/totp.py` (new) | Prints the current 6-digit code for an MFA secret, for testing MFA without a phone. Standard library only. |
+
+### 0.3 What is different on `Kshitij-redesign`
+
+**Infrastructure.** AI service and PostgreSQL have no host ports (health via `docker compose exec`, 4.3); agent
+service, Mailpit and SMTP are bound to 127.0.0.1; the backend waits until PostgreSQL, the AI service and the agent
+service report healthy; the AI-service image contains headless LibreOffice (`.doc`) and RapidOCR (off unless
+`OCR_ENABLED=true`), so the first build takes longer; an LLM provider for the AI service needs
+`docker-compose.ai-egress.yml` (9.3). Migration V26 (organisation trust lists) exists only here: switching between
+the branches needs `docker compose down -v` (11).
+
+**Verification trust.** A reference from a referee at `demo-analytics.example` ("Demo Analytics") is still
+**Verified** (trusted demo employer); `demo-newco.example` ("Demo Newco", registered 40 days ago) gives at most
+**Partly verified** with `EMPLOYER_DOMAIN_NEW` (6.18). Admins can list trusted employer domains and badge issuers
+(6.20).
+
+**Portals (redesign).** Same flows and API, new screens. Where a step below says **Redesign:**, use that wording:
+
+| Area | What changed |
+|---|---|
+| Both portals | New design system, light/dark theme toggle, brand name from `src/design/brand/active.ts` (default "RecruitPro"); sign-in pages are split screens with show/hide password |
+| Candidate | New **Overview** landing page with a *Get set up* checklist; **Resume** uploads on drop/choose (no separate Upload button); **Apply** is a dialog with steps *Resume · Review · Sent*; **Strengthen your application** uses an **Add a source** drawer with steps *Choose · Connect · Prove · Check* (6.16); verdicts open in a **drawer** with **Share with employers / Hide / Re-check** and J/K to move between results; **References** use a two-step drawer |
+| HR jobs | Job create/edit is a **wizard** *Basics → Requirements → Review* with autosave and the requirement compiler running automatically on step 2 (6.5) |
+| HR ranking | Compact table with an evidence strip per applicant, saved views, **keyboard triage** (`j`/`k` move, `Enter` open, `Space` quick peek, `x` select, `c` compare 2–3, `s` shortlist, `r` not progressed, `?` shortcut sheet), bulk decisions, and **confirm, then 5 s Undo before the decision is sent** (6.6) |
+| HR applicant | Sticky decision bar (one primary action per status; the rest under **More**), tabs Evidence · Claims · Work samples · Interviews · Verification, prev/next with `[` `]`; Undo toast after Shortlist/Reject |
+| HR MFA | **QR code** at enrolment (scan it, or "Can't scan?" for the key), steps *Scan · Confirm · Save codes*, the 6-digit code submits itself, recovery codes need the "I have saved these codes" tick (6.12); forced enrolment starts by itself (6.13) |
+| HR admin | **Verification** page with tabs **Readiness**, **Labelling queue** (keys `1`–`5`, `Enter`, `J`/`K`), **Connectors**, **Trusted domains** (6.20); Organisation page saves through a sticky save bar; first-run **Get started** checklist for new admins |
+
+Design notes with every detail: [docs/design/](../design/) (`CANDIDATE-REDESIGN-NOTES.md`, `HR-A-REDESIGN-NOTES.md`,
+`HR-B-REDESIGN-NOTES.md`).
 
 ---
 
@@ -64,7 +99,7 @@ These changes are in the working tree and not committed yet. Commit and push the
 | JDK | **21** (Temurin) | `mvnw verify` | https://adoptium.net/temurin/releases/?version=21 (tick "Set JAVA_HOME") |
 | Node.js | **22 LTS** | portal builds (outside Docker) | https://nodejs.org/ |
 | pnpm | **10** | portal builds | `corepack enable` then `corepack prepare pnpm@10 --activate`, or prefix with `npx pnpm@10` |
-| Python | **3.12** (3.10 and 3.11 also work) | ai-service and agent-service tests, `tools/` | https://www.python.org/downloads/ (tick "Add python.exe to PATH") |
+| Python | **3.12** (3.10 and 3.11 also work; CI and the images use 3.11 for ai-service, 3.12 for agent-service) | ai-service and agent-service tests, `tools/` | https://www.python.org/downloads/ (tick "Add python.exe to PATH") |
 
 **Docker Desktop → Settings → Resources:** give it at least **8 GB of memory**. The stack has 7 containers, and the first build compiles Java and two Node apps.
 
@@ -78,7 +113,7 @@ pnpm --version     # 10.x
 python --version   # 3.12.x (3.10/3.11 ok)
 ```
 
-**Ports the stack publishes:** 5173, 5174, 8080, and on 127.0.0.1 only 8100, 8025, 1025. The AI service (8000) and PostgreSQL (5432) are on an internal Docker network and are not published (see 4.3). Check that none are in use:
+**Ports the stack publishes** (`Kshitij-redesign`): 5173, 5174, 8080, and on 127.0.0.1 only 8100, 8025, 1025. The AI service (8000) and PostgreSQL (5432) are on an internal Docker network and are not published (see 4.3). On `Kshitij` 8000 and 5432 are published too, so add them to the check below. Check that none are in use:
 
 ```powershell
 netstat -ano | findstr ":5173 :5174 :8080 :8100 :8025 :1025"
@@ -92,20 +127,23 @@ Nothing should be listed. (A local PostgreSQL on 5432 no longer conflicts, becau
 
 ```powershell
 cd C:\Users\KIIT0001\Desktop\RecruitPro
-git status                 # "On branch Kshitij"
+git status                 # "On branch Kshitij-redesign" (or "Kshitij" for the demo branch)
 git pull
-git log --oneline -3       # 2fedafb (or newer) at the top
+git log --oneline -3       # newest commit of that branch at the top
 ```
+
+To switch: `git checkout Kshitij-redesign` or `git checkout Kshitij` (first `docker compose down -v`, see 11).
 
 On a fresh machine:
 
 ```powershell
 git clone https://github.com/Krishna-Goel2002/RecruitPro.git C:\dev\RecruitPro
 cd C:\dev\RecruitPro
-git checkout Kshitij
+git checkout Kshitij-redesign      # or: git checkout Kshitij
 ```
 
-Use a path **without spaces**.
+Use a path **without spaces**. Line endings are fixed by `.gitattributes` (`mvnw` stays LF, `mvnw.cmd` CRLF), so the
+checkout works whatever `git config core.autocrlf` says.
 
 ---
 
@@ -164,7 +202,7 @@ Select-String -Path backend-build.log -Pattern "BUILD SUCCESS","BUILD FAILURE","
 ```
 
 ```bash
-cd backend && ./mvnw verify > ../backend-build.log 2>&1; cd ..
+cd backend && chmod +x mvnw && ./mvnw verify > ../backend-build.log 2>&1; cd ..   # chmod: mvnw is stored without the executable bit
 grep -E "BUILD SUCCESS|BUILD FAILURE|Tests run:.*Fail" backend-build.log | tail -5
 ```
 
@@ -189,7 +227,7 @@ The first run downloads Maven and its dependencies (5 to 15 minutes).
    git checkout 9ad341a
    docker compose up --build
    ```
-   Then demo 6.1 to 6.6, 6.10, 6.11, 6.21 and 6.22, plus 6.7 to 6.9 without file attachments, ICS, scorecard editing or the fairness date range. The older guide for that version is `git show 9ad341a:docs/guides/RUN_AND_TEST_GUIDE.md`. To go back: `docker compose down -v; git checkout Kshitij; git stash pop`.
+   Then demo 6.1 to 6.6, 6.10, 6.11, 6.21 and 6.22, plus 6.7 to 6.9 without file attachments, ICS, scorecard editing or the fairness date range. The older guide for that version is `git show 9ad341a:docs/guides/RUN_AND_TEST_GUIDE.md`. To go back: `docker compose down -v; git checkout Kshitij-redesign; git stash pop` (or `Kshitij`).
 
 `docker compose up --build` compiles the backend again (without tests) inside Docker. A compile error therefore also breaks 4.2. The fix and the fallback are the same.
 
@@ -201,7 +239,7 @@ From the repository root:
 docker compose up --build
 ```
 
-The first build takes 10 to 20 minutes and builds 5 images. Leave this window open: it shows the live logs. Use a second PowerShell window for everything else.
+The first build takes 10 to 20 minutes (a few minutes more on `Kshitij-redesign`, whose AI-service image installs LibreOffice and OCR) and builds 5 images. The backend starts only after PostgreSQL, the AI service and the agent service report healthy. Leave this window open: it shows the live logs. Use a second PowerShell window for everything else.
 
 **Backend log lines that mean "ready"** (`docker compose logs backend | Select-String "Demo|Started"`):
 
@@ -220,18 +258,19 @@ agent-service logs a **warning on purpose**: `AGENT_DEMO_FIXTURES=true: demo- lo
 docker compose ps
 ```
 
-All 7 services (`postgres`, `mailpit`, `ai-service`, `agent-service`, `backend`, `candidate-portal`, `hr-portal`) should be `running`. `postgres`, `backend`, `ai-service`, `agent-service` show `(healthy)`.
+All 7 services (`postgres`, `mailpit`, `ai-service`, `agent-service`, `backend`, `candidate-portal`, `hr-portal`) should be `running`. On `Kshitij-redesign` every one of them shows `(healthy)` (the portal images and Mailpit have health checks too); on `Kshitij` the four with health checks are `postgres`, `backend`, `ai-service`, `agent-service`.
 
 | Port | URL | Expected |
 |---|---|---|
 | 8080 | http://localhost:8080/api/v1/health | `{"success":true,"message":"Health check passed","data":{"status":"UP"},...}` |
 | 8080 | http://localhost:8080/swagger-ui.html | API documentation (dev profile only) |
-| (8000, not published) | `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` | `{"status":"ok",...,"llmProvider":"none","ocrAvailable":false}` |
+| (8000, not published; `http://localhost:8000/health` on `Kshitij`) | `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` (same line in PowerShell and bash) | `{"status":"ok",...,"llmProvider":"none","ocrAvailable":false}` |
 | 8100 | http://localhost:8100/health | `{"status":"ok","version":...,"llmProvider":"none","demoFixtures":true}` |
 | 8025 | http://localhost:8025 | Mailpit inbox. Every email the app sends lands here; nothing goes to real inboxes. |
 | 5173 | http://localhost:5173 | Candidate portal sign-in |
 | 5174 | http://localhost:5174 | HR portal sign-in |
 | (5432, not published) | `docker compose exec postgres psql -U recruitpro -d recruitpro -c "select email, role from users;"` | 5 demo users |
+| (LibreOffice, `Kshitij-redesign`) | `docker compose exec ai-service soffice --version` | `LibreOffice 7.4...` |
 
 Quick check from PowerShell:
 
@@ -246,7 +285,7 @@ The AI service has no host port and no internet access by design (networks in `d
 ### 4.4 Smoke test (2 minutes)
 
 1. http://localhost:5174, sign in as `admin@acme.test` / `ChangeMe-123!`. The **Overview** dashboard shows health cards: backend, database, **AI service UP** and **Verification agents UP**.
-2. http://localhost:5173 in a **private window**, sign in as `candidate@demo.test` / `ChangeMe-123!`. Open **Strengthen your application**: a GitHub source `demo-asha (demo)` is **Proven**, and the ledger shows React and TypeScript **Verified** and Python **Partly verified**, all **Shared**.
+2. http://localhost:5173 in a **private window**, sign in as `candidate@demo.test` / `ChangeMe-123!`. Open **Strengthen your application**: a GitHub source `demo-asha (demo)` is **Proven**, and the ledger shows React and TypeScript **Verified** and Python **Partly verified**, all **Shared**. (**Redesign:** you land on **Overview** first; **Strengthen** is in the *My evidence* group of the navigation.)
 
 If both work, the stack is demo-ready. Do the [Section 7 preparation](#71-prepare-the-night-before-15-minutes) next.
 
@@ -396,6 +435,7 @@ So most results appear **within a few seconds**, and pages refresh themselves wh
 ### 6.2 Resume upload → parsing → facts
 
 1. As Arjun → **Resumes** → upload `resume-a.pdf`.
+   - **Redesign:** the page is **Resume**; dropping or choosing the file uploads it at once (no Upload button). A new account also gets the upload on **Overview** → *Get set up*.
    - **Expect:** *Queued/Analysing*, then *Analysis ready* within a few seconds.
 2. Open the analysis.
    - **Expect:** skills Java, Spring Boot, PostgreSQL, Docker, Git, REST APIs.
@@ -413,6 +453,7 @@ So most results appear **within a few seconds**, and pages refresh themselves wh
 2. Open **Backend Engineer (Java)**.
    - **Expect:** organisation Acme Labs, requirements with must-have badges, no recruiter email.
 3. **Apply** → choose `resume-a.pdf` → write a short cover letter → **Submit application**.
+   - **Redesign:** the dialog has steps *Resume · Review · Sent*; the newest resume is preselected, the cover letter autosaves, and *Sent* shows "What happens next".
    - **Expect:** a success message, and **Applications** lists it as *Submitted*.
    - Mailpit has an "application received" email.
 4. Create a second candidate:
@@ -430,6 +471,8 @@ So most results appear **within a few seconds**, and pages refresh themselves wh
 1. As `hr@acme.test` → **New job**. Title `Frontend Engineer (React)`, any department, location and salary. Paste this description:
 
    > We are looking for a young, energetic rockstar developer. Must have 3+ years of React and TypeScript. Python is a plus. Experience with AWS or Azure is required. A degree in computer science is mandatory. Good communication skills.
+
+   **Redesign:** **New job** opens a wizard *Basics → Requirements → Review*. Fill in Basics and press **Continue** (this creates the draft; from then on it autosaves, "Saved · just now"). The requirement compiler runs by itself when you reach step 2 ("Reading your description…"), so there is no **Draft requirements** button: the suggestions arrive pre-selected; use **Use N suggestions**. **Review** shows pre-publish checks and **Publish**. In step 3 below, "Save draft" is automatic.
 
 2. **Draft requirements from description**.
    - **Expect:** React and TypeScript (3 years) as suggestions, "AWS **or** Azure" as alternatives, and Python as nice-to-have.
@@ -450,6 +493,7 @@ This job is reused by the verification flows (6.18 to 6.20) and the demo script.
 1. `hr@acme.test` → **Backend Engineer (Java)** → **Applicants**.
    - **Expect:** Casey (seeded, revealed, *Interviewing*), Arjun and Meera. New applicants show as **Candidate #A-…** (blind).
    - Arjun ranks above Meera on **verified coverage**. Meera may appear under *Must-haves not yet verified*.
+   - **Redesign (keyboard triage):** the table has an evidence strip per applicant and views (All · To review · Shortlisted · Interviewing · More). Press `?` for the shortcut sheet. Try `j`/`k` (move), `Space` (quick peek drawer), `x` on two rows then `c` (compare), `Enter` (open the full review). `s` / `r` ask for confirmation and then show a **5-second Undo** before anything is sent; press Undo once to see that nothing changes.
 2. Open Arjun → **Evidence and assessments** tab.
    - **Expect:** every requirement with a status, a tier badge (*Resume*), a quote, an explanation, and verification hints.
    - No name, email, resume download or cover letter yet.
@@ -459,6 +503,7 @@ This job is reused by the verification flows (6.18 to 6.20) and the demo script.
    - The identity is revealed: name, email, cover letter, **Download resume**.
    - Mailpit: a status email to Arjun.
 4. **Undo shortlist**. **Expect:** a comment is required. Undo it with a comment, then shortlist again.
+   - **Redesign:** decisions are in the sticky bar at the bottom of the applicant page (one primary action; the rest under **More**). After **Shortlist** a toast offers **Undo**, which sends the undo with an automatic comment; **More → Undo shortlist** still asks for your comment.
 5. Open Meera → **Reject** → then **Reopen** with a comment.
    - **Expect:** *Rejected*, then *Submitted*. The history lists every step with actor and time.
 6. As `recruiter@acme.test`, open Arjun. **Expect:** can read and verify claims; no Shortlist/Reject buttons.
@@ -541,7 +586,8 @@ This job is reused by the verification flows (6.18 to 6.20) and the demo script.
 Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
 
 1. HR portal as recruiter → **Two-step verification** → **Turn on**.
-   - **Expect:** a secret (32 Base32 characters) and an `otpauth://` link as text. There is no QR code.
+   - **Expect (`Kshitij`):** a secret (32 Base32 characters) and an `otpauth://` link as text. There is no QR code.
+   - **Expect (`Kshitij-redesign`):** steps *Scan · Confirm · Save codes*; a **QR code** (rendered in the browser) to scan with the authenticator app; **Can't scan?** shows the setup key and the `otpauth://` link.
 2. Get a 6-digit code:
    - Either add the secret to an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password),
    - or, without a phone:
@@ -551,6 +597,7 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
      It prints `123456  (valid for about NN more seconds)`.
 
    Enter the code. **Expect:** **Save your recovery codes**: 10 codes like `abcde-fgh23`, shown once. Copy them, then **I have saved them**.
+   - **Redesign:** the code submits itself after the sixth digit (a wrong code shakes the boxes). The recovery codes offer **Download .txt** and **Copy all**; tick **I have saved these codes** to finish.
 3. Sign out and sign in as recruiter with the password.
    - **Expect:** a code step.
    - Enter a fresh code (wait for the next 30 s window if you just used one; codes are single use) → **Verify and sign in**.
@@ -572,6 +619,7 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
    - **Keep this admin window signed in.** Existing sessions are not ended.
 4. In another browser, sign in as `interviewer@acme.test`.
    - **Expect:** a forced set-up step: **Start set-up** → secret → enter a code (`tools\totp.py`) → recovery codes → **Confirm and sign in**.
+   - **Redesign:** set-up starts by itself with the same three steps as 6.12 (QR code; key behind **Can't scan?**).
 5. Back in the admin window: turn the requirement **off** and save. Then the interviewer turns MFA off under **Two-step verification**.
 6. Blind review toggle: off → new applicants show names immediately. Turn it back on.
 
@@ -591,6 +639,7 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
    - The ledger: React **Verified**, TypeScript **Verified**, Python **Partly verified**, each **Shared**.
    - Her resume facts (Java, Spring Boot, …) show **Not checked yet**.
 2. Click **React → Verified**.
+   - **Redesign:** the result opens in a drawer (J/K move to the next waiting result); the actions are in its footer.
    - **Expect:** the reasons ("Repository A and repository B depend on React…").
    - The evidence: title, URL, retrieved time, short `sha256` hash.
    - **Share with employers / Hide / Re-check**.
@@ -607,6 +656,7 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
    - Optional: **Evidence** → **Add a claim** → type *Certification*, "Certified Kubernetes Application Developer (CKAD)", if the parser did not list it.
 3. **Find jobs** → **Frontend Engineer (React)** (from 6.5) → **Apply** with `resume-asha.pdf`.
 4. **Strengthen your application** → **Connect a source** → **GitHub**.
+   - **Redesign:** **Add a source** opens a drawer with steps *Choose · Connect · Prove · Check*. Choose **GitHub** → **Use my username instead** → `demo-asha` → consent → **Connect**; *Prove* → **Check now** (or **Skip for now**); *Check* → **Run the first check** → **Review results**. Steps 4 to 7 below happen inside that drawer.
    - Click **Sign in with GitHub**. **Expect:** the info box *"Signing in with GitHub is not available on this server"* and a username field. This is expected without a GitHub OAuth app (9.1). Alternatively, click **Connect with my username instead**.
    - Username **`demo-asha`** → tick consent → **Connect source**.
    - **Expect:** "GitHub: demo-asha connected", and the **Prove ownership** dialog opens with your code (`rp-` plus 24 characters) and the step "Add a code to your GitHub profile bio".
@@ -648,7 +698,7 @@ Limits: 10 runs per candidate per 24 h (429), and 20 ownership checks per hour. 
 
 ### 6.18 Verification: reference request → referee answers → verdict
 
-1. As Asha → **Strengthen your application** → **References** → **Ask for a reference**:
+1. As Asha → **Strengthen your application** → **References** → **Ask for a reference** (**Redesign:** a two-step drawer *Who → What to confirm*):
    - Their name `Priya Manager`, email **`priya@demo-analytics.example`**
    - Relationship **Manager**
    - Employer `Demo Analytics`, employer website domain **`demo-analytics.example`**
@@ -664,6 +714,7 @@ Limits: 10 runs per candidate per 24 h (429), and 20 ownership checks per hour. 
    - Asha's ledger shows those claims **Verified** with source *Reference* → **Share with employers**.
 5. Variants:
    - A `@gmail.com` referee gives **Partly verified** (free-mail domains never anchor).
+   - **`Kshitij-redesign` only:** referee `priya@demo-newco.example`, employer `Demo Newco`, domain **`demo-newco.example`** gives **Partly verified** with the note `EMPLOYER_DOMAIN_NEW` (the demo domain is 40 days old). An admin who adds `demo-newco.example` under **Administration → Verification → Trusted domains** lifts it to Verified for Acme Labs only.
    - **Disagree** gives **Contradicted**, quoting the comment.
    - **I would rather not answer** declines.
    - Up to 5 open requests at a time; a request can be cancelled while *Sent*.
@@ -676,6 +727,7 @@ Limits: 10 runs per candidate per 24 h (429), and 20 ownership checks per hour. 
    - Results Asha did **not** share do not appear.
 2. **Evidence and assessments** tab → **Shortlist**. Back on **Verification**: evidence items (URLs, titles, hashes) and Asha's notes are now visible.
 3. On React (GitHub) → **Confirm** → "Confirm: the result matches what I see" → optional note → **Confirm result**.
+   - **Redesign:** one row per claim with a filter *All / Needs review*; expand the row and use the inline **Confirm / Overrule** switch (a note is required to overrule). A domain-trust chip says whether the employer domain was trusted by automated checks or by your organisation.
    - **Expect:** the claim's tier becomes **Corroborated** for Acme Labs.
    - After a few seconds, on **Evidence and assessments** the **React** requirement shows tier **Corroborated evidence**.
    - **Overrule** requires a note and does not lift the tier.
@@ -689,6 +741,7 @@ Limits: 10 runs per candidate per 24 h (429), and 20 ownership checks per hour. 
 
 1. `admin@acme.test` → **Administration → Verification**.
    - **Mode and connectors:** Mode **Visible** (seeded), with GitHub, GitLab, Website, Document, Open Badge and Reference all on.
+   - **Redesign:** a mode block on top and tabs **Readiness** (metrics, step 3), **Labelling queue** (step 2; keys `1`–`5` pick a verdict, `Enter` saves and moves on, `J`/`K` move), **Connectors** and **Trusted domains** (organisation lists of employer domains and badge issuers, see 6.18).
 2. **Shadow queue:**
    - Shared verdicts of candidates who applied to Acme jobs. Unlabelled ones come first; blind candidates show no evidence.
    - Pick a verdict in the 5-option picker (what *you* think the right verdict is), add an optional note → **Save label**.
@@ -777,7 +830,7 @@ cd backend; .\mvnw.cmd verify; cd ..
 cd ai-service
 python -m venv .venv; .\.venv\Scripts\Activate.ps1      # bash: python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-python -m pytest -q                 # 178 passed (one LibreOffice test may be skipped)
+python -m pytest -q                 # 178 passed on Kshitij, 186 on Kshitij-redesign (a LibreOffice test may be skipped)
 python -m eval.run --check          # ends with CHECK PASSED
 python ..\audit\probe_matching.py   # matching probes P1-P8
 deactivate; cd ..
@@ -789,9 +842,9 @@ deactivate; cd ..
 cd agent-service
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-python -m pytest -q                       # 161 passed, no network used
+python -m pytest -q                       # 176 passed on Kshitij, 205 on Kshitij-redesign; no network used
 python -m eval.run --check; $LASTEXITCODE # prints a JSON report; exit code 0; FCR 0.0, kappa 1.0
-python ..\tools\sync_taxonomy.py --check  # taxonomy in sync with ai-service
+python ..\tools\sync_taxonomy.py --check  # taxonomy in sync with ai-service (exit code 0, prints nothing)
 deactivate; cd ..
 ```
 
@@ -801,19 +854,36 @@ The eval set is synthetic, and its labels were written by the same author as the
 
 ```powershell
 python -m pip install pgserver psycopg2-binary tree-sitter tree-sitter-java
-python -B tools\check_migrations_pg.py            # V1-V24 apply to PostgreSQL 16
-python -B tools\check_entity_schema.py            # 474 mapped columns of 41 entities: 0 errors, 0 warnings
-python -B tools\java_static_check.py backend\src  # 575 files: 0 errors
+python -B tools\check_migrations_pg.py            # every migration applies to PostgreSQL 16 (V1-V25 on Kshitij, V1-V26 on Kshitij-redesign)
+python -B tools\check_entity_schema.py            # "... entities against N migrations: 0 error(s), 0 warning(s)"
+python -B tools\java_static_check.py backend\src  # "Checked N Java files: 0 error(s)"
+python -B tools\check_design_sync.py              # Kshitij-redesign: "design folders in sync"
 ```
+
+`check_migrations_pg.py` also refuses migration files Flyway would skip (bad names), duplicate versions and Flyway
+placeholders (`${`), and warns about version gaps. It needs no Docker: `pgserver` brings its own PostgreSQL. It does
+not run on Windows' Python if `pgserver` has no wheel for your version; use WSL or rely on CI then.
 
 ### 8.5 Portals
 
 ```powershell
-cd frontend;    pnpm install --frozen-lockfile; pnpm build; cd ..
-cd hr-frontend; pnpm install --frozen-lockfile; pnpm build; cd ..
+cd frontend;    pnpm install --frozen-lockfile; pnpm run --if-present test; pnpm build; cd ..
+cd hr-frontend; pnpm install --frozen-lockfile; pnpm run --if-present test; pnpm build; cd ..
 ```
 
-**Expect:** each ends with Vite's `built in …` and no TypeScript errors.
+**Expect:** the unit tests (when the portal has a `test` script) pass, and each build ends with Vite's `built in …`
+and no TypeScript errors.
+
+### 8.6 Compose files and CI
+
+```powershell
+docker compose config --quiet                                                   # no output = valid
+docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml config --quiet
+```
+
+CI (`.github/workflows/ci.yml`) runs every check of this section on each push to `Kshitij` and `Kshitij-redesign`
+(and `master`/`main`, pull requests, or by hand under GitHub → Actions → CI → **Run workflow**), plus a `docker-stack`
+job that builds all images, starts the stack and checks health, the AI service's missing egress and the portals' CSP.
 
 ---
 
@@ -875,6 +945,8 @@ Then run `docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml u
 | Symptom | Cause and fix |
 |---|---|
 | `mvnw verify` fails | Send the first `[ERROR]` lines (4.1). Fall back to `9ad341a` (4.1 step 3). |
+| `./mvnw: /bin/sh^M: bad interpreter` (Git Bash/WSL) | The file was checked out with CRLF before `.gitattributes` existed. Delete it and check it out again: `rm backend/mvnw && git checkout -- backend/mvnw`. In PowerShell use `.\mvnw.cmd` instead. |
+| `dependency failed to start: container recruitpro-ai-service-1 is unhealthy` (or `agent-service`) | The backend waits for both health checks (`Kshitij-redesign`). `docker compose logs ai-service` (or `agent-service`) shows why; a provider set without `LLM_MODEL` stops it on purpose (9.3). Fix `.env`, then `docker compose up -d`. |
 | `port is already allocated` | Another program uses the port. Find it with `netstat -ano \| findstr :8080` (or the port named) and stop it. |
 | Build killed / `exit code 137` / very slow | Docker memory. Give Docker Desktop at least 8 GB (Settings → Resources) and retry `docker compose up --build`. |
 | Docker errors about WSL | `wsl --install` in an admin PowerShell, reboot, select WSL 2 in Docker Desktop. |
@@ -914,7 +986,8 @@ Then run `docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml u
 | **Wipe all data and reseed** | `docker compose down -v`, then `docker compose up --build` |
 | Follow logs | `docker compose logs -f backend` (or `agent-service`, `ai-service`) |
 | Fall back to the known-good core | `docker compose down -v; git checkout 9ad341a; docker compose up --build` |
-| Return to the latest | `docker compose down -v; git checkout Kshitij; docker compose up --build` |
+| Return to the latest | `docker compose down -v; git checkout Kshitij-redesign; docker compose up --build` (or `Kshitij`) |
+| Switch between `Kshitij` and `Kshitij-redesign` | Always `docker compose down -v` first: `Kshitij-redesign` adds migration V26, and Flyway on `Kshitij` refuses a database that has it ("applied migration not resolved locally") |
 
 ---
 

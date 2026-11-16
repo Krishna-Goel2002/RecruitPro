@@ -5,9 +5,11 @@ Credential check (one per request):
   issuer (``app.badges.keys``: did:key, did:web, JWKS); the signature is verified with PyJWT. Expiry (``exp``,
   ``validUntil``/``expirationDate``), not-before (``nbf``, ``validFrom``/``issuanceDate``) and revocation through a
   simple status list (``app.badges.status``; other status types -> warning) are checked.
-* OB 2.0 hosted: the assertion is (re)fetched from its ``id``; ``verification.type`` must be hosted; the badge class and
-  issuer profile are fetched when given as URLs; the assertion must live on the issuer's origin (or an
-  ``allowedOrigins`` entry); ``revoked`` / HTTP 410 means revoked; ``expires`` is checked.
+* OB 2.0 hosted: the assertion is (re)fetched from its ``id``; ``verification.type`` must be hosted; the badge class is
+  fetched when given as a URL; the issuer profile is always fetched from its URL (an embedded profile is not
+  authoritative) and the issuer id is that URL (a profile whose own ``id`` names another origin is invalid); the
+  assertion must live on the issuer's origin (or an ``allowedOrigins`` entry of the fetched profile); ``revoked`` /
+  HTTP 410 means revoked; ``expires`` is checked.
 * JSON credentials with a Data Integrity ``proof`` (or OB 3.0 JSON without proof) -> ``NOT_CHECKABLE``
   ("proof type not supported yet"); signed OB 2.0 assertions -> ``NOT_CHECKABLE``.
 
@@ -126,10 +128,19 @@ def _match_identity(kind: str, identity: str, hashed: bool, salt: str, request: 
     return None
 
 
-def _combine(results: list[str | None]) -> str:
-    if "matched" in results:
+def _combine(results: list[tuple[str, str | None]]) -> str:
+    """Overall recipient result from (identity type, result) pairs. An e-mail identity outranks a name: several
+    identities of one kind may be listed (any match counts), but a matching name never outweighs an e-mail address that
+    does not match (names are shared by many people); that conflict is "not comparable" (ownership not proven)."""
+    email = [result for kind, result in results if kind.lower() in {"email", "emailaddress"} and result]
+    name = [result for kind, result in results if kind.lower() == "name" and result]
+    if "matched" in email:
         return "matched"
-    if "mismatch" in results:
+    if "mismatch" in email:
+        return "not_comparable" if "matched" in name else "mismatch"
+    if "matched" in name:
+        return "matched"
+    if "mismatch" in name:
         return "mismatch"
     return "not_comparable"
 
@@ -140,7 +151,10 @@ def _check_vc_jwt(token: str, request: BadgeVerifyRequest, fetcher: Fetcher, now
     try:
         header = jwt.get_unverified_header(token)
         payload = json.loads(b64url_decode(token.split(".")[1]))
-    except (InvalidTokenError, ValueError, IndexError):
+    except (InvalidTokenError, ValueError, IndexError, RecursionError):
+        check.status, check.status_reason = "INVALID", "the credential is not a well-formed JWT"
+        return
+    if not isinstance(payload, dict) or not isinstance(header, dict):
         check.status, check.status_reason = "INVALID", "the credential is not a well-formed JWT"
         return
     credential: dict[str, Any] = payload["vc"] if isinstance(payload.get("vc"), dict) else _dict(payload)
@@ -202,20 +216,22 @@ def _check_vc_jwt(token: str, request: BadgeVerifyRequest, fetcher: Fetcher, now
         or parse_instant(credential.get("expirationDate"))
     starts = parse_instant(payload.get("nbf")) or parse_instant(credential.get("validFrom")) \
         or parse_instant(credential.get("issuanceDate"))
-    check.expired = bool(expires and expires < now)
+    check.expired = bool(expires and expires < now - CLOCK_SKEW)  # the same 5-minute skew as not-before
     check.not_yet_valid = bool(starts and starts > now + CLOCK_SKEW)
     check.attributes.update({"expiresAt": iso_z(expires) if expires else None,
                              "validFrom": iso_z(starts) if starts else None})
-    results = []
+    results: list[tuple[str, str | None]] = []
     identifiers = subject.get("identifier")
     for identity in identifiers if isinstance(identifiers, list) else ([identifiers] if identifiers else []):
         if isinstance(identity, dict):
-            results.append(_match_identity(str(identity.get("identityType", "")), str(identity.get("identityHash", "")),
-                                           bool(identity.get("hashed")), str(identity.get("salt") or ""), request))
+            kind = str(identity.get("identityType", ""))
+            results.append((kind, _match_identity(kind, str(identity.get("identityHash", "")),
+                                                  bool(identity.get("hashed")), str(identity.get("salt") or ""),
+                                                  request)))
     if isinstance(subject.get("name"), str):
-        results.append(_match_identity("name", subject["name"], False, "", request))
+        results.append(("name", _match_identity("name", subject["name"], False, "", request)))
     if isinstance(subject.get("email"), str):
-        results.append(_match_identity("email", subject["email"], False, "", request))
+        results.append(("email", _match_identity("email", subject["email"], False, "", request)))
     check.recipient = _combine(results)
     check.evidence.insert(0, make_item("badge-1", "BADGE", url=request.url, title=check.achievement_name or "Credential",
                                        text=item_text, retrieved_at=now, attributes={"format": check.format}))
@@ -242,7 +258,7 @@ def _fetch_json(fetcher: Fetcher, url: str) -> tuple[int, Any, str]:
     text = result.text()
     try:
         return result.status, json.loads(text) if result.ok else None, text
-    except ValueError:
+    except (ValueError, RecursionError):
         return result.status, None, text
 
 
@@ -293,18 +309,30 @@ def _check_ob2(assertion: dict[str, Any], fetched_from: str | None, request: Bad
         except FetchError as exc:
             check.warnings.append(f"BADGE_CLASS_FETCH_FAILED:{exc.code}")
     issuer = badge_doc.get("issuer")
-    issuer_doc: dict[str, Any] = issuer if isinstance(issuer, dict) else {}
-    if isinstance(issuer, str):
+    # The issuer profile is authoritative only as fetched from its own URL (like the assertion): an embedded profile,
+    # or a profile whose self-declared ``id`` names another origin, could claim any issuer (e.g. a trusted platform)
+    # and any ``allowedOrigins``. The issuer id is therefore the URL the profile was fetched from.
+    issuer_url = issuer if isinstance(issuer, str) else \
+        (str(issuer.get("id") or "") if isinstance(issuer, dict) else "")
+    issuer_doc: dict[str, Any] = {}
+    issuer_name = str(issuer.get("name") or "") if isinstance(issuer, dict) else ""
+    if issuer_url.lower().startswith(("http://", "https://")):
         try:
-            status, fetched, text = _fetch_json(fetcher, issuer)
+            status, fetched, text = _fetch_json(fetcher, issuer_url)
             if isinstance(fetched, dict):
                 issuer_doc = fetched
-                check.evidence.append(make_item("issuer", "BADGE", url=issuer, title="Issuer profile", text=text,
+                issuer_name = str(fetched.get("name") or "")
+                check.evidence.append(make_item("issuer", "BADGE", url=issuer_url, title="Issuer profile", text=text,
                                                 retrieved_at=now, attributes={"document": "Profile"}))
         except FetchError as exc:
             check.warnings.append(f"ISSUER_FETCH_FAILED:{exc.code}")
-    check.issuer_id = str(issuer_doc.get("id") or (issuer if isinstance(issuer, str) else "") or "")
-    check.issuer_name = str(issuer_doc.get("name") or "")
+    claimed_id = str(issuer_doc.get("id") or "")
+    # allowedOrigins below come only from a profile fetched from issuer_url; without one the assertion must simply
+    # be hosted on the issuer URL's own origin.
+    check.issuer_id = issuer_url if issuer_url.lower().startswith(("http://", "https://")) else ""
+    check.issuer_name = issuer_name
+    if check.status == "VALID" and issuer_doc and claimed_id and origin(claimed_id) != origin(issuer_url):
+        check.status, check.status_reason = "INVALID", "the issuer profile claims to be a different issuer"
     check.achievement_name = str(badge_doc.get("name") or "")
     criteria = badge_doc.get("criteria")
     check.achievement_text = " ".join(str(part) for part in (badge_doc.get("name"), badge_doc.get("description"),
@@ -322,13 +350,14 @@ def _check_ob2(assertion: dict[str, Any], fetched_from: str | None, request: Bad
             check.revoked = True
             check.status, check.status_reason = "INVALID", "the issuer has revoked the assertion"
     expires = parse_instant(authoritative.get("expires"))
-    check.expired = bool(expires and expires < now)
+    check.expired = bool(expires and expires < now - CLOCK_SKEW)
     issued = parse_instant(authoritative.get("issuedOn"))
     check.not_yet_valid = bool(issued and issued > now + CLOCK_SKEW)
     recipient = _dict(authoritative.get("recipient"))
-    check.recipient = _combine([_match_identity(str(recipient.get("type", "")), str(recipient.get("identity", "")),
-                                                bool(recipient.get("hashed")), str(recipient.get("salt") or ""),
-                                                request)])
+    recipient_type = str(recipient.get("type", ""))
+    check.recipient = _combine([(recipient_type, _match_identity(recipient_type, str(recipient.get("identity", "")),
+                                                                 bool(recipient.get("hashed")),
+                                                                 str(recipient.get("salt") or ""), request))])
     check.attributes.update({"issuer": check.issuer_id, "assertionId": assertion_id,
                              "expiresAt": iso_z(expires) if expires else None})
     check.evidence.insert(0, make_item("badge-1", "BADGE", url=assertion_id or request.url,
@@ -375,7 +404,7 @@ def run_check(request: BadgeVerifyRequest, fetcher: Fetcher, now: datetime) -> B
             return check
         try:
             credential = json.loads(text)
-        except ValueError as exc:
+        except (ValueError, RecursionError) as exc:
             raise BadgeInputError("the credential is neither a JWT nor JSON") from exc
     if isinstance(credential, dict):
         _check_json(credential, None, request, fetcher, now, check)
@@ -397,7 +426,7 @@ def run_check(request: BadgeVerifyRequest, fetcher: Fetcher, now: datetime) -> B
         return check
     try:
         document = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         document = None
     if not isinstance(document, dict):
         check.status, check.status_reason = "UNCHECKABLE", "the URL does not serve a badge assertion"

@@ -41,6 +41,7 @@ export function AnchoredRating({ legend, description, anchors, value, onChange, 
 
   return (
     <fieldset
+      role="radiogroup"
       className={cx('sx-rating', className)}
       data-invalid={invalid || undefined}
       aria-invalid={invalid || undefined}

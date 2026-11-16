@@ -2,7 +2,8 @@
 
 Scope: services, backend structure, data model, identity and security, asynchronous processing, observability and
 operations, testing, and likely demo questions. Written on 16 Nov 2026 against commit `2fedafb` (branch `Kshitij`)
-plus the working tree at that time. Every statement names the file it comes from. Paths are relative to the
+plus the working tree at that time; sections 1.1 to 1.3 (services, networks, compose wiring) were updated for branch
+`Kshitij-redesign` (R7 infrastructure audit, `docs/audit/BUG_HUNT_R7_INFRA.md`). Every statement names the file it comes from. Paths are relative to the
 repository root; `…/recruitpro/` is short for `backend/src/main/java/com/recruitpro/`.
 
 Ground rules used in this chapter:
@@ -24,16 +25,17 @@ portals. The backend is the system of record; the Python services hold no data
 
 | Service (compose name) | Purpose | Technology | Host port → container | Source |
 |---|---|---|---|---|
-| `postgres` | The only database | `pgvector/pgvector:pg16` image (PostgreSQL 16). The pgvector extension is **not used**: no migration creates it (`backend/src/main/resources/db/migration/`), and pgvector is out of scope (`docs/plan/IMPLEMENTATION_PLAN_V2.md` line 9) | 5432 → 5432 | `docker-compose.yml` |
-| `mailpit` | Development SMTP sink with a web UI for reading sent mail | `axllent/mailpit:latest` (tag not pinned) | 8025 (UI), 1025 (SMTP) | `docker-compose.yml` |
-| `ai-service` | Resume parsing, requirement matching, requirement compiler, work-sample and interview-kit generation | Python 3.11, FastAPI 0.121.3, Starlette 0.50.0, uvicorn, pdfplumber, python-docx, olefile; optional LLM over httpx | 8000 → 8000 | `ai-service/Dockerfile`, `ai-service/requirements.txt`, `ai-service/app/api/v1/*.py` |
-| `agent-service` | Evidence verification agents (code, web, document, badge, reference) and source-ownership checks | Python 3.12, FastAPI, httpx, dnspython, pypdf, PyJWT, cryptography | 8100 → 8100 | `agent-service/Dockerfile`, `agent-service/requirements.txt`, `agent-service/app/api/routes.py` |
+| `postgres` | The only database | `pgvector/pgvector:0.8.7-pg16` image (PostgreSQL 16; `pg16` on branch `Kshitij`). The pgvector extension is **not used**: no migration creates it (`backend/src/main/resources/db/migration/`), and pgvector is out of scope (`docs/plan/IMPLEMENTATION_PLAN_V2.md` line 9) | not published on `Kshitij-redesign` (`docker compose exec postgres psql …`); 5432 → 5432 on `Kshitij` | `docker-compose.yml` |
+| `mailpit` | Development SMTP sink with a web UI for reading sent mail | `axllent/mailpit:v1.33.1` (`latest` on `Kshitij`) | 127.0.0.1:8025 (UI), 127.0.0.1:1025 (SMTP) | `docker-compose.yml` |
+| `ai-service` | Resume parsing, requirement matching, requirement compiler, work-sample and interview-kit generation | Python 3.11 (`python:3.11-slim-bookworm`), FastAPI 0.121.3, Starlette 0.50.0, uvicorn, pdfplumber, python-docx, olefile; headless LibreOffice Writer and the RapidOCR extra in the default image; optional LLM over httpx | not published on `Kshitij-redesign` (internal network, `docker compose exec ai-service …`); 8000 → 8000 on `Kshitij` | `ai-service/Dockerfile`, `ai-service/requirements.txt`, `ai-service/app/api/v1/*.py` |
+| `agent-service` | Evidence verification agents (code, web, document, badge, reference) and source-ownership checks | Python 3.12 (`python:3.12-slim-bookworm`), FastAPI, httpx, dnspython, pypdf, PyJWT, cryptography | 127.0.0.1:8100 → 8100 (all interfaces on `Kshitij`) | `agent-service/Dockerfile`, `agent-service/requirements.txt`, `agent-service/app/api/routes.py` |
 | `backend` | REST API, business rules, security, background queue, schedulers, mail outbox, audit | Java 21, Spring Boot 3.5.6, Spring Security, Spring Data JPA/Hibernate, Flyway, jjwt 0.12.5, springdoc 2.8.9, Micrometer Prometheus | 8080 → 8080 | `backend/pom.xml`, `backend/Dockerfile` |
 | `candidate-portal` | Candidate UI | React 18, TypeScript 5.6, Vite 5, TanStack Query 5, React Router 6; served by `nginx:1.27-alpine` | 5173 → 80 | `frontend/package.json`, `frontend/Dockerfile` |
 | `hr-portal` | Staff UI (ADMIN, HR_MANAGER, RECRUITER, INTERVIEWER) | Same stack as the candidate portal | 5174 → 80 | `hr-frontend/package.json`, `hr-frontend/Dockerfile` |
 
 Container hardening that exists: the backend, ai-service and agent-service images run as a non-root system user and
-have a `HEALTHCHECK` (`backend/Dockerfile`: `curl /api/v1/health`; the Python images: `urllib` on `/health`). The
+have a `HEALTHCHECK` (`backend/Dockerfile`: `curl /api/v1/health`; the Python images: `urllib` on `/health`; the
+portal images, on `Kshitij-redesign`: busybox `wget` on `/`). The
 backend JVM is forced to UTC (`JAVA_TOOL_OPTIONS=-Duser.timezone=UTC`) and `-XX:MaxRAMPercentage=75`
 (`backend/Dockerfile`).
 
@@ -88,29 +90,35 @@ egress" and the agent-service with "egress, sandboxed fetch" (`docs/plan/IMPLEME
 | ai-service | Nothing by default. Only when `LLM_PROVIDER` is `anthropic` or `openai_compatible` | Only de-identified text is sent to an LLM (`ai-service/app/llm/provider.py` docstring). |
 | postgres, mailpit, portals | Nothing | |
 
-`docker-compose.yml` defines no networks, so every container sits on the default bridge network with outbound
-internet. The "no egress" property of the ai-service is therefore a design intent, not enforced by the compose file.
-The agent-service Dockerfile comment recommends running it on a segment with no route to internal services; compose
-does not do that either.
+On branch `Kshitij-redesign` the compose file enforces this with five networks (`docker-compose.yml` header,
+`docs/plan/WP-OPS-NOTES.md` §3): `internal` (internal: true; postgres, mailpit, ai-service, backend), `agent`
+(internal: true; backend, agent-service), `egress` (backend), `agent-egress` (agent-service) and `edge` (the portals
+and mailpit, for published ports only). The ai-service has no egress; `docker-compose.ai-egress.yml` adds an
+`ai-egress` network for an LLM provider. The agent-service cannot reach postgres or the ai-service. On branch
+`Kshitij` the compose file defines no networks, so every container sits on the default bridge network with outbound
+internet and the "no egress" property is only a design intent.
 
 ### 1.3 docker-compose wiring
 
 From `docker-compose.yml`:
 
-- `backend` `depends_on`: `postgres` (`condition: service_healthy`, using `pg_isready`), `mailpit`, `ai-service`,
-  `agent-service` (`service_started`). The portals depend on `backend` (`service_started`).
+- `backend` `depends_on`: `postgres` (`condition: service_healthy`, using `pg_isready`), `mailpit`
+  (`service_started`), `ai-service` and `agent-service` (`service_healthy` on `Kshitij-redesign`, using the images'
+  `HEALTHCHECK`; `service_started` on `Kshitij`). The portals depend on `backend` (`service_started`).
+- The portal images take `VITE_API_BASE_URL` (compiled into the bundle) and `API_ORIGIN` (its origin, written into
+  the nginx CSP `connect-src` by the image's envsubst step at start-up); compose sets both to the `localhost:8080`
+  values.
 - Volumes: `postgres-data` (database), `resume-uploads` mounted at `/data/uploads` in the backend
   (`FILE_STORAGE_PATH=/data/uploads`). Work-sample files and verification snapshots default to subfolders of it
   (`application.yml` `app.file-storage.work-sample-dir`, `app.verification.storage-dir`).
 - Shared secrets have development defaults with `${VAR:-default}` so `docker compose up --build` works without a
   `.env` file. The same default token is written into both ends (ai-service/backend, agent-service/backend).
-- All internal services also publish their ports to the host (5432, 8000, 8100). Convenient for the demo; in a real
-  deployment only the portals and the backend should be reachable.
-- Working-tree note (16 Nov 2026): `docker-compose.yml` and `.env.example` have uncommitted additions that pass
-  `LLM_MODEL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` to both Python services, `GITHUB_TOKEN`
-  (from `AGENT_GITHUB_TOKEN`) to the agent-service, and the `SSO_*` variables to the backend. Without them, SSO
-  could only be configured by editing the compose file. Treat them as part of the demo setup but note they were not
-  in `2fedafb`.
+- Published ports on `Kshitij-redesign`: 5173, 5174, 8080 on all interfaces; 8100, 8025, 1025 on 127.0.0.1 only;
+  postgres (5432) and the ai-service (8000) are not published. On `Kshitij` all of 5432, 8000, 8100, 8025, 1025 are
+  published on all interfaces.
+- `docker-compose.yml` and `.env.example` pass `LLM_MODEL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`
+  to both Python services, `GITHUB_TOKEN` (from `AGENT_GITHUB_TOKEN`) to the agent-service, and the `SSO_*` variables
+  to the backend (added after `2fedafb`, committed in `50e7b39`).
 
 ### 1.4 Environment variables
 
@@ -168,7 +176,7 @@ ai-service (`ai-service/app/core/config.py`):
 | `LLM_PROVIDER` | `none` | `none`, `anthropic`, `openai_compatible`; an enabled provider without `LLM_MODEL` stops startup |
 | `LLM_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` (`https://api.anthropic.com`), `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `LLM_TIMEOUT_SECONDS` (20) | | Optional LLM |
 | `OCR_ENABLED` | `false` | OCR only with `requirements-ocr.txt` installed |
-| `SOFFICE_PATH` | auto-detect | LibreOffice for `.doc`. The Docker image does not install LibreOffice, so in compose `.doc` goes through the olefile reader (`ai-service/Dockerfile`, `ai-service/README.md`) |
+| `SOFFICE_PATH` | auto-detect on `PATH` | LibreOffice for `.doc`. On `Kshitij-redesign` the default image installs headless LibreOffice Writer (`WITH_LIBREOFFICE=true`), so `soffice` is found; on `Kshitij` the image has no LibreOffice and `.doc` goes through the olefile reader (`ai-service/Dockerfile`, `ai-service/README.md`) |
 | `PARSE_WORKERS` | 2 | Process-pool size for CPU-bound parsing (`ai-service/app/core/workers.py`) |
 | `PARSE_TIMEOUT_SECONDS` | 60 | Per-parse timeout |
 | `MAX_UPLOAD_BYTES` | 10 MiB | Body cap (plus 64 KiB framing) |
@@ -787,7 +795,7 @@ under `/actuator` needs ADMIN, and `/actuator/prometheus` becomes public only wi
 | A08 Integrity: uploaded files | Size limits, extension must match magic bytes, ZIPs not extracted, `Content-Disposition: attachment`, `nosniff`, server-set content type | `ResumeService`, `WorkSampleFileService` | No malware scanning |
 | A08: evidence tampering | Content hashes on evidence items and files; append-only match runs and verdict history | `evidence_items.content_hash`, `work_sample_submission_files.sha256`, V17 | |
 | A09 Logging and monitoring failures | Persistent `audit_events` (actions in 4.x/5.4), request ids, structured logs in prod, Prometheus timers | `AuditService`, `observability/*` | No alerting, no log shipping configured |
-| A10 SSRF via candidate URLs | Agent-service SSRF guard with IP pinning, port and scheme limits, redirect re-check, budgets; backend only calls configured URLs | `agent-service/app/fetch/ssrf.py` | Compose does not isolate the agent's network |
+| A10 SSRF via candidate URLs | Agent-service SSRF guard with IP pinning, port and scheme limits, redirect re-check, budgets; backend only calls configured URLs | `agent-service/app/fetch/ssrf.py` | On `Kshitij` compose does not isolate the agent's network (on `Kshitij-redesign` it cannot reach postgres or the ai-service) |
 | CSRF | No cookie-authenticated state-changing API except `/auth/*`, whose cookie is SameSite=Strict and path-scoped; CORS limited to listed origins | `SecurityConfig`, `RefreshTokenCookies`, `WebConfig` | |
 | XSS and clickjacking | React escaping; strict portal CSP without inline scripts; API CSP `default-src 'none'`; `frame-ancestors 'none'`, `X-Frame-Options: DENY` | `nginx.conf`, `ApiSecurityHeadersFilter` | |
 | Internal service spoofing | Shared token, constant-time compare, checked before reading the body | `*/app/core/auth.py` | Single static token per service, no mTLS |
@@ -1180,7 +1188,7 @@ Practical consequence for the demo: features from `2fedafb` should be shown only
 | `docs/architecture/SYSTEM_ARCHITECTURE.md` line 451 | Resume files "are served only to their owning candidate" | Staff (ADMIN/HR_MANAGER/RECRUITER) can download the resume of an applicant, audited as `RESUME_DOWNLOADED_BY_STAFF` (`ApplicationReviewController` `GET …/resume`) |
 | `docs/database/ENTITY_RELATIONSHIP.md` | Assessment, Question, Offer, Onboarding entities; resume parsing "future scope" | None of those tables exist; parsing is implemented. Use Section 3 |
 | `docs/guides/RELEASE_READINESS.md` | MySQL database, partial test runs ("125 main Java sources") | The project runs on PostgreSQL 16 (`application-dev.yml`, `docker-compose.yml`); this file predates that move and should not be quoted |
-| `docs/plan/IMPLEMENTATION_PLAN_V2.md` §2 | ai-service has "no egress" | Not enforced: compose defines no networks |
+| `docs/plan/IMPLEMENTATION_PLAN_V2.md` §2 | ai-service has "no egress" | Enforced on `Kshitij-redesign` (internal network); not on `Kshitij` (compose defines no networks) |
 | `docker-compose.yml` | `pgvector/pgvector:pg16` image | pgvector is out of scope and unused |
 | `backend/.env.example` | "Per-IP rate limits on /api/v1/auth/** and organisation sign-up" | Also on `DELETE /api/v1/candidates/me` (`RateLimitFilter`) |
 | `BackgroundJobService` Javadoc | Backoff `min(15 s × 2^attempts, 30 min)` | Correct formula, but the first retry is 30 s, not 15 s, because attempts are counted at claim; the 30-minute cap is unreachable with 5 attempts |

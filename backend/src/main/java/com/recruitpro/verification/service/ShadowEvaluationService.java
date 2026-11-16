@@ -128,12 +128,14 @@ public class ShadowEvaluationService {
         for (ClaimVerdict verdict : slice) {
             boolean revealed = revealedCandidates.contains(verdict.getCandidateId());
             String connector = connectors.get(verdict.getId());
-            StaffVerdict base = support.staffVerdict(verdict, null, Map.of(), connector, revealed);
+            // R3-B13: the verdict as it counts for this organisation (its trusted domains applied), as in the staff
+            // view, so labellers judge, and the metrics measure, what the organisation would act on in VISIBLE mode.
+            StaffVerdict base = support.staffVerdict(verdict, null, Map.of(), connector, revealed, settings);
             List<ClaimVerdictLabel> verdictLabels = labels.getOrDefault(verdict.getId(), List.of());
             ClaimVerdictLabel myLabel = mine(verdictLabels, caller.userId());
             items.add(new ShadowQueueItem(verdict.getId(), latestApplication.get(verdict.getCandidateId()), revealed,
                     verdict.getSubjectType().name(), verdict.getSubjectId(), verdict.getClaimType().name(), verdict.getClaimValue(),
-                    connector, verdict.getVerifier(), verdict.getVerdict().name(), verdict.isOwnershipProven(),
+                    connector, verdict.getVerifier(), base.verdict(), verdict.isOwnershipProven(),
                     base.reasons(), base.integrityNotes(), verdict.getProbeQuestion(), base.evidence(), base.evidenceCount(),
                     verdict.getCreatedAt(), myLabel == null ? null : labelView(myLabel), verdictLabels.size()));
         }
@@ -150,6 +152,12 @@ public class ShadowEvaluationService {
         ClaimVerdict verdict = verdictId == null ? null : verdictRepository.findById(verdictId).orElse(null);
         if (verdict == null || !verdict.isCurrent() || verdict.getCandidateStatus() != CandidateVerdictStatus.SHARED
                 || lookupRepository.findByCandidateAndOrganization(verdict.getCandidateId(), caller.organizationId()).isEmpty()) {
+            throw new ResourceNotFoundException("Verdict not found");
+        }
+        // R3-B14: only what the queue offers can be labelled (connector enabled for the organisation, subject current).
+        VerificationSettingsService.Effective settings = settingsService.effective(caller.organizationId());
+        if (!settings.enabled(support.connectors(List.of(verdict)).get(verdict.getId()))
+                || support.withCurrentSubjects(List.of(verdict)).isEmpty()) {
             throw new ResourceNotFoundException("Verdict not found");
         }
         VerdictValue value = request == null ? null : VerdictValue.parse(request.labelVerdict());
@@ -183,11 +191,14 @@ public class ShadowEvaluationService {
         for (ClaimVerdict verdict : verdictRepository.findAllById(verdictIds)) {
             verdicts.put(verdict.getId(), verdict);
         }
+        // R3-B13: "predicted" is the verdict as it counts for this organisation (trusted domains applied).
+        VerificationSettingsService.Effective settings = settingsService.effective(caller.organizationId());
         List<VerificationMetrics.Pair> pairs = new ArrayList<>();
         for (ClaimVerdictLabel label : labels) {
             ClaimVerdict verdict = verdicts.get(label.getVerdictId());
             if (verdict != null) {
-                pairs.add(new VerificationMetrics.Pair(verdict.getVerifier(), verdict.getVerdict(), label.getLabelVerdict()));
+                pairs.add(new VerificationMetrics.Pair(verdict.getVerifier(), DomainTrusts.effectiveVerdict(verdict, settings),
+                        label.getLabelVerdict()));
             }
         }
         return VerificationMetrics.compute(pairs);

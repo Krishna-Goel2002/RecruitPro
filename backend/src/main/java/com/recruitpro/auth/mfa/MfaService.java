@@ -14,6 +14,7 @@ import com.recruitpro.common.crypto.SecretCipher;
 import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.common.exception.ForbiddenException;
+import com.recruitpro.common.exception.TooManyRequestsException;
 import com.recruitpro.common.exception.UnauthorizedException;
 import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.organization.entity.Organization;
@@ -51,7 +52,9 @@ import java.util.Optional;
  *
  * <p>Failures of the sign-in step (and of a confirmation made with an enrolment token) count towards the account
  * lockout of {@link UserAccountService}; they are recorded in their own transaction so that the 401 does not roll
- * them back.</p>
+ * them back. A locked account gets 429 {@value #LOCKED_CODE} with {@code Retry-After} (the remaining lock time) on
+ * every {@code mfaToken} step, including the attempt that locks it, so the portals can tell a lockout from a wrong
+ * code (401) or an expired step (401) (R6-B3).</p>
  */
 @Service
 public class MfaService {
@@ -61,6 +64,9 @@ public class MfaService {
     static final int SECRET_BYTES = 20;
     static final String INVALID_CODE = "The verification code is not valid";
     static final String LOCKED = "Too many failed attempts. Please try again later.";
+    /** Message code of a lockout during an {@code mfaToken} step (429). */
+    public static final String LOCKED_CODE = "MFA_LOCKED";
+    static final String STEP_UP_REQUIRED = "Confirm with a code from your authenticator app or your password";
     private static final char[] RECOVERY_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789".toCharArray();
     private static final Logger log = LoggerFactory.getLogger(MfaService.class);
 
@@ -153,7 +159,7 @@ public class MfaService {
             requireActive(user);
             Portal.requireAllowed(portal, user.getRole());
             if (isLocked(user)) {
-                throw new UnauthorizedException(LOCKED);
+                throw mfaLocked(user);
             }
             if (!cipher.isConfigured() && hasCode) {
                 throw notConfigured();
@@ -167,6 +173,7 @@ public class MfaService {
         if (attempt == null || !attempt.ok()) {
             if (attempt != null) {
                 recordFailure(attempt.user(), "sign-in");
+                throwIfNowLocked(attempt.user().getId());
             }
             throw new UnauthorizedException(INVALID_CODE);
         }
@@ -220,6 +227,14 @@ public class MfaService {
      * {@code mfaToken} the token is consumed and {@link ConfirmResult#signedInUser()} is the user to sign in.
      */
     public ConfirmResult confirm(String code, String mfaToken) {
+        return confirm(code, mfaToken, null);
+    }
+
+    /**
+     * As {@link #confirm(String, String)}; with an enrolment token the account must belong to {@code portal} (checked
+     * before anything is committed, so a refused portal leaves the token unused and MFA not enabled; R1-L2).
+     */
+    public ConfirmResult confirm(String code, String mfaToken, Portal portal) {
         requireConfigured();
         boolean viaToken = mfaToken != null && !mfaToken.isBlank();
         ConfirmAttempt attempt = tx.execute(status -> {
@@ -230,8 +245,9 @@ public class MfaService {
                 user = token.getUser();
                 requireActive(user);
                 requireStaff(user);
+                Portal.requireAllowed(portal, user.getRole());
                 if (isLocked(user)) {
-                    throw new UnauthorizedException(LOCKED);
+                    throw mfaLocked(user);
                 }
             } else {
                 user = resolveActor(null);
@@ -258,6 +274,7 @@ public class MfaService {
         if (attempt == null || attempt.codes() == null) {
             if (viaToken && attempt != null) {
                 recordFailure(attempt.user(), "enrolment");
+                throwIfNowLocked(attempt.user().getId());
             }
             throw new BadRequestException(INVALID_CODE + ". Check the time on your device and try again.");
         }
@@ -273,7 +290,13 @@ public class MfaService {
         User user = userRepository.findById(current.userId())
                 .orElseThrow(() -> new UnauthorizedException("Authentication is required"));
         requireStaff(user);
+        // R1-H2: like the second factor below, the password check shares the sign-in lockout so that a stolen
+        // access token cannot be used to guess the password without limit.
+        if (isLocked(user)) {
+            throw new TooManyRequestsException(LOCKED, UserAccountService.lockRemainingSeconds(user));
+        }
         if (password == null || !passwordEncoder.matches(password, user.getPasswordHash())) {
+            userAccountService.recordFailedLogin(user.getId());
             throw new BadRequestException("Current password is incorrect");
         }
         if (organizationRequiresMfa(user.getOrganizationId())) {
@@ -304,16 +327,40 @@ public class MfaService {
         }
     }
 
-    /** POST /api/v1/me/mfa/recovery-codes: ten new codes; the earlier ones stop working. */
-    public RecoveryCodesResponse regenerateRecoveryCodes() {
+    /**
+     * POST /api/v1/me/mfa/recovery-codes: ten new codes; the earlier ones stop working. R1-U1: needs a step-up, a
+     * current TOTP {@code code} (preferred; it wins when both are sent) or the account {@code password}. A wrong
+     * one is 400 and counts as a failed sign-in (shared lockout; 429 with {@code Retry-After} while locked), so a
+     * stolen access token alone can no longer mint lasting recovery codes.
+     */
+    public RecoveryCodesResponse regenerateRecoveryCodes(String password, String code) {
         CurrentUser current = securityUtils.currentUser();
-        return tx.execute(status -> {
-            User user = userRepository.findById(current.userId())
-                    .orElseThrow(() -> new UnauthorizedException("Authentication is required"));
-            requireStaff(user);
+        User user = userRepository.findById(current.userId())
+                .orElseThrow(() -> new UnauthorizedException("Authentication is required"));
+        requireStaff(user);
+        String trimmedCode = code == null ? "" : code.trim();
+        boolean viaCode = !trimmedCode.isEmpty();
+        boolean viaPassword = !viaCode && password != null && !password.isEmpty();
+        if (!viaCode && !viaPassword) {
+            throw new BadRequestException(STEP_UP_REQUIRED);
+        }
+        if (isLocked(user)) {
+            throw new TooManyRequestsException(LOCKED, UserAccountService.lockRemainingSeconds(user));
+        }
+        if (viaPassword && !passwordEncoder.matches(password, user.getPasswordHash())) {
+            userAccountService.recordFailedLogin(user.getId());
+            throw new BadRequestException("Current password is incorrect");
+        }
+        if (viaCode) {
+            requireConfigured();
+        }
+        RecoveryCodesResponse response = tx.execute(status -> {
             UserMfa mfa = mfaRepository.lockByUserId(user.getId()).orElse(null);
             if (mfa == null || !mfa.isEnabled()) {
                 throw new BadRequestException("Two-factor authentication is not enabled");
+            }
+            if (viaCode && !checkSecondFactor(user, trimmedCode, null)) {
+                return null;
             }
             List<String> codes = replaceRecoveryCodes(user.getId());
             auditService.recordFor(user.getOrganizationId(), user.getId(), user.getEmail(),
@@ -321,6 +368,11 @@ public class MfaService {
                     "New MFA recovery codes generated; earlier codes revoked");
             return new RecoveryCodesResponse(codes);
         });
+        if (response == null) {
+            recordFailure(user, "recovery codes");
+            throw new BadRequestException(INVALID_CODE);
+        }
+        return response;
     }
 
     // ---- internals ----
@@ -395,7 +447,7 @@ public class MfaService {
         if (mfaToken != null && !mfaToken.isBlank()) {
             user = tokens.resolve(mfaToken, UserTokenPurpose.MFA_ENROLL, false);
             if (isLocked(user)) {
-                throw new UnauthorizedException(LOCKED);
+                throw mfaLocked(user);
             }
         } else {
             CurrentUser current = securityUtils.findCurrentUser()
@@ -449,6 +501,22 @@ public class MfaService {
 
     private static boolean isLocked(User user) {
         return user.getLockedUntil() != null && user.getLockedUntil().isAfter(UtcTime.now());
+    }
+
+    /** 429 {@value #LOCKED_CODE} with the remaining lock time as {@code Retry-After} (R6-B3). */
+    static TooManyRequestsException mfaLocked(User user) {
+        long seconds = UserAccountService.lockRemainingSeconds(user);
+        long minutes = Math.max(1, (seconds + 59) / 60);
+        return new TooManyRequestsException(LOCKED_CODE + ": Too many failed attempts. Try again in " + minutes
+                + (minutes == 1 ? " minute." : " minutes."), seconds);
+    }
+
+    /** After a counted failure: when that failure locked the account, answer with the lockout instead of "wrong code". */
+    private void throwIfNowLocked(Long userId) {
+        User fresh = userRepository.findById(userId).orElse(null);
+        if (fresh != null && isLocked(fresh)) {
+            throw mfaLocked(fresh);
+        }
     }
 
     private static long currentStep() {

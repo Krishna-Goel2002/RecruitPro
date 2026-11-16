@@ -29,7 +29,9 @@ export function AdminAuditPage() {
   const [rangeError, setRangeError] = useState<string | null>(null)
   const exporter = useMutation({
     mutationFn: () => adminApi.exportAudit(localDayBoundary(from, false), localDayBoundary(to, true)),
-    onSuccess: name => toast({ tone: 'success', title: `Exported ${name}`, body: 'The export itself is recorded in the audit log.' }),
+    onSuccess: ({ filename, truncated }) => truncated
+      ? toast({ tone: 'warning', title: `Exported ${filename} (incomplete)`, body: 'Only the first 50,000 rows were exported. Narrow the date range.' })
+      : toast({ tone: 'success', title: `Exported ${filename}`, body: 'The export itself is recorded in the audit log.' }),
   })
 
   function submit(event: FormEvent) {

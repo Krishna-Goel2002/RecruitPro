@@ -71,15 +71,23 @@ public final class VerificationMetrics {
                     predicted == 0 ? null : round((double) agreed / predicted),
                     gold == 0 ? null : round((double) agreed / gold)));
         }
+        // R3-B12: the thresholds are compared with the exact values, not the 4-place rounded ones shown (an FCR of
+        // 0.02004 is reported as 0.02 but is above the 0.02 limit).
         boolean ready = overall.labelled >= READY_MIN_LABELS
-                && overall.fcr != null && overall.fcr <= READY_MAX_FCR
-                && overall.kappa != null && overall.kappa >= READY_MIN_KAPPA;
+                && overall.rawFcr != null && overall.rawFcr <= READY_MAX_FCR
+                && overall.rawKappa != null && overall.rawKappa >= READY_MIN_KAPPA;
         return new VerificationMetricsResponse(overall.labelled, overall.agreement, overall.fcr, overall.kappa,
                 verifiers, classes, ready);
     }
 
     /** Cohen's kappa over the five verdict classes; null when undefined (no pairs, or chance agreement 1 with disagreement). */
     public static Double kappa(List<Pair> pairs) {
+        Double raw = rawKappa(pairs);
+        return raw == null ? null : round(raw);
+    }
+
+    /** Cohen's kappa, unrounded; null when undefined. */
+    static Double rawKappa(List<Pair> pairs) {
         int n = pairs.size();
         if (n == 0) {
             return null;
@@ -104,7 +112,7 @@ public final class VerificationMetrics {
         if (Math.abs(1.0 - expected) < 1e-12) {
             return agreed == n ? 1.0 : null;
         }
-        return round((observed - expected) / (1.0 - expected));
+        return (observed - expected) / (1.0 - expected);
     }
 
     private static Summary summarise(List<Pair> pairs) {
@@ -128,8 +136,10 @@ public final class VerificationMetrics {
             }
         }
         summary.agreement = round((double) agreed / pairs.size());
-        summary.fcr = goldNotVerified == 0 ? null : round((double) falseCorroborations / goldNotVerified);
-        summary.kappa = kappa(pairs);
+        summary.rawFcr = goldNotVerified == 0 ? null : (double) falseCorroborations / goldNotVerified;
+        summary.fcr = summary.rawFcr == null ? null : round(summary.rawFcr);
+        summary.rawKappa = rawKappa(pairs);
+        summary.kappa = summary.rawKappa == null ? null : round(summary.rawKappa);
         return summary;
     }
 
@@ -142,5 +152,7 @@ public final class VerificationMetrics {
         Double agreement;
         Double fcr;
         Double kappa;
+        Double rawFcr;
+        Double rawKappa;
     }
 }

@@ -5,6 +5,7 @@ import com.recruitpro.candidate.entity.CandidateProfile;
 import com.recruitpro.candidate.repository.CandidateProfileRepository;
 import com.recruitpro.candidate.service.CandidateProfileService;
 import com.recruitpro.common.exception.BadRequestException;
+import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.common.exception.TooManyRequestsException;
 import com.recruitpro.common.time.UtcTime;
@@ -62,6 +63,10 @@ import java.util.regex.Pattern;
 public class ReferenceService {
 
     public static final int MAX_OPEN = 5;
+    /** Message code of the 409 at {@link #MAX_OPEN} open requests (the portals parse {@code CODE: message}). */
+    public static final String OPEN_LIMIT_CODE = "REFERENCE_LIMIT";
+    /** Reference requests a candidate may create in 24 hours, cancelled ones included (R3-B04). */
+    public static final int MAX_PER_DAY = 10;
     public static final int MAX_CLAIMS = 20;
     public static final Duration TTL = Duration.ofDays(14);
     static final Set<String> ANSWERS = Set.of("CONFIRM", "PARTLY", "CANNOT_CONFIRM", "DISAGREE");
@@ -125,7 +130,7 @@ public class ReferenceService {
             throw new BadRequestException("Consent is required to contact a referee");
         }
         String name = trimmed(request.refereeName());
-        if (name == null || name.length() > 200) {
+        if (name == null || name.length() > 200 || hasControlCharacters(name)) {
             throw new BadRequestException("refereeName is required (at most 200 characters)");
         }
         String email = trimmed(request.refereeEmail());
@@ -139,7 +144,7 @@ public class ReferenceService {
         }
         ReferenceRelationship relationship = parseRelationship(request.relationship());
         String employerName = trimmed(request.employerName());
-        if (employerName != null && employerName.length() > 200) {
+        if (employerName != null && (employerName.length() > 200 || hasControlCharacters(employerName))) {
             throw new BadRequestException("employerName must be at most 200 characters");
         }
         String employerDomain = trimmed(request.employerDomain());
@@ -173,7 +178,18 @@ public class ReferenceService {
         sourceService.lock(me.getId());
         LocalDateTime now = UtcTime.now();
         if (referenceRepository.countByCandidateIdAndStatusAndExpiresAtAfter(me.getId(), ReferenceStatus.SENT, now) >= MAX_OPEN) {
-            throw new TooManyRequestsException("You can have at most " + MAX_OPEN + " open reference requests");
+            // Integration pass (R5#3): a business limit (waiting does not lift it; an answer or a cancel does): 409.
+            throw new DuplicateResourceException(OPEN_LIMIT_CODE + ": You can have at most " + MAX_OPEN
+                    + " open reference requests");
+        }
+        // R3-B04: cancelling frees an open slot, so without a daily cap a candidate could make the server e-mail any
+        // address with text they control, without limit.
+        if (referenceRepository.countByCandidateIdAndCreatedAtAfter(me.getId(), now.minusHours(24)) >= MAX_PER_DAY) {
+            LocalDateTime oldest = referenceRepository.findFirstByCandidateIdAndCreatedAtAfterOrderByCreatedAtAsc(me.getId(),
+                    now.minusHours(24)).map(VerificationReferenceRequest::getCreatedAt).orElse(null);
+            throw new TooManyRequestsException("You can send at most " + MAX_PER_DAY
+                    + " reference requests in 24 hours. Please try again later.",
+                    PublicEndpointRateLimiter.secondsUntilFree(oldest, Duration.ofHours(24), now));
         }
         String token = newToken();
         VerificationReferenceRequest reference = new VerificationReferenceRequest();
@@ -208,7 +224,10 @@ public class ReferenceService {
     @Transactional
     public ReferenceResponse cancel(Long referenceId) {
         CandidateProfile me = profileService.getOrProvisionMine();
-        VerificationReferenceRequest reference = referenceRepository.findByIdAndCandidateId(referenceId, me.getId())
+        // R3-B02: row-locked, so a cancel racing the referee's answer never overwrites ANSWERED with CANCELLED.
+        VerificationReferenceRequest reference = (referenceId == null ? java.util.Optional.<VerificationReferenceRequest>empty()
+                : referenceRepository.lockById(referenceId))
+                .filter(found -> me.getId().equals(found.getCandidateId()))
                 .orElseThrow(() -> new ResourceNotFoundException("Reference request not found"));
         expireIfDue(reference, UtcTime.now());
         if (reference.getStatus() != ReferenceStatus.SENT) {
@@ -223,7 +242,7 @@ public class ReferenceService {
     /** GET /api/v1/public/references/{token}; 404 unknown token, 410 expired, answered, declined or cancelled. */
     @Transactional
     public PublicReferenceResponse view(String token) {
-        VerificationReferenceRequest reference = open(token);
+        VerificationReferenceRequest reference = open(token, false);
         CandidateProfile profile = profileRepository.findById(reference.getCandidateId()).orElse(null);
         String firstName = profile == null || profile.getUser() == null ? null : profile.getUser().getFirstName();
         List<PublicReferenceClaim> claims = new ArrayList<>();
@@ -243,7 +262,9 @@ public class ReferenceService {
      */
     @Transactional
     public void submit(String token, PublicReferenceSubmitRequest request) {
-        VerificationReferenceRequest reference = open(token);
+        // R3-B02: the row is locked before its status is checked, so two concurrent submissions (or an answer and a
+        // decline) cannot both pass the SENT check: the second one sees ANSWERED / DECLINED and gets 410.
+        VerificationReferenceRequest reference = open(token, true);
         if (request == null) {
             throw new BadRequestException("A request body is required");
         }
@@ -296,11 +317,13 @@ public class ReferenceService {
     }
 
     /** The request behind a token if it can still be answered. */
-    private VerificationReferenceRequest open(String token) {
+    private VerificationReferenceRequest open(String token, boolean lock) {
         if (token == null || token.isBlank() || token.length() > 100) {
             throw new ResourceNotFoundException("Reference request not found");
         }
-        VerificationReferenceRequest reference = referenceRepository.findByTokenHash(sha256Hex(token.trim()))
+        String tokenHash = sha256Hex(token.trim());
+        VerificationReferenceRequest reference = (lock ? referenceRepository.lockByTokenHash(tokenHash)
+                : referenceRepository.findByTokenHash(tokenHash))
                 .orElseThrow(() -> new ResourceNotFoundException("Reference request not found"));
         // An overdue request answers 410 at once; the expiry sweep (or the candidate's list) persists EXPIRED.
         boolean overdue = reference.getStatus() == ReferenceStatus.SENT && reference.getExpiresAt() != null
@@ -383,5 +406,10 @@ public class ReferenceService {
 
     private static String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    /** Line breaks and other control characters (names end up in e-mails; R3-B20). */
+    static boolean hasControlCharacters(String value) {
+        return value != null && value.chars().anyMatch(Character::isISOControl);
     }
 }

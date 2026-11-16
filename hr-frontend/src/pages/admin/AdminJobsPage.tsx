@@ -11,7 +11,7 @@ import { JobStatusBadge, jobStatusLabel } from '../../components/StatusBadges'
 import { Button, DataTable, EmptyState, Input, PageHeader, Pagination, Radio, RadioGroup, Select, useToast, type Column } from '../../design/components'
 import { BriefcaseBusiness, Icon, Search } from '../../design/icons'
 import { formatNumber, plural, relativeTime } from '../../design/lib/format'
-import { useSearchState } from '../../lib/useSearchState'
+import { oneOf, useClampPage, useSearchState } from '../../lib/useSearchState'
 import { useUrlSearch } from './shared'
 import './admin.css'
 
@@ -34,10 +34,11 @@ export function AdminJobsPage() {
   const { toast } = useToast()
   const state = useSearchState()
   const search = useUrlSearch(state)
-  const status = state.get('status') as JobStatus | ''
+  const status = oneOf<JobStatus | ''>(state.get('status'), ['', ...JOB_STATUSES], '')
   const page = state.getPage()
   const params: AdminJobParams = { page, size: 20, status: status || undefined, search: search.value || undefined }
   const jobs = useQuery({ queryKey: qk.adminJobs(params), queryFn: ({ signal }) => adminApi.jobs(params, signal), placeholderData: keepPreviousData })
+  useClampPage(state, page, jobs.isPlaceholderData ? undefined : jobs.data)
   const [target, setTarget] = useState<AdminJob | null>(null)
   const [next, setNext] = useState<JobStatus | null>(null)
 
@@ -53,7 +54,7 @@ export function AdminJobsPage() {
 
   const columns: Column<AdminJob>[] = [
     { key: 'title', header: 'Job', primary: true, sortValue: j => j.title, cell: j => <span className="adm-person-text"><Link className="adm-strong" to={`/jobs/${j.id}`}>{j.title}</Link><span className="adm-faint">{j.department} · {j.location}</span></span> },
-    { key: 'owner', header: 'Owner', hideWhenStacked: true, sortValue: j => j.createdByEmail, cell: j => <span className="adm-faint">{j.createdByEmail}</span> },
+    { key: 'owner', header: 'Owner', hideWhenStacked: true, sortValue: j => j.createdByEmail ?? '', cell: j => <span className="adm-faint">{j.createdByEmail || '—'}</span> },
     { key: 'status', header: 'Status', width: '120px', sortValue: j => j.status, cell: j => <JobStatusBadge status={j.status} /> },
     { key: 'apps', header: 'Applications', numeric: true, width: '120px', sortValue: j => j.applicationCount, cell: j => formatNumber(j.applicationCount) },
     { key: 'created', header: 'Created', width: '120px', hideWhenStacked: true, sortValue: j => j.createdAt, cell: j => <time className="adm-faint" dateTime={j.createdAt}>{relativeTime(j.createdAt)}</time> },

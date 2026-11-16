@@ -146,6 +146,42 @@ class RefreshTokenRotationIntegrationTest {
     }
 
     @Test
+    void aFamilyEndsAfterTheAbsoluteSessionLifetimeHoweverOftenItRotates() throws Exception {
+        // R1-U2: rotation keeps the sign-in time; a family started 31 days ago (default limit 30 days) is refused.
+        String first = refreshCookie(login());
+        RefreshToken firstRow = refreshTokens.findByTokenHash(TokenHashing.sha256(first)).orElseThrow();
+        assertNotNull(firstRow.getFamilyStartedAt());
+        assertFalse(firstRow.getExpiresAt().isAfter(firstRow.getFamilyStartedAt().plusDays(30)));
+        String second = refreshCookie(mvc.perform(post("/api/v1/auth/refresh").cookie(new Cookie(REFRESH_COOKIE, first)))
+                .andExpect(status().isOk()).andReturn());
+        RefreshToken secondRow = refreshTokens.findByTokenHash(TokenHashing.sha256(second)).orElseThrow();
+        assertEquals(firstRow.getFamilyStartedAt(), secondRow.getFamilyStartedAt(), "rotation keeps the sign-in time");
+
+        // Sign-in 31 days ago; the token itself (sliding 14 days) has not expired.
+        jdbcTemplate.update("UPDATE refresh_tokens SET family_started_at = ? WHERE family_id = ?",
+                Timestamp.valueOf(LocalDateTime.now(ZoneOffset.UTC).minusDays(31)), firstRow.getFamilyId());
+        MvcResult refused = mvc.perform(post("/api/v1/auth/refresh").cookie(new Cookie(REFRESH_COOKIE, second)))
+                .andExpect(status().isUnauthorized())
+                .andReturn();
+        assertEquals("", refreshCookie(refused));
+        RefreshToken revoked = refreshTokens.findByTokenHash(TokenHashing.sha256(second)).orElseThrow();
+        assertNotNull(revoked.getRevokedAt());
+        assertEquals("SESSION_LIFETIME", revoked.getRevokedReason());
+
+        // Near the absolute end a rotated token never outlives it.
+        String fresh = refreshCookie(login());
+        String freshFamily = refreshTokens.findByTokenHash(TokenHashing.sha256(fresh)).orElseThrow().getFamilyId();
+        LocalDateTime started = LocalDateTime.now(ZoneOffset.UTC).minusDays(29);
+        jdbcTemplate.update("UPDATE refresh_tokens SET family_started_at = ? WHERE family_id = ?",
+                Timestamp.valueOf(started), freshFamily);
+        String rotated = refreshCookie(mvc.perform(post("/api/v1/auth/refresh").cookie(new Cookie(REFRESH_COOKIE, fresh)))
+                .andExpect(status().isOk()).andReturn());
+        RefreshToken rotatedRow = refreshTokens.findByTokenHash(TokenHashing.sha256(rotated)).orElseThrow();
+        assertFalse(rotatedRow.getExpiresAt().isAfter(started.plusDays(30).plusSeconds(1)),
+                "the new token expires at the family's absolute end, not 14 days later");
+    }
+
+    @Test
     void refreshWithoutAnyTokenIsUnauthorized() throws Exception {
         mvc.perform(post("/api/v1/auth/refresh")).andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.success").value(false));

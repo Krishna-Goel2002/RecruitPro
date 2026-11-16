@@ -129,10 +129,11 @@ function IdentityCard({ jobId, detail, canReveal, onReveal }: { jobId: number; d
  * one history entry. Not autosaved to the server, because every save adds an entry to the decision history.
  */
 function ReviewNote({ jobId, detail, noteRef }: { jobId: number; detail: ApplicantDetail; noteRef: RefObject<HTMLTextAreaElement> }) {
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const queryClient = useQueryClient()
   const { toast } = useToast()
-  const draftKey = `review-note:${detail.applicationId}`
+  // Per signed-in user: on a shared computer nobody sees (or saves) a colleague's unsaved note.
+  const draftKey = `review-note:${user?.id ?? 'anon'}:${detail.applicationId}`
   const latest = [...detail.history].sort((a, b) => a.timestamp.localeCompare(b.timestamp)).reverse()
     .find(e => e.actionType === 'COMMENT_UPDATED' || e.actionType === 'REVIEW_COMMENT')?.comment ?? ''
   const [note, setNote] = useState(() => readDraft<string>(draftKey)?.value ?? latest)
@@ -233,7 +234,7 @@ function History({ detail }: { detail: ApplicantDetail }) {
                 )}
               </>
             ),
-            meta: <>{e.actorName}{e.matchRunId ? <> · run #{e.matchRunId}</> : null}</>,
+            meta: <>{e.actorName || (e.actorUserId == null ? 'System' : 'A former team member')}{e.matchRunId ? <> · run #{e.matchRunId}</> : null}</>,
             at: e.timestamp,
             children: e.comment ? <p>“{e.comment}”</p> : undefined,
           }))}

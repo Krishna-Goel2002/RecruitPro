@@ -61,3 +61,27 @@ def test_free_mail_helpers():
     assert is_free_mail("Gmail.com") and is_free_mail("someone@outlook.com") and not is_free_mail("acme.com")
     assert domains_match("eu.acme.com", "acme.com") and not domains_match("notacme.com", "acme.com")
     assert not domains_match("acme.com", "com")
+
+
+# ------------------------------------------------------------------------------------- bug-hunt regressions
+@pytest.mark.parametrize("domain", ["hotmail.fr", "outlook.de", "live.in", "yahoo.com.br", "gmx.at", "hotmail.co.uk",
+                                    "yandex.kz", "mail.ru", "proton.me"])
+def test_country_variants_of_free_mail_are_free_mail(domain):
+    assert is_free_mail(domain) and is_free_mail(f"someone@{domain}")
+
+
+@pytest.mark.parametrize("domain", ["acme.com", "acme.co.uk", "mail.ibm.com", "outlookconsulting.com", "live-nation.com",
+                                    "yahoo-inc.example", "mailchimp.com", "eu.acme.com"])
+def test_company_domains_are_not_free_mail(domain):
+    assert not is_free_mail(domain)
+
+
+def test_a_free_mail_country_domain_never_anchors_a_reference(client, fake_net):
+    """hotmail.fr is old, has MX and its home page names Microsoft: before, a sock-puppet mailbox there "verified" a
+    claimed job at Microsoft."""
+    fake_net.pages["https://hotmail.fr/"] = employer_home("Microsoft")
+    data = _post(client, "MANAGER", "hotmail.fr", "hotmail.fr", [{"claimId": "claim:1", "answer": "CONFIRM"}],
+                 employer_name="Microsoft")
+    first = data["verdicts"][0]
+    assert first["verdict"] == "PARTLY_VERIFIED" and first["ownershipProven"] is False
+    assert "free e-mail" in first["reasons"][0]["text"] and "FREE_MAIL_REFEREE" in data["warnings"]

@@ -7,6 +7,7 @@ import com.recruitpro.auth.mfa.dto.MfaDisableRequest;
 import com.recruitpro.auth.mfa.dto.MfaEnrollRequest;
 import com.recruitpro.auth.mfa.dto.MfaEnrollResponse;
 import com.recruitpro.auth.mfa.dto.MfaStatusResponse;
+import com.recruitpro.auth.mfa.dto.MfaStepUpRequest;
 import com.recruitpro.auth.mfa.dto.RecoveryCodesResponse;
 import com.recruitpro.auth.service.AuthService;
 import com.recruitpro.auth.web.Portal;
@@ -60,11 +61,11 @@ public class MfaController {
     @Operation(summary = "Confirm enrolment with the first code; returns 10 recovery codes (and a session when an mfaToken was used)")
     public ApiResponse<MfaConfirmResponse> confirm(@Valid @RequestBody MfaConfirmRequest request,
                                                    HttpServletRequest httpRequest, HttpServletResponse response) {
-        MfaService.ConfirmResult result = mfaService.confirm(request.code(), request.mfaToken());
+        // The portal is checked inside the confirmation, before the token is consumed and MFA is enabled.
+        Portal portal = Portal.from(httpRequest);
+        MfaService.ConfirmResult result = mfaService.confirm(request.code(), request.mfaToken(), portal);
         AuthResponse session = null;
         if (result.signedInUser() != null) {
-            Portal portal = Portal.from(httpRequest);
-            Portal.requireAllowed(portal, result.signedInUser().getRole());
             session = refreshTokenCookies.complete(authService.createSession(result.signedInUser()), portal, response);
         }
         return ApiResponse.success(new MfaConfirmResponse(result.recoveryCodes(), session),
@@ -79,8 +80,10 @@ public class MfaController {
     }
 
     @PostMapping("/recovery-codes")
-    @Operation(summary = "Generate 10 new recovery codes (earlier codes stop working)")
-    public ApiResponse<RecoveryCodesResponse> regenerateRecoveryCodes() {
-        return ApiResponse.success(mfaService.regenerateRecoveryCodes(), "New recovery codes generated");
+    @Operation(summary = "Generate 10 new recovery codes (earlier codes stop working); needs a current code or the password")
+    public ApiResponse<RecoveryCodesResponse> regenerateRecoveryCodes(
+            @Valid @RequestBody(required = false) MfaStepUpRequest request) {
+        return ApiResponse.success(mfaService.regenerateRecoveryCodes(request == null ? null : request.password(),
+                request == null ? null : request.code()), "New recovery codes generated");
     }
 }

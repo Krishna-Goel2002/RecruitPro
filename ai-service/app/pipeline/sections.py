@@ -110,6 +110,24 @@ _INLINE_RE = re.compile(r"^(?P<label>[A-Za-z][A-Za-z &/\-]{2,40}?)\s*[:–\-]\s+
 LIST_SECTIONS = frozenset({"SKILLS", "LANGUAGES"})
 # Sections an inline "Label: content" line may temporarily override.
 _OVERRIDABLE = frozenset({"HEADER", "SUMMARY", "OTHER", "PERSONAL", "INTERESTS", "ACHIEVEMENTS"})
+# Inline labels that override any section ("Education: MBA, 2015" at the end of a work history).
+# ("Languages: Java, Python" inside a role lists programming languages, so LANGUAGES is not one of them.)
+_ALWAYS_INLINE = frozenset({"EDUCATION", "CERTIFICATIONS"})
+# Lexicon headings that are also ordinary one-word list items ("Training", "Research", "Software"
+# in a skills list). In a list section, or as a bullet, they start a section only when styled as a
+# heading (heading style/font, capitals or a trailing colon).
+_ITEM_LIKE_HEADINGS = frozenset({
+    "training", "trainings", "research", "software", "tools", "technologies", "frameworks", "strengths",
+    "expertise", "competencies", "activities", "portfolio", "recognition", "overview", "introduction", "coursework",
+    "workshops", "contact", "reference", "volunteering", "social work", "community service", "toolkit",
+    "programming languages",
+})
+_LIST_LIKE = frozenset({"SKILLS", "LANGUAGES", "INTERESTS", "COURSES", "CERTIFICATIONS"})
+# Inside a work history, "Roles & Responsibilities:", "Achievements:" or "Projects handled" are
+# sub-headings of a role when the next role (a date range) follows before the next main heading.
+_ROLE_SUBHEADING_KINDS = frozenset({"ACHIEVEMENTS", "OTHER", "PROJECTS", "COURSES", "SUMMARY"})
+_MAIN_KINDS = frozenset({"EDUCATION", "SKILLS", "CERTIFICATIONS", "LANGUAGES", "INTERESTS", "REFERENCES", "PERSONAL",
+                         "PUBLICATIONS", "VOLUNTEERING", "EXPERIENCE"})
 
 
 @dataclass(frozen=True)
@@ -169,8 +187,30 @@ def split_sections(lines: list[Line], today: date) -> list[Section]:
         styled = line.style_key is not None and line.style_key in signatures
         return all_caps or colon_label or styled
 
+    def styled_as_heading(line: Line) -> bool:
+        letters = re.sub(r"[^A-Za-z]", "", line.text)
+        return line.heading_hint or line.text.rstrip().endswith(":") or (len(letters) >= 4 and letters.isupper()) or (
+            line.style_key is not None and line.style_key in signatures)
+
+    def signature(line: Line) -> tuple[object, ...]:
+        letters = re.sub(r"[^A-Za-z]", "", line.text)
+        return (line.style_key, line.heading_hint, line.text.rstrip().endswith(":"), len(letters) >= 4 and letters.isupper())
+
+    # For every position: is there a dated line before the next main heading? (one backward pass, O(n))
+    dated_ahead = [False] * (len(lines) + 1)
+    for position in range(len(lines) - 1, -1, -1):
+        later = lines[position]
+        if exact[later.index] in _MAIN_KINDS and not later.is_bullet:
+            dated_ahead[position] = False
+        else:
+            dated_ahead[position] = later.index in has_dates or dated_ahead[position + 1]
+
+    def dated_role_follows(position: int) -> bool:
+        return dated_ahead[position + 1]
+
     sections: list[Section] = []
     kind, heading, bucket = "HEADER", None, []
+    heading_line: Line | None = None
     seen_heading = False
 
     def flush() -> None:
@@ -179,6 +219,9 @@ def split_sections(lines: list[Line], today: date) -> list[Section]:
 
     for position, line in enumerate(lines):
         new_kind = exact[line.index]
+        if new_kind is not None and heading_key(line.text) in _ITEM_LIKE_HEADINGS and (
+                line.is_bullet or (kind in _LIST_LIKE and not styled_as_heading(line))):
+            new_kind = None  # a list item that happens to be a heading word
         if new_kind is None and not line.is_bullet and (seen_heading or line.heading_hint):
             keyword = _keyword_kind(line.text)
             signal = line.heading_hint or line.text.rstrip().endswith(":") or (
@@ -187,13 +230,17 @@ def split_sections(lines: list[Line], today: date) -> list[Section]:
                 new_kind = keyword
             elif seen_heading and heading_like(position, line):
                 new_kind = keyword or "OTHER"
+        if new_kind in _ROLE_SUBHEADING_KINDS and kind == "EXPERIENCE" and heading_line is not None \
+                and signature(line) != signature(heading_line) and dated_role_follows(position):
+            new_kind = None  # a role's own sub-heading; the work history continues
         if new_kind is not None:
             flush()
             kind, heading, bucket, seen_heading = new_kind, line.text.rstrip(": "), [], True
+            heading_line = line
             continue
         inline = _INLINE_RE.match(line.text)
         inline_kind = lexicon_kind(inline.group("label")) if inline else None
-        if inline and inline_kind and inline_kind != kind and kind in _OVERRIDABLE:
+        if inline and inline_kind and inline_kind != kind and (kind in _OVERRIDABLE or inline_kind in _ALWAYS_INLINE):
             content_start = line.start + inline.start("content")
             flush()
             sections.append(Section(inline_kind, inline.group("label"),

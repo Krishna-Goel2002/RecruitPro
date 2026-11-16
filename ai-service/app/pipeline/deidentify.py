@@ -14,7 +14,10 @@ from __future__ import annotations
 import bisect
 import re
 from dataclasses import dataclass
+from datetime import date
 
+from app.pipeline.dates import find_date_ranges
+from app.pipeline.education import detect_degree
 from app.pipeline.text import Line
 from app.pipeline.timeline import has_title_word
 
@@ -26,34 +29,55 @@ URL_RE = re.compile(
     r"bitbucket\.org|codepen\.io)/[^\s<>()\"'|,]*",
     re.I,
 )
-PHONE_RE = re.compile(r"(?<![\w+/])(?:\+\d{1,3}[\s.\-]?)?(?:\(\d{2,5}\)[\s.\-]?)?\d[\d\s.\-]{6,16}\d(?![\w/])")
+# Never across a line break ("[ \t]", not "\s"): a phone number is written on one line.
+PHONE_RE = re.compile(r"(?<![\w+/])(?:\+\d{1,3}[ \t.\-]?)?(?:\(\d{2,5}\)[ \t.\-]?)?\d[\d \t.\-]{6,16}\d(?![\w/])")
 _YEAR_RANGE_RE = re.compile(r"^(?:19|20)\d{2}\s*[-.\s]\s*(?:19|20)\d{2}$")
 _DATE_LIKE_RE = re.compile(r"^\d{1,4}[-.\s/]\d{1,2}[-.\s/]\d{2,4}$")
 _HONORIFIC_RE = re.compile(r"\b(?:Mr|Mrs|Ms|Miss|Mx|Shri|Smt|Sri|Kumari|Kum)\b\.?(?=\s+[A-Z\[])")
+_LETTER = r"[^\W\d_]"  # any Unicode letter, so "José Álvarez" is a name like "Jose Alvarez"
+_NAME_WORD_RE = re.compile(_LETTER + r"(?:" + _LETTER + r"|['\u2019\-])*")
+_HONORIFIC_PREFIX_RE = re.compile(r"^(?:(?:mr|mrs|ms|miss|mx|dr|shri|smt|sri|kumari|kum|prof)\b\.?\s*)+", re.I)
+_NAME_PARTICLES = frozenset({"de", "da", "das", "do", "dos", "del", "della", "di", "du", "van", "von", "der", "den",
+                             "la", "le", "bin", "binti", "al", "el", "ter", "ten"})
 _PRONOUNS = {
     "he": "they", "she": "they", "him": "them", "his": "their", "her": "their", "hers": "theirs",
     "himself": "themself", "herself": "themself",
 }
-_PRONOUN_RE = re.compile(r"\b(?:he|she|him|his|her|hers|himself|herself)\b", re.I)
+# Lower-case or capitalised only: "HIS" (Hospital Information System) or "SHE" (safety, health and
+# environment) written in capitals are acronyms, not pronouns.
+_PRONOUN_RE = re.compile(r"\b(?:[Hh]e|[Ss]he|[Hh]im|[Hh]is|[Hh]er|[Hh]ers|[Hh]imself|[Hh]erself)\b")
 _PERSONAL_RE = re.compile(
     r"\b(?:gender|sex|marital\s+status|nationality|religion|caste|category|father'?s\s+name|mother'?s\s+name|"
     r"husband'?s\s+name|spouse(?:'?s\s+name)?|passport\s+(?:no|number)|aadha?ar(?:\s+(?:no|number))?|pan\s+(?:no|number))"
-    r"\s*[:\-]\s*[^|;\n]{1,60}",
+    r"[ \t]*(?:[:\-]|\|)[ \t]*(?:\n[ \t]*)?[^|;\n]{1,60}",  # the value may sit on the next line, never further
     re.I,
 )
-_DOB_RE = re.compile(r"\b(?:date\s+of\s+birth|d\.?\s?o\.?\s?b\.?|born(?:\s+on)?|birth\s*date)\s*[:\-]?\s*[^|;\n]{4,40}", re.I)
+_DOB_RE = re.compile(r"\b(?:(?:date\s+of\s+birth|d\.?\s?o\.?\s?b\b\.?|born\s+on\b|birth\s*date)[ \t]*(?:[:\-]|\|)?[ \t]*(?:\n[ \t]*)?"
+                     r"|born\b[ \t]*(?:[:\-]|\|)?[ \t]*)[^|;\n]{4,40}", re.I)
 _AGE_RE = re.compile(r"\bage\s*[:\-]\s*\d{2}\b(?:\s*(?:years|yrs))?|\b\d{2}\s*(?:years|yrs)[\s-]*old\b|\baged\s+\d{2}\b", re.I)
 _ADDRESS_LABEL_RE = re.compile(
-    r"\b(?:address|residential\s+address|permanent\s+address|current\s+address|correspondence\s+address)\s*[:\-]\s*[^|\n]{3,120}",
+    r"\b(?:address|residential\s+address|permanent\s+address|current\s+address|correspondence\s+address)[ \t]*(?:[:\-]|\|)"
+    r"[ \t]*(?:\n[ \t]*)?[^|\n]{3,120}",
     re.I,
 )
+# A header (contact block) segment that is a postal address: a PIN/ZIP code or a house/street word.
+_HEADER_ADDRESS_RE = re.compile(
+    r"(?<!\d)\d{6}(?!\d)|(?<!\d)\d{3}\s\d{3}(?!\d)|\b(?:flat|plot|h\.?\s?no|house\s+no|door\s+no|apartment|apt|"
+    r"nagar|colony|layout|vihar|enclave|marg|chowk|village|vill|tehsil|taluk|mandal|opp(?:osite)?)\b\.?",
+    re.I,
+)
+# Words that only mean "address" next to a house/plot number ("Sector 21", "12 MG Road", not "FMCG sector").
+_WEAK_ADDRESS_RE = re.compile(r"\b(?:street|st|road|rd|lane|sector|block|floor|near|behind|post|p\.o|dist(?:rict)?)\b\.?", re.I)
+_HEADER_SEGMENT_RE = re.compile(r"[^|•·\u2022]+")
+# Within one line only: with "\s" the trailing "City, State" part ran on into the next lines and
+# swallowed whole sections ("12 Main Road, Cuttack" + "Skills" + "Tally" became one redaction).
 _STREET_RE = re.compile(
-    r"\b\d{1,5}[A-Za-z]?(?:/\d+)?,?\s+(?:[A-Z][\w.'\-]*\s+){0,4}"
+    r"\b\d{1,5}[A-Za-z]?(?:/\d+)?,?[ \t]+(?:[A-Z][\w.'\-]*[ \t]+){0,4}"
     r"(?:Street|St|Road|Rd|Avenue|Ave|Lane|Ln|Boulevard|Blvd|Drive|Nagar|Colony|Marg|Sector|Block|Layout|Enclave|Vihar)\b\.?"
-    r"(?:,?\s*[A-Z][\w.'\-]*(?:\s+[A-Z][\w.'\-]*){0,2}){0,3}(?:[\s,\-]*\d{5,6})?"
+    r"(?:,?[ \t]*[A-Z][\w.'\-]*(?:[ \t]+[A-Z][\w.'\-]*){0,2}){0,3}(?:[ \t,\-]*\d{5,6})?"
 )
 _POSTCODE_RE = re.compile(r"(?<![\d\-/])\b\d{6}\b(?![\-/]\d)|(?<![\d\-/])\b\d{5}(?:-\d{4})?\b(?![\-/]\d)")
-_NAME_LABEL_RE = re.compile(r"^\s*(?:full\s+)?name\s*[:\-]\s*(?P<name>[A-Za-z][A-Za-z .'\-]{1,60})$", re.I)
+_NAME_LABEL_RE = re.compile(r"^\s*(?:full\s+|candidate'?s?\s+)?name\s*(?:[:\-]|\|)\s*(?P<name>[^\W\d_][^\W\d_ .'\-]{0,60}(?:[ .'\-]+[^\W\d_ .'\-]+){0,6})\s*$", re.I)
 _NOT_NAME_WORDS = {
     "resume", "curriculum", "vitae", "cv", "profile", "contact", "summary", "objective", "phone", "email", "mobile",
     "address", "linkedin", "github", "portfolio", "india", "remote",
@@ -78,12 +102,18 @@ class Contact:
     end: int
 
 
+_FAR_FUTURE = date(2100, 1, 1)
+
+
 def is_phone(candidate: str) -> bool:
     compact = candidate.strip()
     digits = re.sub(r"\D", "", compact)
     if not 8 <= len(digits) <= 15:
         return False
-    return not (_YEAR_RANGE_RE.match(compact) or _DATE_LIKE_RE.match(compact))
+    # "2019-06 - 2023-03", "2019.03 - 2021.06" or "01-04-2017" are dates, not phone numbers.
+    if _YEAR_RANGE_RE.match(compact) or _DATE_LIKE_RE.match(compact) or find_date_ranges(compact, _FAR_FUTURE):
+        return False
+    return True
 
 
 def _contact_occurrences(text: str) -> list[Contact]:
@@ -124,28 +154,50 @@ def scrub_contacts(text: str) -> str:
 
 
 def header_name_tokens(lines: list[Line], header_count: int) -> list[str]:
-    """The candidate's name tokens, taken from the header block (lines before the first heading)."""
+    return _header_name(lines, header_count)[0]
+
+
+def _header_name(lines: list[Line], header_count: int) -> tuple[list[str], str | None]:
+    """The candidate's name tokens, taken from the header block (lines before the first heading).
+
+    Accepts Unicode names ("José Álvarez"), initials ("K. Lakshmi", "Lakshmi K", "R. K. Narayan")
+    and lower-case particles ("Rahul de Souza"); initials and particles are not redacted on their
+    own, so "de" or "K" elsewhere in the resume stay."""
     limit = min(header_count, 6)
     for line in lines[:15]:
         labelled = _NAME_LABEL_RE.match(line.text)
-        if labelled:
-            return _name_words(labelled.group("name"))
+        if labelled and _name_words(labelled.group("name")):
+            return _name_words(labelled.group("name")), labelled.group("name").strip()
     for line in lines[:limit]:
         text = line.text
         if EMAIL_RE.search(text) or URL_RE.search(text) or re.search(r"\d|[|@:,;]", text) or len(text) > 45:
             continue
         words = _name_words(text)
-        raw_words = re.findall(r"[A-Za-z][A-Za-z.'\-]*", text)
-        if 2 <= len(words) <= 4 and len(raw_words) <= 5 and all(word[0].isupper() for word in raw_words):
-            if not any(word.lower() in _NOT_NAME_WORDS for word in raw_words):
-                if not has_title_word(text):
-                    return words
-    return []
+        raw_words = [word for word in _NAME_WORD_RE.findall(text) if word.lower() not in _HONORIFIC_WORDS]
+        initials = [word for word in raw_words if len(word) == 1]
+        if not 1 <= len(words) <= 4 or len(raw_words) > 6 or (len(words) == 1 and not initials):
+            continue
+        if not all(word[0].isupper() for word in raw_words if word.lower() not in _NAME_PARTICLES):
+            continue
+        if any(word.lower() in _NOT_NAME_WORDS for word in raw_words) or has_title_word(text) or detect_degree(text):
+            continue
+        if len(words) == 1 and _common_heading_or_skill(words[0]):
+            continue
+        return words, _HONORIFIC_PREFIX_RE.sub("", text.strip())
+    return [], None
+
+
+def _common_heading_or_skill(word: str) -> bool:
+    from app.pipeline.sections import lexicon_kind
+    from app.taxonomy.taxonomy import get_taxonomy
+
+    return lexicon_kind(word) is not None or get_taxonomy().lookup(word) is not None
 
 
 def _name_words(text: str) -> list[str]:
-    words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
-    return [word for word in words if len(word) >= 2 and word.lower() not in _HONORIFIC_WORDS]
+    words = _NAME_WORD_RE.findall(text)
+    return [word for word in words if len(word) >= 2 and word.lower() not in _HONORIFIC_WORDS
+            and word.lower() not in _NAME_PARTICLES]
 
 
 def find_redactions(text: str, lines: list[Line], header_count: int) -> list[Redaction]:
@@ -165,15 +217,28 @@ def find_redactions(text: str, lines: list[Line], header_count: int) -> list[Red
     add_all(_STREET_RE, "[address removed]", "address")
     for line in lines[: max(header_count, 3)]:
         add_all(_POSTCODE_RE, "[postcode]", "address", line.text, line.start)
+    for line in lines[:max(min(header_count, 8), 3)]:
+        for segment in _HEADER_SEGMENT_RE.finditer(line.text):
+            value = segment.group(0)
+            looks_like_address = _HEADER_ADDRESS_RE.search(value) or (_WEAK_ADDRESS_RE.search(value) and re.search(r"\d", value))
+            if value.strip() and looks_like_address and not EMAIL_RE.search(value) and not URL_RE.search(value) \
+                    and not find_date_ranges(value, _FAR_FUTURE) and not has_title_word(value):
+                left = len(value) - len(value.lstrip())
+                right = len(value.rstrip())
+                redactions.append(Redaction(line.start + segment.start() + left, line.start + segment.start() + right,
+                                            "[address removed]", "address"))
 
-    tokens = header_name_tokens(lines, header_count)
+    tokens, name_line = _header_name(lines, header_count)
+    if name_line and len(name_line) >= 4:  # the name exactly as written, initials included ("K. Lakshmi")
+        add_all(re.compile(r"(?<!" + _LETTER + r")" + r"\s+".join(map(re.escape, name_line.split())) + r"(?!" + _LETTER + r")",
+                           re.I), "[name]", "name")
     if tokens:
-        full = re.compile(r"\b" + r"\s+".join(re.escape(token) for token in tokens) + r"\b")
+        full = re.compile(r"(?<!" + _LETTER + r")" + r"\s+".join(re.escape(token) for token in tokens) + r"(?!" + _LETTER + r")")
         add_all(full, "[name]", "name")
         for token in sorted(set(tokens), key=len, reverse=True):
             variants = {token, token.upper()}
             for variant in variants:
-                add_all(re.compile(r"(?<![A-Za-z])" + re.escape(variant) + r"(?![A-Za-z])"), "[name]", "name")
+                add_all(re.compile(r"(?<!" + _LETTER + r")" + re.escape(variant) + r"(?!" + _LETTER + r")"), "[name]", "name")
     for match in _HONORIFIC_RE.finditer(text):
         redactions.append(Redaction(match.start(), match.end(), "Mx.", "honorific"))
     for match in _PRONOUN_RE.finditer(text):
@@ -184,14 +249,20 @@ def find_redactions(text: str, lines: list[Line], header_count: int) -> list[Red
     return _non_overlapping(redactions)
 
 
+_KIND_PRIORITY = {"pronoun": 0, "honorific": 0}  # everything else identifies a person and wins an overlap
+
+
 def _non_overlapping(redactions: list[Redaction]) -> list[Redaction]:
+    """Merge overlapping redactions into one covering their union (never leave an overlapped tail
+    unredacted); the merged span keeps the replacement of its first identifying member."""
     ordered = sorted(redactions, key=lambda item: (item.start, -(item.end - item.start)))
     result: list[Redaction] = []
     for item in ordered:
         if result and item.start < result[-1].end:
-            if item.end > result[-1].end and item.kind == result[-1].kind:
-                last = result.pop()
-                result.append(Redaction(last.start, item.end, last.replacement, last.kind))
+            last = result[-1]
+            if item.end > last.end:
+                keep = last if _KIND_PRIORITY.get(last.kind, 1) >= _KIND_PRIORITY.get(item.kind, 1) else item
+                result[-1] = Redaction(last.start, item.end, keep.replacement, keep.kind)
             continue
         result.append(item)
     return result

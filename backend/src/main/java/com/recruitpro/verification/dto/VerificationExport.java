@@ -22,7 +22,7 @@ public record VerificationExport(List<Source> sources, List<Run> runs, List<Evid
     public record Source(Long id, String kind, String identifier, String displayLabel, String ownershipStatus,
                          String ownershipMethod, LocalDateTime ownershipCheckedAt, boolean accessTokenStored,
                          String tokenScopes, String consentTextVersion, LocalDateTime consentedAt, LocalDateTime revokedAt,
-                         LocalDateTime createdAt) {
+                         LocalDateTime createdAt, String ownershipDetail) {
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -39,7 +39,8 @@ public record VerificationExport(List<Source> sources, List<Run> runs, List<Evid
     public record Verdict(Long id, String subjectType, Long subjectId, String claimType, String claimValue, Long sourceId,
                           Long referenceId, Long runId, String verifier, String verifierVersion, String verdict,
                           boolean ownershipProven, JsonNode reasons, JsonNode integrityNotes, String probeQuestion,
-                          String candidateStatus, String candidateNote, boolean current, LocalDateTime createdAt) {
+                          String candidateStatus, String candidateNote, boolean current, LocalDateTime createdAt,
+                          JsonNode domainTrust) {
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)

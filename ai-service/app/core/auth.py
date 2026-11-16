@@ -40,15 +40,23 @@ class InternalTokenMiddleware:
         self.prefix = protected_prefix
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope.get("path", "").startswith(self.prefix):
+        if scope["type"] not in ("http", "websocket") or not scope.get("path", "").startswith(self.prefix):
             await self.app(scope, receive, send)
             return
         settings = load_settings()
+        token = _header(scope, TOKEN_HEADER)
+        authorised = bool(settings.ai_service_token) and token is not None and \
+            hmac.compare_digest(token, settings.ai_service_token.encode())
+        if scope["type"] == "websocket":  # there are no websocket routes; never let one past the token check
+            if not authorised:
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            await self.app(scope, receive, send)
+            return
         if not settings.ai_service_token:
             await _reject(send, 503, "Internal service authentication is not configured")
             return
-        token = _header(scope, TOKEN_HEADER)
-        if token is None or not hmac.compare_digest(token, settings.ai_service_token.encode()):
+        if not authorised:
             await _reject(send, 401, "Internal service authentication failed")
             return
         limit = settings.max_upload_bytes + BODY_OVERHEAD_BYTES
@@ -63,6 +71,8 @@ class InternalTokenMiddleware:
 
         async def limited_receive() -> Message:
             nonlocal received, overflow
+            if overflow:  # once cut off, the body stays cut off
+                return {"type": "http.disconnect"}
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))

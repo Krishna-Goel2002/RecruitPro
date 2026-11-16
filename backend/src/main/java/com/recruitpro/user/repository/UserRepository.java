@@ -18,6 +18,14 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificationExecutor<User> {
     Optional<User> findByEmail(String email);
 
+    /**
+     * Locks one user row (PESSIMISTIC_WRITE) so that concurrent failed sign-ins cannot overwrite each other's
+     * increment of {@code failed_login_count} (R1-H1).
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from User u where u.id = :id")
+    Optional<User> lockById(@Param("id") Long id);
+
     boolean existsByEmail(String email);
 
     boolean existsByEmailIgnoreCase(String email);

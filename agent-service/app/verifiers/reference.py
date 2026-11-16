@@ -22,7 +22,7 @@ from app.deidentify import Identities
 from app.evidence import make_item
 from app.models import EvidenceItem, IntegrityNote, Reason, ReferenceVerifyRequest, Usage
 from app.network import Network
-from app.trust import DomainTrust, assess_employer_domain
+from app.trust import PUBLIC_SECOND_LEVEL, DomainTrust, assess_employer_domain
 from app.verdicts import DraftVerdict, VerifierOutput
 
 TRUST_REQUESTS = 12  # bootstrap + up to 3 RDAP queries + home page (2 hosts, robots, redirects)
@@ -36,6 +36,14 @@ FREE_MAIL_DOMAINS = frozenset({
     "163.com", "126.com", "tutanota.com", "tuta.io", "fastmail.com", "hey.com", "inbox.com", "libero.it",
     "orange.fr", "free.fr", "t-online.de", "btinternet.com", "comcast.net", "verizon.net", "att.net",
 })
+# Consumer mail brands that exist under many country domains (hotmail.fr, outlook.de, yahoo.com.br, gmx.at, ...): the
+# exact list above cannot hold them all, and such a domain is aged, has MX and a home page naming its (big) owner, so
+# it would pass the employer-domain trust check while anyone can open a mailbox there.
+FREE_MAIL_BRANDS = frozenset({
+    "gmail", "googlemail", "hotmail", "outlook", "live", "msn", "windowslive", "yahoo", "ymail", "rocketmail", "aol",
+    "gmx", "yandex", "icloud", "protonmail", "proton", "rediffmail", "zohomail", "mail", "inbox", "rambler", "seznam",
+    "laposte", "libero", "virgilio", "naver", "hanmail", "daum", "tutanota", "tuta", "posteo", "mailfence",
+})
 ANCHOR_RELATIONSHIPS = {"MANAGER", "PEER", "CLIENT"}
 
 
@@ -47,7 +55,16 @@ def normalise_domain(domain: str | None) -> str:
 
 
 def is_free_mail(domain: str | None) -> bool:
-    return normalise_domain(domain) in FREE_MAIL_DOMAINS
+    """A listed free-mail domain, or a free-mail brand under a country/generic suffix (``hotmail.fr``,
+    ``outlook.co.uk``, ``yahoo.com.br``: the brand label followed by one or two short labels)."""
+    value = normalise_domain(domain)
+    if value in FREE_MAIL_DOMAINS:
+        return True
+    labels = value.split(".")
+    if len(labels) == 2:
+        return labels[0] in FREE_MAIL_BRANDS and 2 <= len(labels[1]) <= 3
+    return (len(labels) == 3 and labels[0] in FREE_MAIL_BRANDS and labels[1] in PUBLIC_SECOND_LEVEL
+            and len(labels[2]) == 2)
 
 
 def domains_match(email_domain: str | None, employer_domain: str | None) -> bool:

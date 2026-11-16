@@ -331,8 +331,9 @@ export function ClaimVerifyActions({ jobId, detail, claim, size = 'sm' }: { jobI
 
   function submit(event: FormEvent) {
     event.preventDefault()
-    if (mode != null) verify.mutate(mode)
+    if (mode != null && !verify.isPending) verify.mutate(mode)
   }
+  const noteId = useId()
 
   return (
     <div className="ap-claim-actions">
@@ -348,9 +349,9 @@ export function ClaimVerifyActions({ jobId, detail, claim, size = 'sm' }: { jobI
           <p className="ap-pop-sub">
             {mode ? 'Raises it to Corroborated for your organisation, recorded with your name in the audit log.' : 'It stays at Claimed and does not count as verified evidence.'}
           </p>
-          <label className="t-label" htmlFor={`${claim.id}-note`}>Note <span className="ap-muted">(optional)</span></label>
+          <label className="t-label" htmlFor={noteId}>Note <span className="ap-muted">(optional)</span></label>
           <Textarea
-            id={`${claim.id}-note`}
+            id={noteId}
             rows={2}
             maxRows={5}
             maxLength={500}
@@ -359,7 +360,7 @@ export function ClaimVerifyActions({ jobId, detail, claim, size = 'sm' }: { jobI
             placeholder={mode ? 'What did you check? e.g. badge ID matches the issuer record' : 'Why it could not be verified'}
             onChange={event => setNote(event.target.value)}
             onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 event.currentTarget.form?.requestSubmit()
               }

@@ -58,9 +58,11 @@ public class CandidatePrivacyController {
     @Operation(summary = "Delete your account: anonymises it and deletes files, facts, claims and survey answers")
     public ApiResponse<Void> delete(@Valid @RequestBody DeleteAccountRequest request,
                                     HttpServletRequest httpRequest, HttpServletResponse response) {
+        // R5#2: resolve the portal first, so an invalid X-RecruitPro-Portal header is a 400 before anything is deleted.
+        Portal portal = Portal.from(httpRequest);
         deletionService.deleteMyAccount(request.password());
         // The tokens are already revoked; clear the cookie of the portal the request came from (rp_refresh without one).
-        refreshTokenCookies.clear(Portal.from(httpRequest), response);
+        refreshTokenCookies.clear(portal, response);
         return ApiResponse.success("Your account was deleted");
     }
 }

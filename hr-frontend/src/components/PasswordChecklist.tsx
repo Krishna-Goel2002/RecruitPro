@@ -7,6 +7,9 @@ import './hra.css'
  */
 export function passwordRules(password: string) {
   const bytes = new TextEncoder().encode(password).length
+  // The server checks whole code points (R6-B7: Character.isLetter/isDigit over codePoints(), the same as its DTO
+  // regex), so a letter outside the Basic Multilingual Plane counts, as it does in /\p{L}/u. The length rule counts
+  // UTF-16 units on both sides (Java String.length(), JS string length).
   return [
     { id: 'length', label: 'At least 10 characters', met: password.length >= 10 },
     { id: 'letter', label: 'A letter', met: /\p{L}/u.test(password) },

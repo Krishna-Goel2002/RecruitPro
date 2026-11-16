@@ -10,19 +10,28 @@
 * DOC - converted with LibreOffice when ``soffice`` is available (then parsed as DOCX, so hidden
   text is still detected); otherwise the Word 97 piece table is read with ``olefile``. Both report
   ``LEGACY_DOC``.
-* Image-only documents are OCR'd when ``OCR_ENABLED=true`` and rapidocr is installed
-  (``OCR_USED``); otherwise the result is ``NEEDS_OCR``.
+* Image-only documents (and pages whose text was converted to vector outlines) are OCR'd when
+  ``OCR_ENABLED=true`` and rapidocr is installed (``OCR_USED``); otherwise, or when OCR itself fails,
+  the result is ``NEEDS_OCR``.
+* The format is taken from the file's magic bytes, not its extension: a DOCX renamed to .doc, a PDF
+  with leading junk, an RTF (LibreOffice only) or an HTML page saved as .doc are all read. DOCX table
+  rows whose cells hold one line each become one line ("Staff Nurse | Apollo | 2018 - 2021"), and
+  first-page/even-page headers are read when Word displays them (otherwise they are hidden text).
 """
 from __future__ import annotations
 
 import io
+import logging
+import os
 import re
+import signal
 import statistics
 import struct
 import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -34,6 +43,8 @@ from app.core.config import Settings
 from app.pipeline import ocr
 from app.pipeline.text import Flag, RawLine
 
+logger = logging.getLogger(__name__)
+
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_UNCOMPRESSED_DOCX_BYTES = 100 * 1024 * 1024
 MAX_DOCX_ENTRIES = 1000
@@ -44,6 +55,11 @@ LOW_DENSITY_CHARS_PER_PAGE = 200
 HIDDEN_LUMINANCE = 0.95
 HIDDEN_FONT_SIZE = 4.0
 SUPPORTED_EXTENSIONS = ("pdf", "docx", "doc")
+# A page whose only "text" is many vector paths (text converted to outlines, e.g. design-tool exports)
+# looks empty to a text extractor; it needs OCR like a scan.
+VECTOR_TEXT_PATHS = 150
+LIBREOFFICE_MAX_SECONDS = 60
+_OLE_MAGIC = bytes.fromhex("D0CF11E0A1B11AE1")
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
@@ -75,6 +91,27 @@ def extension_of(filename: str) -> str:
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
 
+def sniff_format(content: bytes) -> str | None:
+    """The real format from the file's magic bytes: pdf, docx (any ZIP), doc (OLE2), rtf, html or None.
+
+    Candidates routinely upload a DOCX renamed to .doc, an RTF or HTML file saved as .doc by an old
+    word processor, or a PDF with a byte-order mark or junk before ``%PDF-`` (readers accept the
+    header anywhere in the first 1024 bytes)."""
+    head = content[:1024]
+    if content.startswith(b"PK\x03\x04"):
+        return "docx"
+    if content.startswith(_OLE_MAGIC):
+        return "doc"
+    if b"%PDF-" in head:
+        return "pdf"
+    stripped = head.lstrip(b"\xef\xbb\xbf\r\n\t ").lower()
+    if stripped.startswith(b"{\\rtf"):
+        return "rtf"
+    if stripped.startswith((b"<html", b"<!doctype html", b"mime-version:")) or b"<html" in stripped[:400]:
+        return "html"
+    return None
+
+
 def ingest(filename: str, content: bytes, settings: Settings, ocr_engine: ocr.OcrEngine | None = None) -> IngestResult:
     extension = extension_of(filename)
     if extension not in SUPPORTED_EXTENSIONS:
@@ -84,12 +121,17 @@ def ingest(filename: str, content: bytes, settings: Settings, ocr_engine: ocr.Oc
     if len(content) > MAX_FILE_BYTES:
         raise DocumentParseError("FILE_TOO_LARGE")
     engine = ocr_engine or (ocr.get_engine() if settings.ocr_enabled and ocr.ocr_installed() else None)
-    if extension == "pdf":
+    kind = sniff_format(content) or extension
+    if kind == "pdf":
         result = _read_pdf(content, engine)
-    elif extension == "docx":
+    elif kind == "docx":
         result = _read_docx(content, engine)
-    else:
+    elif kind == "doc":
         result = _read_doc(content, settings, engine)
+    elif kind == "html":  # a web page saved as ".doc"; read directly (LibreOffice would fetch linked resources)
+        result = _read_html(content)
+    else:  # RTF (usually a ".doc" saved by another word processor): only LibreOffice reads it
+        result = _read_via_libreoffice(content, kind, settings, engine)
     if result.text_length > MAX_TEXT_CHARACTERS:
         raise DocumentParseError("TEXT_LIMIT_EXCEEDED")
     if result.text_length == 0 and not result.has_images and not result.needs_ocr:
@@ -256,7 +298,7 @@ def _layout_lines(words: list[dict[str, Any]], width: float, reference: str, bod
 
 
 def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
-    if not content.startswith(b"%PDF-"):
+    if b"%PDF-" not in content[:1024]:
         raise DocumentParseError("MALFORMED_PDF")
     result = IngestResult("pdf")
     hidden_parts: list[str] = []
@@ -268,8 +310,11 @@ def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
             if len(pdf.pages) > MAX_PDF_PAGES:
                 raise DocumentParseError("FILE_TOO_COMPLEX")
             characters = 0
+            vector_paths = 0
             for number, page in enumerate(pdf.pages, start=1):
                 result.has_images = result.has_images or bool(page.images)
+                if vector_paths < VECTOR_TEXT_PATHS:
+                    vector_paths += len(page.curves)
                 hidden_ids, hidden_text = _hidden_char_ids(page)
                 if hidden_text.strip():
                     hidden_parts.append(hidden_text)
@@ -286,9 +331,10 @@ def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
                 characters += sum(len(word["text"]) for word in words)
                 if characters > MAX_TEXT_CHARACTERS:
                     raise DocumentParseError("TEXT_LIMIT_EXCEEDED")
-            if result.text_length < MIN_TEXT_CHARACTERS and result.has_images:
-                if engine is not None:
-                    result.lines = ocr.ocr_pdf_pages(pdf, engine, MAX_PDF_PAGES)
+            if result.text_length < MIN_TEXT_CHARACTERS and (result.has_images or vector_paths >= VECTOR_TEXT_PATHS):
+                recognised = _run_ocr(lambda: ocr.ocr_pdf_pages(pdf, engine, MAX_PDF_PAGES)) if engine is not None else None
+                if recognised is not None:
+                    result.lines = recognised
                     result.flags.append(Flag("OCR_USED", "Text was recognised from page images with OCR; check evidence carefully."))
                 else:
                     result.needs_ocr = True
@@ -305,6 +351,15 @@ def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
         result.flags.append(Flag("TWO_COLUMN_LAYOUT", f"Two-column layout detected on page(s) {', '.join(map(str, two_column_pages))}; "
                                                       "columns were read left then right."))
     return result
+
+
+def _run_ocr(recognise: Any) -> list[RawLine] | None:
+    """Run an OCR callable; an OCR failure (bad image data, engine error) means "needs OCR", never a crash."""
+    try:
+        return list(recognise())
+    except Exception:  # noqa: BLE001 - the optional OCR stack raises arbitrary errors on odd images
+        logger.warning("OCR failed; the document is reported as needing OCR", exc_info=True)
+        return None
 
 
 def _add_hidden_flag(result: IngestResult) -> None:
@@ -449,6 +504,66 @@ def _walk_paragraphs(root: Any) -> Iterator[Any]:
         yield paragraph
 
 
+MAX_TABLE_ROW_CHARACTERS = 300
+
+
+def _simple_row(row: Any) -> bool:
+    """A table row whose cells each hold at most one line of text (e.g. "Staff Nurse | Apollo | 2018 - 2021").
+
+    Such a row is read as one line, cells joined by " | ", so a role, its employer and its dates stay
+    together. Layout tables (cells with several paragraphs or nested tables) are read cell by cell."""
+    filled = 0
+    length = 0
+    for cell in row.findall(f"{_W}tc"):
+        if cell.find(f".//{_W}tbl") is not None:
+            return False
+        texts = ["".join(node.text or "" for node in paragraph.iter(f"{_W}t")) for paragraph in cell.iter(f"{_W}p")]
+        texts = [text for text in texts if text.strip()]
+        if len(texts) > 1:
+            return False
+        filled += len(texts)
+        length += sum(len(text) for text in texts)
+    return filled >= 2 and length <= MAX_TABLE_ROW_CHARACTERS
+
+
+def _nearest_row(paragraph: Any) -> Any | None:
+    return next((ancestor for ancestor in paragraph.iterancestors() if ancestor.tag == f"{_W}tr"), None)
+
+
+def _root_lines(root: Any, styles: _StyleResolver) -> tuple[list[RawLine], list[str]]:
+    """Visible lines and hidden runs of one story (body, header or footer), simple table rows joined."""
+    # Keep the row proxies alive: lxml only guarantees a stable proxy (and id) while one is referenced.
+    rows = [row for row in root.iter(f"{_W}tr") if _simple_row(row)]
+    simple_rows = {id(row) for row in rows}
+    lines: list[RawLine] = []
+    hidden_parts: list[str] = []
+    row_owner: Any = None
+    row_cells: list[RawLine] = []
+
+    def flush_row() -> None:
+        nonlocal row_owner
+        if row_cells:
+            lines.append(RawLine(" | ".join(cell.text.strip() for cell in row_cells), None, False, row_cells[0].style_key))
+        row_cells.clear()
+        row_owner = None
+
+    for paragraph in _walk_paragraphs(root):
+        paragraph_lines, hidden = _paragraph_lines(paragraph, styles)
+        if hidden.strip():
+            hidden_parts.append(hidden)
+        row = _nearest_row(paragraph)
+        if row is not None and id(row) in simple_rows:
+            if row is not row_owner:
+                flush_row()
+                row_owner = row
+            row_cells.extend(paragraph_lines)
+            continue
+        flush_row()
+        lines.extend(paragraph_lines)
+    flush_row()
+    return lines, hidden_parts
+
+
 def _read_docx(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
     if not content.startswith(b"PK"):
         raise DocumentParseError("MALFORMED_DOCX")
@@ -471,44 +586,69 @@ def _read_docx(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
     result = IngestResult("docx", has_images=bool(media))
     styles = _StyleResolver(document)
     hidden_parts: list[str] = []
-    roots: list[Any] = []
-    for section in document.sections:
-        if not section.header.is_linked_to_previous:
-            roots.append(section.header._element)
-    roots.append(document.element.body)
-    for section in document.sections:
-        if not section.footer.is_linked_to_previous:
-            roots.append(section.footer._element)
+    headers, footers, never_shown = _header_footer_parts(document)
     seen_header_text: set[str] = set()
-    for root in roots:
-        block: list[RawLine] = []
-        for paragraph in _walk_paragraphs(root):
-            lines, hidden = _paragraph_lines(paragraph, styles)
-            block.extend(lines)
-            if hidden.strip():
-                hidden_parts.append(hidden)
+    for root in headers + [document.element.body] + footers:
+        block, hidden = _root_lines(root, styles)
+        hidden_parts.extend(hidden)
         key = "\n".join(line.text for line in block)
         if root is not document.element.body and key in seen_header_text:
             continue
         seen_header_text.add(key)
         result.lines.extend(block)
+    for root in never_shown:  # a first-page/even-page header Word never displays is hidden text ...
+        block, hidden = _root_lines(root, styles)
+        if "\n".join(line.text for line in block) in seen_header_text:
+            continue  # ... unless it merely repeats a header that is displayed (common in templates)
+        hidden_parts.extend([line.text for line in block] + hidden)
     result.hidden_text = " ".join(hidden_parts)
     _add_hidden_flag(result)
     if result.text_length < MIN_TEXT_CHARACTERS and result.has_images:
-        if engine is not None and images:
-            result.lines.extend(ocr.ocr_images(images, engine))
+        recognised = _run_ocr(lambda: ocr.ocr_images(images, engine)) if engine is not None and images else None
+        if recognised is not None:
+            result.lines.extend(recognised)
             result.flags.append(Flag("OCR_USED", "Text was recognised from embedded images with OCR; check evidence carefully."))
         else:
             result.needs_ocr = True
     return result
 
 
+def _header_footer_parts(document: Any) -> tuple[list[Any], list[Any], list[Any]]:
+    """(headers, footers, defined-but-never-displayed parts) of every section, in order.
+
+    Besides the default header/footer, a section can define a first-page header (shown only with
+    "different first page") and an even-page header (shown only with "different odd and even pages");
+    resumes often keep the contact block in the first-page header."""
+    try:
+        even_pages = bool(document.settings.odd_and_even_pages_header_footer)
+    except Exception:  # noqa: BLE001 - a missing or odd settings part simply means "no even pages"
+        even_pages = False
+    headers: list[Any] = []
+    footers: list[Any] = []
+    never_shown: list[Any] = []
+    for section in document.sections:
+        first_page = bool(section.different_first_page_header_footer)
+        for kind, target in (("header", headers), ("footer", footers)):
+            for attribute, shown in ((f"first_page_{kind}", first_page), (kind, True), (f"even_page_{kind}", even_pages)):
+                part = getattr(section, attribute)
+                if part.is_linked_to_previous:
+                    continue
+                (target if shown else never_shown).append(part._element)
+    return headers, footers, never_shown
+
+
 # ---------------------------------------------------------------------------------------- DOC
+def _libreoffice_seconds(settings: Settings) -> float:
+    """Conversion budget: well inside the parse time-out, so the worker (not the pool's time-out)
+    stops LibreOffice and never leaves an orphaned soffice process behind."""
+    return max(5.0, min(float(LIBREOFFICE_MAX_SECONDS), settings.parse_timeout_seconds * 0.6))
+
+
 def _read_doc(content: bytes, settings: Settings, engine: ocr.OcrEngine | None) -> IngestResult:
     if not olefile.isOleFile(data=content):
         raise DocumentParseError("MALFORMED_DOC")
     if settings.soffice_path:
-        converted = _convert_with_libreoffice(content, settings.soffice_path)
+        converted = _convert_with_libreoffice(content, settings.soffice_path, "doc", _libreoffice_seconds(settings))
         if converted is not None:
             try:
                 result = _read_docx(converted, engine)
@@ -525,20 +665,127 @@ def _read_doc(content: bytes, settings: Settings, engine: ocr.OcrEngine | None) 
     return result
 
 
-def _convert_with_libreoffice(content: bytes, soffice: str) -> bytes | None:
+class _HtmlText(HTMLParser):
+    """Visible text of an HTML document as lines; display:none / visibility:hidden content is hidden text."""
+
+    _BLOCKS = frozenset({"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article",
+                         "header", "footer", "ul", "ol", "table", "blockquote", "pre", "dt", "dd"})
+    _SKIP = frozenset({"script", "style", "head", "title", "noscript", "template"})
+    _VOID = frozenset({"br", "img", "hr", "meta", "link", "input", "col", "area", "base", "wbr", "source"})
+    _HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?![.\d]*[1-9])", re.I)
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.lines: list[str] = []
+        self.hidden: list[str] = []
+        self._current: list[str] = []
+        self._stack: list[tuple[str, bool]] = []  # (tag, hides its content)
+
+    def _hidden(self) -> bool:
+        return any(hides for _, hides in self._stack)
+
+    def _break(self) -> None:
+        text = " ".join("".join(self._current).split())
+        if text:
+            self.lines.append(text)
+        self._current = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        hides = tag in self._SKIP or "hidden" in values or bool(self._HIDDEN_STYLE.search(values.get("style") or ""))
+        if tag in self._BLOCKS:
+            self._break()
+        if tag in ("td", "th") and self._current and "".join(self._current).strip():
+            self._current.append(" | ")
+        if tag not in self._VOID:
+            self._stack.append((tag, hides))
+
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self._stack) - 1, -1, -1):
+            if self._stack[index][0] == tag:
+                del self._stack[index:]
+                break
+        if tag in self._BLOCKS:
+            self._break()
+
+    def handle_data(self, data: str) -> None:
+        if self._hidden():
+            if self._stack and self._stack[-1][0] not in self._SKIP and data.strip():
+                self.hidden.append(data.strip())
+            return
+        self._current.append(data)
+
+    def close(self) -> None:
+        super().close()
+        self._break()
+
+
+def _read_html(content: bytes) -> IngestResult:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        text = content.decode("cp1252", errors="replace")
+    parser = _HtmlText()
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception:  # noqa: BLE001 - html.parser is lenient; anything left is a damaged file
+        raise DocumentParseError("MALFORMED_DOC") from None
+    result = IngestResult("doc", lines=[RawLine(line) for line in parser.lines])
+    result.hidden_text = " ".join(parser.hidden)
+    _add_hidden_flag(result)
+    result.flags.append(Flag("LEGACY_DOC", "The file is a web page (HTML) saved under a Word file name; its text was read "
+                                           "without layout. Ask for a PDF or DOCX if evidence looks incomplete."))
+    return result
+
+
+def _read_via_libreoffice(content: bytes, kind: str, settings: Settings, engine: ocr.OcrEngine | None) -> IngestResult:
+    """RTF uploaded under a .doc/.docx/.pdf name: converted with LibreOffice when available."""
+    if not settings.soffice_path:
+        raise DocumentParseError("UNSUPPORTED_FORMAT")
+    converted = _convert_with_libreoffice(content, settings.soffice_path, kind, _libreoffice_seconds(settings))
+    if converted is None:
+        raise DocumentParseError("UNSUPPORTED_FORMAT")
+    result = _read_docx(converted, engine)
+    result.kind = "doc"
+    result.flags.append(Flag("LEGACY_DOC", f"The file is {kind.upper()} rather than its file extension's format; it was "
+                                           "converted with LibreOffice before analysis."))
+    return result
+
+
+def _convert_with_libreoffice(content: bytes, soffice: str, suffix: str = "doc",
+                              timeout: float = LIBREOFFICE_MAX_SECONDS) -> bytes | None:
     with tempfile.TemporaryDirectory(prefix="recruitpro-doc-") as directory:
         workdir = Path(directory)
-        source = workdir / "resume.doc"
+        source = workdir / f"resume.{suffix}"
         source.write_bytes(content)
-        command = [soffice, "--headless", "--norestore", "--nologo", "--nolockcheck",
+        command = [soffice, "--headless", "--norestore", "--nologo", "--nolockcheck", "--nodefault",
                    f"-env:UserInstallation={(workdir / 'profile').as_uri()}",
-                   "--convert-to", "docx", "--outdir", str(workdir), str(source)]
+                   "--convert-to", "docx:MS Word 2007 XML", "--outdir", str(workdir), str(source)]
         try:
-            subprocess.run(command, capture_output=True, timeout=60, check=False)
-        except (OSError, subprocess.SubprocessError):
+            # Own process group, so a time-out kills LibreOffice's helper processes too.
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       stdin=subprocess.DEVNULL, start_new_session=True)
+        except OSError:
+            return None
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_group(process)
             return None
         target = workdir / "resume.docx"
         return target.read_bytes() if target.exists() else None
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (AttributeError, OSError):  # no process groups (Windows) or already gone
+        process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def _doc_text(content: bytes) -> str:
@@ -561,6 +808,13 @@ def _doc_text(content: bytes) -> str:
         raise
     except Exception:
         raise DocumentParseError("MALFORMED_DOC") from None
+    try:
+        return _doc_pieces(word, table)
+    except struct.error:  # a truncated or inconsistent piece table
+        raise DocumentParseError("MALFORMED_DOC") from None
+
+
+def _doc_pieces(word: bytes, table: bytes) -> str:
     fc_clx, lcb_clx = struct.unpack_from("<II", word, 0x01A2)
     clx = table[fc_clx:fc_clx + lcb_clx]
     index = 0
@@ -575,6 +829,7 @@ def _doc_text(content: bytes) -> str:
         raise DocumentParseError("MALFORMED_DOC")
     positions = struct.unpack_from(f"<{count + 1}I", plc, 0)
     pieces: list[str] = []
+    total = 0
     for piece in range(count):
         fc = struct.unpack_from("<I", plc, 4 * (count + 1) + 8 * piece + 2)[0]
         length = positions[piece + 1] - positions[piece]
@@ -585,7 +840,8 @@ def _doc_text(content: bytes) -> str:
             pieces.append(word[start:start + length].decode("cp1252", errors="replace"))
         else:
             pieces.append(word[fc:fc + 2 * length].decode("utf-16-le", errors="replace"))
-        if sum(map(len, pieces)) > MAX_TEXT_CHARACTERS:
+        total += len(pieces[-1])
+        if total > MAX_TEXT_CHARACTERS:
             raise DocumentParseError("TEXT_LIMIT_EXCEEDED")
     text = "".join(pieces)
     text = re.sub(r"\x13[^\x14\x15]*\x14", "", text)  # field instructions; keep the displayed result

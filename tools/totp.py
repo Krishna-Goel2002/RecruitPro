@@ -10,6 +10,7 @@ Standard library only. Never use it for real accounts: the secret is a password.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import struct
@@ -40,8 +41,13 @@ def main() -> int:
         print(__doc__)
         return 2
     secret = secret_from(sys.argv[1])
+    try:
+        code = totp(secret)
+    except (binascii.Error, ValueError):
+        print("Not a Base32 secret (letters A-Z and digits 2-7). Copy the setup key or the whole otpauth:// link.")
+        return 2
     remaining = 30 - int(time.time()) % 30
-    print(f"{totp(secret)}  (valid for about {remaining} more seconds)")
+    print(f"{code}  (valid for about {remaining} more seconds)")
     return 0
 
 

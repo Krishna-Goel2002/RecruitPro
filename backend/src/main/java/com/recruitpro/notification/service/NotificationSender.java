@@ -10,7 +10,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -44,10 +43,15 @@ public class NotificationSender {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationSender.class);
     private static final Pattern TOKEN_PARAMETER = Pattern.compile("(token=)[A-Za-z0-9_\\-]+");
+    /** Referee links carry their one-time token as a path segment: {@code <candidate-url>/reference/<token>}. */
+    private static final Pattern REFERENCE_TOKEN = Pattern.compile("(/reference/)[A-Za-z0-9_\\-]{16,}");
     private static final Pattern LINK = Pattern.compile("https?://\\S+");
     private static final int BATCH_SIZE = 20;
     /** How long a sender instance holds a claimed row; an instance that dies mid-send releases it by expiry. */
     static final Duration CLAIM_DURATION = Duration.ofMinutes(2);
+    /** Wait before the next attempt after a failed send: 1, 2, 4, 8 ... minutes, at most one hour. */
+    static final Duration RETRY_BASE = Duration.ofMinutes(1);
+    static final Duration RETRY_MAX = Duration.ofHours(1);
 
     private final NotificationRepository repository;
     private final ObjectProvider<JavaMailSender> mailSenderProvider;
@@ -127,8 +131,9 @@ public class NotificationSender {
             if (!claim(id)) {
                 continue;
             }
-            transactionTemplate.executeWithoutResult(status -> deliver(id));
-            processed++;
+            if (deliver(id)) {
+                processed++;
+            }
         }
         return processed;
     }
@@ -142,31 +147,33 @@ public class NotificationSender {
         return updated != null && updated == 1;
     }
 
-    private void deliver(Long id) {
-        Notification notification = repository.findById(id).orElse(null);
-        if (notification == null || notification.getStatus() != NotificationStatus.PENDING
-                || !instanceId.equals(notification.getClaimedBy())) {
-            return;
+    /**
+     * Delivers one claimed row. The row is read in one short transaction, the message is sent with no transaction (and
+     * no database connection) held open during the SMTP exchange, and the outcome is written in a second transaction.
+     * Returns false when the row was no longer pending or no longer held by this instance.
+     */
+    private boolean deliver(Long id) {
+        Notification notification = transactionTemplate.execute(status -> repository.findById(id)
+                .filter(row -> row.getStatus() == NotificationStatus.PENDING && instanceId.equals(row.getClaimedBy()))
+                .orElse(null));
+        if (notification == null) {
+            return false;
         }
-        notification.setClaimedBy(null);
-        notification.setClaimedUntil(null);
         if (!mailEnabled) {
             String body = logLinks ? notification.getBody() : redact(notification.getBody());
             log.info("Email delivery disabled (app.mail.enabled=false): {} to {} subject='{}' links={} attachment={}",
                     notification.getTemplate(), notification.getRecipientEmail(), notification.getSubject(),
                     links(body), notification.getAttachmentName());
-            notification.setStatus(NotificationStatus.SKIPPED);
-            notification.setSentAt(UtcTime.now());
-            notification.setBody(redact(notification.getBody()));
-            return;
+            recordOutcome(id, Outcome.SKIPPED);
+            return true;
         }
         JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
         if (mailSender == null) {
             log.warn("app.mail.enabled=true but no JavaMailSender is configured (spring.mail.host); notification {} failed", id);
-            notification.setAttempts(notification.getAttempts() + 1);
-            notification.setStatus(NotificationStatus.FAILED);
-            return;
+            recordOutcome(id, Outcome.MISCONFIGURED);
+            return true;
         }
+        Outcome outcome;
         try {
             if (notification.getAttachmentName() != null && notification.getAttachmentContent() != null) {
                 mailSender.send(mimeMessage(mailSender, notification));
@@ -178,18 +185,67 @@ public class NotificationSender {
                 message.setText(notification.getBody());
                 mailSender.send(message);
             }
-            notification.setAttempts(notification.getAttempts() + 1);
-            notification.setStatus(NotificationStatus.SENT);
-            notification.setSentAt(UtcTime.now());
-            notification.setBody(redact(notification.getBody()));
-        } catch (MailException | MessagingException ex) {
-            int attempts = notification.getAttempts() + 1;
-            notification.setAttempts(attempts);
-            if (attempts >= maxAttempts) {
-                notification.setStatus(NotificationStatus.FAILED);
-            }
-            log.warn("Sending notification {} failed (attempt {}): {}", id, attempts, ex.getClass().getSimpleName());
+            outcome = Outcome.SENT;
+        } catch (MessagingException | RuntimeException ex) {
+            // Any failure of one message (SMTP, an unparsable address, ...) counts as an attempt of that message only;
+            // it must neither abort the rest of the batch nor be retried forever without counting.
+            log.warn("Sending notification {} failed (attempt {}): {}", id, notification.getAttempts() + 1,
+                    ex.getClass().getSimpleName());
+            outcome = Outcome.FAILED_ATTEMPT;
         }
+        recordOutcome(id, outcome);
+        return true;
+    }
+
+    private enum Outcome { SENT, SKIPPED, MISCONFIGURED, FAILED_ATTEMPT }
+
+    /** Writes the delivery outcome and releases (or, for a retry, extends) this instance's claim. */
+    private void recordOutcome(Long id, Outcome outcome) {
+        transactionTemplate.executeWithoutResult(status -> repository.findById(id).ifPresent(notification -> {
+            if (notification.getStatus() != NotificationStatus.PENDING || !instanceId.equals(notification.getClaimedBy())) {
+                return;
+            }
+            LocalDateTime now = UtcTime.now();
+            notification.setClaimedBy(null);
+            notification.setClaimedUntil(null);
+            switch (outcome) {
+                case SKIPPED -> {
+                    notification.setStatus(NotificationStatus.SKIPPED);
+                    notification.setSentAt(now);
+                    notification.setBody(redact(notification.getBody()));
+                }
+                case SENT -> {
+                    notification.setAttempts(notification.getAttempts() + 1);
+                    notification.setStatus(NotificationStatus.SENT);
+                    notification.setSentAt(now);
+                    notification.setBody(redact(notification.getBody()));
+                }
+                case MISCONFIGURED -> {
+                    notification.setAttempts(notification.getAttempts() + 1);
+                    notification.setStatus(NotificationStatus.FAILED);
+                }
+                case FAILED_ATTEMPT -> {
+                    int attempts = notification.getAttempts() + 1;
+                    notification.setAttempts(attempts);
+                    if (attempts >= maxAttempts) {
+                        notification.setStatus(NotificationStatus.FAILED);
+                    } else {
+                        // Back off: the row stays held by this instance until the retry time, so neither this nor
+                        // another instance picks it up again within seconds (a short SMTP outage would otherwise use
+                        // up every attempt in under half a minute and drop the message).
+                        notification.setClaimedBy(instanceId);
+                        notification.setClaimedUntil(now.plus(retryDelay(attempts)));
+                    }
+                }
+            }
+        }));
+    }
+
+    /** Delay before the next attempt after {@code attempts} failed attempts: min(1 min x 2^(attempts-1), 1 h). */
+    static Duration retryDelay(int attempts) {
+        int exponent = Math.max(0, Math.min(attempts - 1, 10));
+        Duration delay = RETRY_BASE.multipliedBy(1L << exponent);
+        return delay.compareTo(RETRY_MAX) > 0 ? RETRY_MAX : delay;
     }
 
     /** Plain-text body plus the stored attachment (calendar invites: {@code text/calendar; method=...}). */
@@ -212,7 +268,8 @@ public class NotificationSender {
         if (body == null) {
             return null;
         }
-        return TOKEN_PARAMETER.matcher(body).replaceAll("$1[removed-after-delivery]");
+        String redacted = TOKEN_PARAMETER.matcher(body).replaceAll("$1[removed-after-delivery]");
+        return REFERENCE_TOKEN.matcher(redacted).replaceAll("$1[removed-after-delivery]");
     }
 
     private static List<String> links(String body) {

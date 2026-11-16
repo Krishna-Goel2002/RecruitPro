@@ -15,8 +15,10 @@ import com.recruitpro.user.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.Locale;
 
 /**
@@ -78,10 +80,17 @@ public class UserAccountService {
         return saved;
     }
 
-    /** Counts a failed sign-in; the fifth consecutive failure locks the account for 15 minutes. */
-    @Transactional
+    /**
+     * Counts a failed sign-in; the fifth consecutive failure locks the account for 15 minutes. The row is locked so
+     * that parallel failures each count (R1-H1), and the count is committed in its own transaction so that the
+     * caller's error (a 400/401 that rolls back the caller's transaction) cannot undo it (R1-H2).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordFailedLogin(Long userId) {
-        userRepository.findById(userId).ifPresent(user -> {
+        if (userId == null) {
+            return;
+        }
+        userRepository.lockById(userId).ifPresent(user -> {
             int failures = user.getFailedLoginCount() + 1;
             if (failures >= maxFailedAttempts) {
                 user.setFailedLoginCount(0);
@@ -93,6 +102,23 @@ public class UserAccountService {
                 user.setFailedLoginCount(failures);
             }
         });
+    }
+
+    /** Whether the account is locked right now ({@code locked_until} in the future). */
+    public static boolean isLocked(User user) {
+        return user != null && user.getLockedUntil() != null && user.getLockedUntil().isAfter(UtcTime.now());
+    }
+
+    /**
+     * Whole seconds until the lock ends (rounded up, at least 1), or 0 when the account is not locked: the
+     * {@code Retry-After} of a lockout 429.
+     */
+    public static long lockRemainingSeconds(User user) {
+        if (!isLocked(user)) {
+            return 0;
+        }
+        long millis = Duration.between(UtcTime.now(), user.getLockedUntil()).toMillis();
+        return Math.max(1, (millis + 999) / 1000);
     }
 
     @Transactional

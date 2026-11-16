@@ -1,6 +1,6 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.common import EvidenceTier, FactType, RequirementType
 from app.models.resume import Timeline
@@ -16,8 +16,16 @@ class MatchRequirement(BaseModel):
     mandatory: bool
     knockout: bool = False
     minimumYears: int | None = Field(default=None, ge=0, le=50)
-    alternatives: list[str] = Field(default_factory=list, max_length=10)
+    alternatives: list[Annotated[str, Field(max_length=500)]] = Field(default_factory=list, max_length=10)
     proficiency: str | None = Field(default=None, max_length=20)
+
+
+def _unique_requirement_ids(requirements: list[MatchRequirement]) -> list[MatchRequirement]:
+    """Requirement ids key the weights and the work-sample/interview links, so they must be unique."""
+    ids = [requirement.id for requirement in requirements]
+    if len(ids) != len(set(ids)):
+        raise ValueError("requirement ids must be unique")
+    return requirements
 
 
 class MatchFact(BaseModel):
@@ -36,6 +44,8 @@ class MatchRequest(BaseModel):
     requirements: list[MatchRequirement] = Field(max_length=100)
     facts: list[MatchFact] = Field(max_length=500)
     timeline: Timeline | None = None
+
+    _unique = field_validator("requirements")(_unique_requirement_ids)
 
 
 class RequirementResult(BaseModel):
@@ -70,6 +80,8 @@ class BatchCandidate(BaseModel):
 class BatchMatchRequest(BaseModel):
     requirements: list[MatchRequirement] = Field(max_length=100)
     candidates: list[BatchCandidate] = Field(max_length=50)
+
+    _unique = field_validator("requirements")(_unique_requirement_ids)
 
 
 class CandidateMatch(MatchResponse):

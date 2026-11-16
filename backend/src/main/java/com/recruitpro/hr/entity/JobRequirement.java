@@ -46,6 +46,10 @@ public class JobRequirement extends BaseEntity {
     @Enumerated(EnumType.STRING) @JdbcTypeCode(SqlTypes.VARCHAR) @Column(length = 20)
     private Proficiency proficiency;
 
+    /** Position in the job's list (V28, R6-B2): HR's order; requirements are read by (displayOrder, id). */
+    @Column(name = "display_order", nullable = false)
+    private int displayOrder;
+
     /** Never null; a copy-safe view for DTOs. */
     public List<String> getAlternatives() {
         return alternatives == null ? new ArrayList<>() : alternatives;

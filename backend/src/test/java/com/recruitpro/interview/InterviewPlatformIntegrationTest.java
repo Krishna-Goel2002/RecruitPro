@@ -16,6 +16,7 @@ import com.recruitpro.hr.entity.Job;
 import com.recruitpro.hr.entity.JobStatus;
 import com.recruitpro.interview.entity.Interview;
 import com.recruitpro.interview.entity.InterviewStatus;
+import com.recruitpro.interview.service.InterviewService;
 import com.recruitpro.interview.repository.InterviewRepository;
 import com.recruitpro.jobs.entity.BackgroundJobType;
 import com.recruitpro.jobs.service.BackgroundJobService;
@@ -169,6 +170,9 @@ class InterviewPlatformIntegrationTest {
                                 + "\"recommendation\":\"NO\",\"summary\":\"Initial view\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.scorecard.revisionCount", is(0)))
+                // Integration pass (R6-B4): the portal can tell whether the scorecard is still editable.
+                .andExpect(jsonPath("$.data.applicationStatus", is("INTERVIEWING")))
+                .andExpect(jsonPath("$.data.scorecardEditable", is(true)))
                 .andReturn());
         long scorecardId = submitted.path("scorecard").path("id").asLong();
         int matchJobsBefore = backgroundJobService.findJobs(BackgroundJobType.MATCH_APPLICATION, application.getId()).size();
@@ -225,6 +229,22 @@ class InterviewPlatformIntegrationTest {
         applications.saveAndFlush(decided);
         mvc.perform(editScorecard(interview.getId(), edit).with(user(INTERVIEWER).roles("INTERVIEWER")))
                 .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/interviews/{id}", interview.getId()).with(user(INTERVIEWER).roles("INTERVIEWER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.applicationStatus", is("REJECTED")))
+                .andExpect(jsonPath("$.data.scorecardEditable", is(false)));
+    }
+
+    @Test
+    void scorecardEditabilityFollowsTheSameRulesAsSubmitAndEdit() {
+        // Integration pass (R6-B4): one predicate for the portal flag and the service checks.
+        assertTrue(InterviewService.scorecardEditable(InterviewStatus.SCHEDULED, ApplicationStatus.REJECTED, false),
+                "a scorecard may still be submitted for a rejected application");
+        assertFalse(InterviewService.scorecardEditable(InterviewStatus.SCHEDULED, ApplicationStatus.WITHDRAWN, false));
+        assertFalse(InterviewService.scorecardEditable(InterviewStatus.CANCELLED, ApplicationStatus.INTERVIEWING, false));
+        assertTrue(InterviewService.scorecardEditable(InterviewStatus.COMPLETED, ApplicationStatus.INTERVIEWING, true));
+        assertFalse(InterviewService.scorecardEditable(InterviewStatus.COMPLETED, ApplicationStatus.SELECTED, true));
+        assertFalse(InterviewService.scorecardEditable(InterviewStatus.COMPLETED, ApplicationStatus.INTERVIEWING, false));
     }
 
     @Test

@@ -69,9 +69,15 @@ public class JobDeadlineCloser {
         }
         int closed = 0;
         for (Long id : ids) {
-            Boolean done = transactionTemplate.execute(status -> closeOne(id, now));
-            if (Boolean.TRUE.equals(done)) {
-                closed++;
+            try {
+                Boolean done = transactionTemplate.execute(status -> closeOne(id, now));
+                if (Boolean.TRUE.equals(done)) {
+                    closed++;
+                }
+            } catch (RuntimeException ex) {
+                // R2-L07: one job that cannot be closed (lock time-out, failing audit insert) must not keep every
+                // later job open; it is retried on the next run.
+                log.warn("Could not close job {} after its deadline: {}", id, ex.getClass().getSimpleName());
             }
         }
         return closed;

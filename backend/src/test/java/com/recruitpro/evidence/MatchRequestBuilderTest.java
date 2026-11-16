@@ -7,6 +7,7 @@ import com.recruitpro.candidate.entity.ResumeAnalysisFact;
 import com.recruitpro.candidate.entity.ResumeFactReviewStatus;
 import com.recruitpro.candidate.entity.ResumeFactType;
 import com.recruitpro.evidence.entity.CandidateClaim;
+import com.recruitpro.evidence.entity.CandidateClaimVerification;
 import com.recruitpro.evidence.entity.ClaimType;
 import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.evidence.service.ClaimEvidence;
@@ -82,17 +83,42 @@ class MatchRequestBuilderTest {
 
     @Test
     void anotherOrganisationsVerificationNeitherRaisesNorRemovesAClaim() {
+        // The claims' summary columns say "corroborated" / "rejected" (by another organisation); the job organisation has
+        // no row of its own, so both claims count as plain SELF_CLAIMED claims here.
         CandidateClaim corroboratedElsewhere = claim(1L, ClaimType.CERTIFICATION, "AWS Solutions Architect", EvidenceTier.CORROBORATED);
         corroboratedElsewhere.setVerifiedAt(LocalDateTime.parse("2026-11-01T10:00:00"));
         CandidateClaim rejectedElsewhere = claim(2L, ClaimType.SKILL, "Rust", EvidenceTier.SELF_CLAIMED);
         rejectedElsewhere.setVerifiedAt(LocalDateTime.parse("2026-11-01T10:00:00"));
 
         AiMatchRequest request = builder.build(List.of(requirement(11L, "AWS", false, false)), List.of(),
-                List.of(ClaimEvidence.forOrganization(corroboratedElsewhere, OTHER_ORG, ORG),
-                        ClaimEvidence.forOrganization(rejectedElsewhere, OTHER_ORG, ORG)), List.of(), null);
+                List.of(ClaimEvidence.forOrganization(corroboratedElsewhere, (CandidateClaimVerification) null),
+                        ClaimEvidence.forOrganization(rejectedElsewhere, (CandidateClaimVerification) null)), List.of(), null);
 
         assertEquals(List.of("claim:1", "claim:2"), request.facts().stream().map(AiMatchRequest.Fact::id).toList());
         assertTrue(request.facts().stream().allMatch(f -> "SELF_CLAIMED".equals(f.tier())));
+    }
+
+    @Test
+    void theCandidateFacingSummaryPrefersAnyCorroborationOverALaterRejection() {
+        CandidateClaim claim = claim(6L, ClaimType.SKILL, "Kotlin", EvidenceTier.SELF_CLAIMED);
+        CandidateClaimVerification corroborated = verification(6L, EvidenceTier.CORROBORATED);
+        corroborated.setVerifiedAt(LocalDateTime.parse("2026-11-01T10:00:00"));
+        CandidateClaimVerification laterRejection = verification(6L, EvidenceTier.SELF_CLAIMED);
+        laterRejection.setOrganizationId(OTHER_ORG);
+        laterRejection.setVerifiedAt(LocalDateTime.parse("2026-11-03T10:00:00"));
+
+        claim.summarize(List.of(laterRejection, corroborated));
+        assertEquals(EvidenceTier.CORROBORATED, claim.getTier());
+        assertEquals("VERIFIED", claim.verificationStatus());
+        assertEquals(LocalDateTime.parse("2026-11-01T10:00:00"), claim.getVerifiedAt());
+
+        claim.summarize(List.of(laterRejection));
+        assertEquals("REJECTED", claim.verificationStatus());
+        assertEquals(LocalDateTime.parse("2026-11-03T10:00:00"), claim.getVerifiedAt());
+
+        claim.summarize(List.of());
+        assertEquals("UNVERIFIED", claim.verificationStatus());
+        assertNull(claim.getVerifiedAt());
     }
 
     @Test
@@ -134,6 +160,52 @@ class MatchRequestBuilderTest {
         assertEquals(95, request.timeline().path("totalMonths").asInt());
     }
 
+    @Test
+    void anOtherRequirementIsNeverSentAsAKnockout() {
+        // R2-H01: OTHER is never scored, so a (legacy) knockout flag on it would gate every applicant.
+        JobRequirement other = requirement(12L, "Comfortable with on-call rotations", true, true);
+        other.setType(RequirementType.OTHER);
+        JobRequirement skill = requirement(13L, "Java", true, true);
+
+        AiMatchRequest request = builder.build(List.of(other, skill), List.of(), List.of(), List.of(), null);
+
+        assertFalse(request.requirements().get(0).knockout());
+        assertTrue(request.requirements().get(0).mandatory());
+        assertTrue(request.requirements().get(1).knockout());
+    }
+
+    @Test
+    void onlyTheJobOrganisationsOwnVerificationRowCounts() {
+        // R2-H02: the per-organisation row decides; the claim's own (latest, any organisation) columns are ignored.
+        CandidateClaim claim = claim(5L, ClaimType.CERTIFICATION, "AWS Solutions Architect", EvidenceTier.SELF_CLAIMED);
+        claim.setVerifiedAt(LocalDateTime.parse("2026-11-02T10:00:00"));
+        CandidateClaimVerification corroboratedHere = verification(5L, EvidenceTier.CORROBORATED);
+        CandidateClaimVerification rejectedHere = verification(5L, EvidenceTier.SELF_CLAIMED);
+
+        ClaimEvidence corroborated = ClaimEvidence.forOrganization(claim, corroboratedHere);
+        assertEquals(EvidenceTier.CORROBORATED, corroborated.tier());
+        assertFalse(corroborated.rejected());
+        ClaimEvidence rejected = ClaimEvidence.forOrganization(claim, rejectedHere);
+        assertTrue(rejected.rejected());
+        ClaimEvidence unchecked = ClaimEvidence.forOrganization(claim, (CandidateClaimVerification) null);
+        assertEquals(EvidenceTier.SELF_CLAIMED, unchecked.tier());
+        assertFalse(unchecked.rejected(), "another organisation's rejection does not remove the claim here");
+
+        AiMatchRequest request = builder.build(List.of(requirement(11L, "AWS", true, true)), List.of(),
+                List.of(corroborated, rejected), List.of(), null);
+        assertEquals(1, request.facts().size());
+        assertEquals("CORROBORATED", request.facts().get(0).tier());
+    }
+
+    private static CandidateClaimVerification verification(Long claimId, EvidenceTier tier) {
+        CandidateClaimVerification verification = new CandidateClaimVerification();
+        verification.setClaimId(claimId);
+        verification.setOrganizationId(ORG);
+        verification.setTier(tier);
+        verification.setVerifiedAt(LocalDateTime.parse("2026-11-01T10:00:00"));
+        return verification;
+    }
+
     private static JobRequirement requirement(Long id, String description, boolean mandatory, boolean knockout) {
         JobRequirement requirement = new JobRequirement();
         requirement.setId(id);
@@ -156,9 +228,10 @@ class MatchRequestBuilderTest {
         return fact;
     }
 
-    /** The claim as evidence for a job of the organisation that verified it (or for any job when unverified). */
+    /** The claim as evidence for a job of the organisation that verified it (its own row; none when unverified). */
     private static ClaimEvidence here(CandidateClaim claim) {
-        return ClaimEvidence.forOrganization(claim, ORG, ORG);
+        return ClaimEvidence.forOrganization(claim,
+                claim.getVerifiedAt() == null ? null : verification(claim.getId(), claim.getTier()));
     }
 
     private static CandidateClaim claim(Long id, ClaimType type, String value, EvidenceTier tier) {

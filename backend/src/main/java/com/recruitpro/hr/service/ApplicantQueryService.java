@@ -21,8 +21,10 @@ import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.evidence.dto.CandidateClaimResponse;
 import com.recruitpro.evidence.entity.CandidateClaim;
+import com.recruitpro.evidence.entity.CandidateClaimVerification;
 import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.evidence.repository.CandidateClaimRepository;
+import com.recruitpro.evidence.repository.CandidateClaimVerificationRepository;
 import com.recruitpro.evidence.service.StoredMatchResults;
 import com.recruitpro.hr.dto.*;
 import com.recruitpro.hr.entity.Job;
@@ -82,6 +84,7 @@ public class ApplicantQueryService {
     private final UserRepository userRepository;
     private final ApplicationExtensions extensions;
     private final ObjectMapper objectMapper;
+    private final CandidateClaimVerificationRepository claimVerificationRepository;
 
     public ApplicantQueryService(HrJobAccessService jobAccess, SecurityUtils securityUtils,
                                  ApplicationRepository applicationRepository, JobMatchRunRepository matchRunRepository,
@@ -89,7 +92,8 @@ public class ApplicantQueryService {
                                  BackgroundJobRepository backgroundJobRepository, OrganizationRepository organizationRepository,
                                  CandidateClaimRepository claimRepository,
                                  ApplicationDecisionHistoryRepository historyRepository, UserRepository userRepository,
-                                 ApplicationExtensions extensions, ObjectMapper objectMapper) {
+                                 ApplicationExtensions extensions, ObjectMapper objectMapper,
+                                 CandidateClaimVerificationRepository claimVerificationRepository) {
         this.jobAccess = jobAccess;
         this.securityUtils = securityUtils;
         this.applicationRepository = applicationRepository;
@@ -103,6 +107,7 @@ public class ApplicantQueryService {
         this.userRepository = userRepository;
         this.extensions = extensions;
         this.objectMapper = objectMapper;
+        this.claimVerificationRepository = claimVerificationRepository;
     }
 
     /** GET /api/v1/hr/jobs/{jobId}/applicants: ranked (default) or newest first, filtered by status, size 1..100. */
@@ -341,7 +346,7 @@ public class ApplicantQueryService {
             }
         }
         List<RequirementEvidenceResponse> evidence = new ArrayList<>();
-        for (JobRequirement requirement : requirementRepository.findByJobIdOrderById(job.getId())) {
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId())) {
             AiMatchResponse.RequirementResult result = results.get(requirement.getId());
             List<String> alternatives = List.copyOf(requirement.getAlternatives());
             if (result == null) {
@@ -364,21 +369,18 @@ public class ApplicantQueryService {
 
     private List<CandidateClaimResponse> claims(Long candidateId, boolean revealed, CurrentUser viewer) {
         List<CandidateClaim> claims = claimRepository.findAllByCandidateIdOrderByCreatedAtDescIdDesc(candidateId);
-        Set<Long> verifierIds = new HashSet<>();
-        for (CandidateClaim claim : claims) {
-            if (claim.getVerifiedByUserId() != null) verifierIds.add(claim.getVerifiedByUserId());
-        }
-        Map<Long, Long> verifierOrganizations = new HashMap<>();
-        if (!verifierIds.isEmpty()) {
-            for (User user : userRepository.findAllById(verifierIds)) {
-                if (user.getOrganizationId() != null) verifierOrganizations.put(user.getId(), user.getOrganizationId());
+        // R2-H02: only the viewer organisation's own verification of each claim is shown (never another one's).
+        Map<Long, CandidateClaimVerification> verifications = new HashMap<>();
+        if (!claims.isEmpty() && viewer.organizationId() != null) {
+            List<Long> claimIds = claims.stream().map(CandidateClaim::getId).toList();
+            for (CandidateClaimVerification verification
+                    : claimVerificationRepository.findAllByClaimIdInAndOrganizationId(claimIds, viewer.organizationId())) {
+                verifications.put(verification.getClaimId(), verification);
             }
         }
         List<CandidateClaimResponse> responses = new ArrayList<>(claims.size());
         for (CandidateClaim claim : claims) {
-            boolean verifiedHere = claim.getVerifiedByUserId() == null
-                    || Objects.equals(verifierOrganizations.get(claim.getVerifiedByUserId()), viewer.organizationId());
-            responses.add(CandidateClaimResponse.forStaff(claim, revealed, verifiedHere));
+            responses.add(CandidateClaimResponse.forStaff(claim, revealed, verifications.get(claim.getId())));
         }
         return responses;
     }

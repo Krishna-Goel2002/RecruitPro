@@ -104,8 +104,22 @@ def validate_llm(settings: Settings) -> None:
         raise ConfigError("OPENAI_BASE_URL is required for LLM_PROVIDER=openai_compatible")
 
 
+MIN_TOKEN_LENGTH = 16
+_PLACEHOLDER_TOKEN_PREFIXES = ("replace-with", "changeme", "change-me")
+
+
 def validate_settings(settings: Settings) -> None:
     """Raise ConfigError for configurations that must stop the service from starting."""
     if not settings.agent_service_token and not settings.allow_no_token:
         raise ConfigError("AGENT_SERVICE_TOKEN is required (AGENT_ALLOW_NO_TOKEN=true is for tests only)")
+    token = settings.agent_service_token
+    if token and (len(token) < MIN_TOKEN_LENGTH or token.lower().startswith(_PLACEHOLDER_TOKEN_PREFIXES)):
+        raise ConfigError(f"AGENT_SERVICE_TOKEN must be a random secret of at least {MIN_TOKEN_LENGTH} characters "
+                          "(not the .env.example placeholder)")
+    for name, value in (("AGENT_FETCH_TIMEOUT_SECONDS", settings.fetch_timeout_seconds),
+                        ("AGENT_REQUEST_DEADLINE_SECONDS", settings.request_deadline_seconds),
+                        ("LLM_TIMEOUT_SECONDS", settings.llm_timeout_seconds),
+                        ("AGENT_MAX_DOCUMENT_BYTES", settings.max_document_bytes)):
+        if not value > 0 or value != value or value == float("inf"):  # also NaN / inf from float("nan")
+            raise ConfigError(f"{name} must be a positive number")
     validate_llm(settings)

@@ -1,12 +1,10 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { workSamplesApi } from '../../api/assessments'
-import { errorMessage } from '../../api/client'
 import { qk } from '../../api/queryKeys'
-import { CANCELLABLE_ASSIGNMENT_STATUSES } from '../../api/types'
 import type { ApplicantDetail, WorkSample, WorkSampleAssignment } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
-import { ActionDialog } from '../../components/ActionDialog'
+import { canCancelAssignment, invalidateAssignment, useCancelAssignment, useSubmissionDownload } from '../workSamples/assignmentActions'
 import { AnchoredRating } from '../../components/AnchoredRating'
 import { InlineError } from '../../components/QueryError'
 import { WorkSampleStatusBadge } from '../../components/StatusBadges'
@@ -30,23 +28,10 @@ export function WorkSamplesTab({ jobId, detail }: { jobId: number; detail: Appli
   const available = (samples.data ?? []).filter(s => s.status === 'ACTIVE' && !assignedIds.has(s.id))
   const [assignOpen, setAssignOpen] = useState(false)
   const [scoring, setScoring] = useState<WorkSampleAssignment | null>(null)
-  const [cancelling, setCancelling] = useState<WorkSampleAssignment | null>(null)
   const canAssign = can('workSamples.manage') && ASSIGNABLE.includes(detail.applicationStatus)
 
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: qk.applicant(jobId, detail.applicationId) })
-    void queryClient.invalidateQueries({ queryKey: ['workSamples', jobId, 'assignments'] })
-    void queryClient.invalidateQueries({ queryKey: qk.applicants(jobId) })
-  }
-
-  const cancel = useMutation({
-    mutationFn: ({ id, reason }: { id: number; reason: string }) => workSamplesApi.cancel(id, reason),
-    onSuccess: () => {
-      setCancelling(null)
-      toast({ tone: 'success', title: 'Assignment cancelled', body: 'The candidate is told it is no longer needed.' })
-      refresh()
-    },
-  })
+  const refresh = () => invalidateAssignment(queryClient, jobId, detail.applicationId)
+  const cancel = useCancelAssignment(jobId)
 
   const assignHint = !ASSIGNABLE.includes(detail.applicationStatus)
     ? 'Work samples can be assigned once the application is shortlisted.'
@@ -77,7 +62,7 @@ export function WorkSamplesTab({ jobId, detail }: { jobId: number; detail: Appli
               key={a.id}
               assignment={a}
               onScore={() => setScoring(a)}
-              onCancel={() => { cancel.reset(); setCancelling(a) }}
+              onCancel={() => cancel.request(a)}
             />
           ))}
         </ul>
@@ -95,18 +80,7 @@ export function WorkSamplesTab({ jobId, detail }: { jobId: number; detail: Appli
           refresh()
         }}
       />
-      <ActionDialog
-        open={cancelling != null}
-        title="Cancel this assignment?"
-        description="The candidate is told the work sample is no longer needed. A submission and its files are kept for the record."
-        tone="danger"
-        confirmLabel="Cancel assignment"
-        busy={cancel.isPending}
-        error={cancel.error}
-        comment={{ label: 'Reason', required: true, maxLength: 1000, placeholder: 'Why it is no longer needed', requiredMessage: 'A reason is required to cancel.' }}
-        onCancel={() => setCancelling(null)}
-        onConfirm={reason => { if (cancelling) cancel.mutate({ id: cancelling.id, reason }) }}
-      />
+      {cancel.dialog}
       <ScoreDrawer
         assignment={scoring}
         sample={(samples.data ?? []).find(s => s.id === scoring?.workSampleId) ?? null}
@@ -167,7 +141,7 @@ function AssignmentRow({ assignment: a, onScore, onCancel }: { assignment: WorkS
             </Button>
           )}
           {a.status === 'SUBMITTED' && can('workSamples.score') && <Button size="sm" variant="primary" onClick={onScore}>Score with rubric</Button>}
-          {can('workSamples.cancel') && CANCELLABLE_ASSIGNMENT_STATUSES.includes(a.status) && (
+          {can('workSamples.cancel') && canCancelAssignment(a) && (
             <Menu
               label={`More actions for ${a.workSampleTitle}`}
               trigger={props => <IconButton {...props} label="More actions" icon={Ellipsis} size="sm" />}
@@ -201,12 +175,7 @@ function AssignmentRow({ assignment: a, onScore, onCancel }: { assignment: WorkS
 
 function Submission({ assignment: a }: { assignment: WorkSampleAssignment }) {
   const { can } = useAuth()
-  const { toast } = useToast()
-  const download = useMutation({
-    mutationFn: ({ fileId, name }: { fileId: number; name: string }) => workSamplesApi.downloadFile(a.id, fileId, name),
-    onSuccess: filename => toast({ tone: 'success', title: `Downloaded ${filename}`, body: 'Recorded in the audit log.' }),
-    onError: cause => toast({ tone: 'danger', title: 'The download failed', body: errorMessage(cause) }),
-  })
+  const download = useSubmissionDownload()
   const url = safeHttpUrl(a.responseUrl)
   const files = a.files ?? []
   return (
@@ -223,7 +192,7 @@ function Submission({ assignment: a }: { assignment: WorkSampleAssignment }) {
               <span className="ap-file-name">{f.originalName}</span>
               <span className="ap-muted numeric">{formatFileSize(f.sizeBytes)}</span>
               {can('workSamples.downloadFiles') && (
-                <Button size="sm" variant="ghost" icon={Download} disabled={download.isPending} aria-label={`Download ${f.originalName}`} onClick={() => download.mutate({ fileId: f.id, name: f.originalName })}>Download</Button>
+                <Button size="sm" variant="ghost" icon={Download} loading={download.busyFileId === f.id} disabled={download.busyFileId != null && download.busyFileId !== f.id} aria-label={`Download ${f.originalName}`} onClick={() => download.start(a.id, f)}>Download</Button>
               )}
             </li>
           ))}

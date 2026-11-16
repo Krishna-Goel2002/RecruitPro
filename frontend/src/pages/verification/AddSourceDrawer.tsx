@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ApiError, errorMessage } from '../../api/client'
+import { ApiError } from '../../api/client'
 import { verificationApi } from '../../api/endpoints'
 import { queryKeys } from '../../api/queryKeys'
 import type { LedgerClaim, OwnershipCheckMethod, SourceCreateRequest, SourceKind, VerificationSource } from '../../api/types'
@@ -14,7 +14,7 @@ import {
 import { ArrowRight, CircleCheck, Github, Icon, KeyRound } from '../../design/icons'
 import { VERDICTS } from '../../design/lib/labels'
 import { DOCUMENT_ACCEPT, DOCUMENT_MAX_BYTES, validateDocumentFile } from '../../lib/files'
-import { isHttpUrl } from '../../lib/url'
+import { isHttpUrl, isHttpsUrl } from '../../lib/url'
 import {
   SOURCE_KIND_LABEL, challengeSteps, isOAuthNotConfigured, isRunActive, noOwnershipCheckReason, ownershipMethodsFor, runErrorText,
 } from '../../lib/verification'
@@ -80,7 +80,7 @@ export function AddSourceDrawer({ open, state, onChange, onClose, sources, ledge
   const canProve = kind ? ownershipMethodsFor(kind).length > 0 : true
   const visibleSteps = canProve ? STEPS : STEPS.filter(s => s !== 'prove')
   const labels = visibleSteps.map(s => STEP_LABEL[STEPS.indexOf(s)])
-  const current = Math.max(0, visibleSteps.indexOf(state.step))
+  const current = Math.max(0, visibleSteps.indexOf(state.step === 'connect' && !kind ? 'choose' : state.step))
 
   const title =
     state.step === 'choose' ? 'Add a source' : state.step === 'check' && source ? `Check ${source.displayLabel || source.identifier}` : kind ? `Connect ${SOURCE_KIND_LABEL[kind]}` : 'Add a source'
@@ -95,7 +95,10 @@ export function AddSourceDrawer({ open, state, onChange, onClose, sources, ledge
       className="v-add"
     >
       <div className="v-add-body" key={state.step}>
-        {state.step === 'choose' && <ChooseStep kind={kind} onNext={k => onChange({ step: 'connect', kind: k })} onCancel={onClose} />}
+        {/* A "connect" link without a (valid) kind, e.g. a hand-edited URL, starts at "choose" instead of a blank drawer. */}
+        {(state.step === 'choose' || (state.step === 'connect' && !kind)) && (
+          <ChooseStep kind={kind} onNext={k => onChange({ step: 'connect', kind: k })} onCancel={onClose} />
+        )}
         {state.step === 'connect' && kind && (
           <ConnectStep
             kind={kind}
@@ -222,10 +225,15 @@ function ConnectStep({ kind, onBack, onConnected }: { kind: SourceKind; onBack: 
   })
 
   const github = useMutation({
-    mutationFn: verificationApi.startGitHubOAuth,
+    mutationFn: async () => {
+      const started = await verificationApi.startGitHubOAuth()
+      // Only ever leave for an https authorisation page (never a javascript: or other scheme from a bad answer).
+      if (!isHttpsUrl(started.authorizeUrl)) throw new Error('The GitHub sign-in address from the server was not valid. Please try again.')
+      return started
+    },
     onSuccess: ({ authorizeUrl }) => window.location.assign(authorizeUrl),
     onError: error => {
-      if (error instanceof ApiError && isOAuthNotConfigured(error.status, error.message)) {
+      if (error instanceof ApiError && isOAuthNotConfigured(error)) {
         setOauthUnavailable(true)
         setByUsername(true)
       }
@@ -360,7 +368,7 @@ function ConnectStep({ kind, onBack, onConnected }: { kind: SourceKind; onBack: 
         >
           {consentText(kind)}
         </ConsentCheckbox>
-        {github.error && !oauthUnavailable && <FormError error={errorMessage(github.error)} />}
+        {github.error && !oauthUnavailable && <FormError error={verificationErrorMessage(github.error, 'connect')} />}
         {createError && <FormError error={createError} />}
         <div className="v-step-actions">
           <Button variant="ghost" onClick={onBack} disabled={busy}>
@@ -613,7 +621,13 @@ function CheckStep({
           autoFocus
           onClick={() => {
             setPhase('starting')
-            sources.startRun.mutate(source.id, { onError: () => setPhase('idle') })
+            sources.startRun.mutate(source.id, {
+              onError: () => setPhase('idle'),
+              // A run can be refused or finish at once (status COMPLETED/FAILED in the answer): never spin forever.
+              onSuccess: run => {
+                if (!isRunActive(run.status)) setPhase('done')
+              },
+            })
           }}
         >
           {finished ? 'Run the check again' : 'Run the first check'}

@@ -101,7 +101,8 @@ const fairness = {
   ],
 }
 const assignments = [
-  { id: 801, workSampleId: 21, workSampleTitle: 'Design an idempotent refunds endpoint', applicationId: 3001, status: 'SUBMITTED', assignedAt: ago(30), dueAt: ahead(20), startedAt: ago(10), submittedAt: ago(8.6), responseText: null, responseUrl: null, scores: [], totalScore: null, scoredAt: null, scoredByName: null, files: [] },
+  { id: 801, workSampleId: 21, workSampleTitle: 'Design an idempotent refunds endpoint', applicationId: 3001, status: 'SUBMITTED', assignedAt: ago(30), dueAt: ahead(20), startedAt: ago(10), submittedAt: ago(8.6), responseText: null, responseUrl: null, scores: [], totalScore: null, scoredAt: null, scoredByName: null,
+    files: [{ id: 61, originalName: 'refunds-sequence.pdf', contentType: 'application/pdf', sizeBytes: 482113, sha256: 'ab', uploadedAt: ago(8.7) }, { id: 62, originalName: 'schema.sql', contentType: 'text/plain', sizeBytes: 2210, sha256: 'cd', uploadedAt: ago(8.7) }] },
   { id: 802, workSampleId: 21, workSampleTitle: 'Design an idempotent refunds endpoint', applicationId: 3009, status: 'SUBMITTED', assignedAt: ago(28), dueAt: ahead(30), startedAt: ago(5), submittedAt: ago(3), responseText: null, responseUrl: null, scores: [], totalScore: null, scoredAt: null, scoredByName: null, files: [] },
 ]
 const samples = [
@@ -172,6 +173,18 @@ const first = async (p) => {
   await sleep(200)
 }
 
+const inviteRoutes = [route('GET', '/auth/invitations/(.+)', { organizationName: 'Northwind Labs', email: 'new.recruiter@northwind.example', role: 'RECRUITER', expiresAt: ahead(24 * 6) })]
+/** Fill the accept-invitation form and submit it. */
+const acceptInvite = (extra) => async (p) => {
+  await p.waitForSelector('input[autocomplete="given-name"]')
+  await p.type('input[autocomplete="given-name"]', 'Neha')
+  await p.type('input[autocomplete="family-name"]', 'Rao')
+  await p.type('input[autocomplete="new-password"]', 'hiring desk 42')
+  await p.click('form button[type="submit"]')
+  await sleep(700)
+  if (extra) await extra(p)
+}
+
 export const screens = [
   // ---------------------------------------------------------------- sign-in and account entry
   { name: 'login-error', path: '/login', anonymous: true, override: [route('POST', '/auth/login', fail(401, 'Bad credentials'))], action: signIn() },
@@ -183,6 +196,11 @@ export const screens = [
   { name: 'login-sso-error', path: '/login?ssoError=domain_not_allowed', anonymous: true },
   { name: 'signup', path: '/signup', anonymous: true, action: async (p) => { await p.type('input[autocomplete="new-password"]', 'hiring42'); await sleep(300) } },
   { name: 'accept-invite', path: '/accept-invite?token=inv-123', anonymous: true, override: [route('GET', '/auth/invitations/(.+)', { organizationName: 'Northwind Labs', email: 'new.recruiter@northwind.example', role: 'RECRUITER', expiresAt: ahead(24 * 6) })] },
+  // Integration pass: MFA lockout is a 429 MFA_LOCKED with Retry-After; accepting an invitation can need MFA (R1-M4).
+  { name: 'login-mfa-locked', path: '/login', anonymous: true, override: [route('POST', '/auth/login', mfaChallenge), route('POST', '/auth/mfa/verify', { ...fail(429, 'MFA_LOCKED: Too many failed attempts. Try again in 5 minutes.'), __headers: { 'Retry-After': '300' } })], action: signIn(async (p) => { await p.keyboard.type('123456'); await sleep(900) }) },
+  { name: 'accept-invite-enrol', path: '/accept-invite?token=inv-123', anonymous: true, settle: 600, override: [...inviteRoutes, route('POST', '/auth/accept-invite', enrolChallenge), route('POST', '/me/mfa/enroll', enrolment)], action: acceptInvite(async () => sleep(900)) },
+  { name: 'accept-invite-codes', path: '/accept-invite?token=inv-123', anonymous: true, override: [...inviteRoutes, route('POST', '/auth/accept-invite', enrolChallenge), route('POST', '/me/mfa/enroll', enrolment), route('POST', '/me/mfa/confirm', { recoveryCodes: codes, session: session({ id: 31, email: 'new.recruiter@northwind.example', firstName: 'Neha', lastName: 'Rao', role: 'RECRUITER', organizationId: 1, organizationName: 'Northwind Labs', emailVerified: true }) })], action: acceptInvite(async (p) => { await sleep(700); await p.click('.hra-otp-input'); await p.keyboard.type('654321'); await sleep(900) }) },
+  { name: 'accept-invite-locked', path: '/accept-invite?token=inv-123', anonymous: true, override: [...inviteRoutes, route('POST', '/auth/accept-invite', enrolChallenge), route('POST', '/me/mfa/enroll', enrolment), route('POST', '/me/mfa/confirm', { ...fail(429, 'MFA_LOCKED: Too many failed attempts. Try again in 10 minutes.'), __headers: { 'Retry-After': '600' } })], action: acceptInvite(async (p) => { await sleep(700); await p.click('.hra-otp-input'); await p.keyboard.type('654321'); await sleep(900) }) },
   { name: 'accept-invite-invalid', path: '/accept-invite?token=used', anonymous: true, override: [route('GET', '/auth/invitations/(.+)', fail(404, 'Invitation not found'))] },
   { name: 'forgot-password', path: '/forgot-password', anonymous: true },
   { name: 'reset-password', path: '/reset-password?token=abc', anonymous: true },
@@ -213,6 +231,10 @@ export const screens = [
   { name: 'job-menu', path: '/jobs/101', action: async (p) => { await p.click('.hra-header-actions button[aria-haspopup="menu"]'); await sleep(500) } },
   { name: 'job-work-samples', path: '/jobs/101?tab=work-samples', override: [route('GET', '/hr/jobs/(\\d+)/work-samples', samples), route('GET', '/hr/jobs/(\\d+)/work-sample-assignments', assignments)], action: clickText('Design an idempotent') },
   { name: 'job-work-sample-editor', path: '/jobs/101?tab=work-samples', override: [route('GET', '/hr/jobs/(\\d+)/work-samples', samples), route('GET', '/hr/jobs/(\\d+)/work-sample-assignments', assignments)], action: async (p) => { await p.click('.hra-ws-actions button[aria-label^="Edit"]'); await sleep(700) } },
+  // R6: download (audited) and cancel (reason required) from the job's assignments table.
+  { name: 'job-ws-assignment-menu', path: '/jobs/101?tab=work-samples', override: [route('GET', '/hr/jobs/(\\d+)/work-samples', samples), route('GET', '/hr/jobs/(\\d+)/work-sample-assignments', assignments)], action: async (p) => { await p.click('button[aria-label="Actions for application #A-3001"]'); await sleep(500) } },
+  { name: 'job-ws-assignment-menu-recruiter', path: '/jobs/101?tab=work-samples', role: 'RECRUITER', override: [route('GET', '/hr/jobs/(\\d+)/work-samples', samples), route('GET', '/hr/jobs/(\\d+)/work-sample-assignments', assignments)], action: async (p) => { await p.click('button[aria-label="Actions for application #A-3001"]'); await sleep(500) } },
+  { name: 'job-ws-cancel-dialog', path: '/jobs/101?tab=work-samples', override: [route('GET', '/hr/jobs/(\\d+)/work-samples', samples), route('GET', '/hr/jobs/(\\d+)/work-sample-assignments', assignments)], action: async (p) => { await p.click('button[aria-label="Actions for application #A-3001"]'); await sleep(400); await clickText('Cancel assignment…')(p); await sleep(400); await clickText('Cancel assignment')(p); await sleep(500) } },
   { name: 'job-fairness', path: '/jobs/101?tab=fairness', override: [route('GET', '/hr/jobs/(\\d+)/fairness', fairness)] },
 
   // ---------------------------------------------------------------- wizard

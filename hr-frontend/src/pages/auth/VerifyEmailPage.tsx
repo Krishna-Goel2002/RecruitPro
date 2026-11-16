@@ -16,7 +16,7 @@ type VerifyState = { phase: 'verifying' } | { phase: 'done'; user: AuthUser } | 
 export function VerifyEmailPage() {
   const [params] = useSearchParams()
   const token = params.get('token')?.trim() ?? ''
-  const { status } = useAuth()
+  const { status, user, updateUser } = useAuth()
   const [state, setState] = useState<VerifyState>({ phase: 'verifying' })
   const [resend, setResend] = useState<'idle' | 'sending' | 'sent' | { error: string }>('idle')
   const attempted = useRef<string | null>(null)
@@ -30,6 +30,13 @@ export function VerifyEmailPage() {
       .then(verified => setState({ phase: 'done', user: verified }))
       .catch(cause => setState({ phase: 'failed', message: errorMessage(cause) }))
   }, [token])
+
+  // Signed in as the same person (the session may finish restoring after the token was checked): the Get-started
+  // checklist and the sidebar count tick at once instead of after the next sign-in.
+  const verifiedId = state.phase === 'done' ? state.user?.id : undefined
+  useEffect(() => {
+    if (verifiedId != null && user && user.id === verifiedId && !user.emailVerified) updateUser({ emailVerified: true })
+  }, [verifiedId, user, updateUser])
 
   async function sendNewLink() {
     setResend('sending')

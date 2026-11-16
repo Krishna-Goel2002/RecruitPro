@@ -116,6 +116,10 @@ public class CandidateWorkSampleService {
         if (assignment.getStatus() == WorkSampleAssignmentStatus.CANCELLED) {
             throw new BadRequestException("This work sample was cancelled by the hiring team");
         }
+        if (assignment.getStatus() == WorkSampleAssignmentStatus.EXPIRED) {
+            // R2-L05: the expiry sweep got there first; "start it first" would be misleading.
+            throw new BadRequestException("This work sample has expired and can no longer be submitted");
+        }
         if (assignment.getStatus() != WorkSampleAssignmentStatus.STARTED) {
             throw new BadRequestException("Start the work sample before submitting it");
         }

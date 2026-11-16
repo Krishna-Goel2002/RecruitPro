@@ -40,6 +40,14 @@ public class ResumeController {
     @GetMapping("/{resumeId}")
     public ApiResponse<ResumeResponse> get(@PathVariable Long resumeId) { return ApiResponse.success(service.getMine(resumeId)); }
 
+    /** R2-M02: deletes a resume no application uses (409 otherwise). */
+    @DeleteMapping("/{resumeId}")
+    @Operation(summary = "Delete one of your resumes that no application uses")
+    public ApiResponse<Void> delete(@PathVariable Long resumeId) {
+        service.deleteMine(resumeId);
+        return ApiResponse.success("Resume deleted");
+    }
+
     @GetMapping("/{resumeId}/download")
     @Operation(summary = "Download one of the authenticated candidate's resumes")
     public ResponseEntity<ByteArrayResource> download(@PathVariable Long resumeId) {
@@ -51,6 +59,8 @@ public class ResumeController {
                 .contentLength(download.bytes().length)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(safeName).build().toString())
                 .header("X-Content-Type-Options", "nosniff")
+                // R2-L06: personal documents are never kept in shared or browser caches (as the staff download does).
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .body(new ByteArrayResource(download.bytes()));
     }
 

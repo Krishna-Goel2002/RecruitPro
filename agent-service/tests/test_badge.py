@@ -8,8 +8,8 @@ import pytest
 
 from app.badges.keys import base58_decode, base58_encode, did_web_url, ed25519_jwk_from_multibase
 from app.demo.fakes import FakePage
-from eval.builders import (NOW, did_key_of, ed25519_key, es256_key, ob2_documents, ob3_payload, rs256_key, sign,
-                           status_list, tamper)
+from eval.builders import (NOW, days_ago, did_key_of, ed25519_key, es256_key, ob2_documents, ob3_payload, rs256_key,
+                           sign, status_list, tamper)
 from tests.conftest import HEADERS
 
 CLAIM = [{"id": "fact:1", "type": "CERTIFICATION", "value": "Data Analysis with Python"}]
@@ -170,3 +170,123 @@ def test_bad_input(client):
 def test_badge_urls_go_through_the_ssrf_guard(client, url):
     response = client.post("/api/v1/verify/badge", headers=HEADERS, json={"claims": CLAIM, "url": url})
     assert response.status_code == 422 and response.json()["detail"]["code"] == "URL_BLOCKED"
+
+
+# ------------------------------------------------------------------------------------- bug-hunt regressions
+def _forged_ob2(fake_net, *, embed_issuer: bool) -> str:
+    """An OB 2.0 badge hosted on the candidate's fresh domain whose issuer profile claims to be a trusted platform's
+    issuer and lists the candidate's domain in allowedOrigins."""
+    import hashlib
+
+    host = "https://forger.example"
+    fake_net.registered["forger.example"] = days_ago(20)
+    issuer = {"type": "Issuer", "id": "https://www.credly.com/org/amazon-web-services", "name": "Amazon Web Services",
+              "verification": {"allowedOrigins": ["forger.example"]}}
+    badge = {"type": "BadgeClass", "id": f"{host}/badges/1", "name": "Data Analysis with Python",
+             "issuer": issuer if embed_issuer else f"{host}/issuer"}
+    assertion = {"type": "Assertion", "id": f"{host}/assertions/1", "badge": f"{host}/badges/1",
+                 "recipient": {"type": "email", "hashed": True, "salt": "s",
+                               "identity": "sha256$" + hashlib.sha256(b"holder@example.orgs").hexdigest()},
+                 "verification": {"type": "hosted"}, "issuedOn": "2025-01-01T00:00:00Z"}
+    for path, document in ((f"{host}/assertions/1", assertion), (f"{host}/badges/1", badge),
+                           (f"{host}/issuer", issuer)):
+        fake_net.pages[path] = FakePage(json.dumps(document), "application/json")
+    return f"{host}/assertions/1"
+
+
+def test_ob2_issuer_profile_cannot_claim_another_issuer(client, fake_net):
+    data = _post(client, url=_forged_ob2(fake_net, embed_issuer=False))
+    assert _verdict(data) == "CONTRADICTED"
+    assert "claims to be a different issuer" in data["verdicts"][0]["reasons"][0]["text"]
+    assert data["verdicts"][0]["domainTrust"] is None
+
+
+def test_ob2_embedded_issuer_profile_is_not_authoritative(client, fake_net):
+    data = _post(client, url=_forged_ob2(fake_net, embed_issuer=True))
+    # the embedded profile's id is fetched instead (here it is not served), so its allowedOrigins never count and the
+    # assertion is not on the claimed issuer's origin
+    assert _verdict(data) == "CONTRADICTED"
+    assert "not hosted on the issuer's domain" in data["verdicts"][0]["reasons"][0]["text"]
+    assert data["verdicts"][0]["domainTrust"] is None
+
+
+def test_ob2_issuer_id_is_where_the_profile_was_fetched(client, fake_net):
+    url, pages = ob2_documents(ISSUER, badge_name="Data Analysis with Python")
+    fake_net.pages.update(pages)
+    data = _post(client, url=url)
+    assert _verdict(data) == "VERIFIED" and data["evidence"][0]["attributes"]["issuer"] == f"{ISSUER}/issuer"
+    del fake_net.pages[f"{ISSUER}/issuer"]  # an unreachable profile: same-origin hosting still holds
+    assert _verdict(_post(client, url=url)) == "VERIFIED"
+
+
+def test_a_matching_name_does_not_outweigh_a_different_email(client, fake_net):
+    es = es256_key()
+    fake_net.pages[f"{ISSUER}/.well-known/jwks.json"] = FakePage(json.dumps({"keys": [{**es.jwk, "kid": "k1"}]}),
+                                                                 "application/json")
+    payload = ob3_payload(ISSUER, "Data Analysis with Python", email="someone.else@example.org")
+    payload["vc"]["credentialSubject"]["name"] = "Ana Sample"  # same name as the holder, different person
+    data = _post(client, credential=sign(payload, es, kid="k1"))
+    verdict = data["verdicts"][0]
+    assert verdict["verdict"] == "PARTLY_VERIFIED" and verdict["ownershipProven"] is False
+    assert "RECIPIENT_NOT_COMPARABLE" in data["warnings"]
+    # several e-mail identities: any match counts
+    payload = ob3_payload(ISSUER, "Data Analysis with Python", email="work@example.org")
+    payload["vc"]["credentialSubject"]["identifier"].append(
+        ob3_payload(ISSUER, "x")["vc"]["credentialSubject"]["identifier"][0])  # holder@example.org
+    assert _verdict(_post(client, credential=sign(payload, es, kid="k1"))) == "VERIFIED"
+    # a name alone still matches, a different name alone is a wrong recipient
+    payload = ob3_payload(ISSUER, "Data Analysis with Python")
+    payload["vc"]["credentialSubject"] = {**payload["vc"]["credentialSubject"], "identifier": [], "name": "Ana Sample"}
+    assert _verdict(_post(client, credential=sign(payload, es, kid="k1"))) == "VERIFIED"
+    payload["vc"]["credentialSubject"]["name"] = "Someone Else"
+    assert _verdict(_post(client, credential=sign(payload, es, kid="k1"))) == "CONTRADICTED"
+
+
+def test_every_status_entry_is_checked(client, fake_net):
+    es = es256_key()
+    fake_net.pages[f"{ISSUER}/.well-known/jwks.json"] = FakePage(json.dumps({"keys": [{**es.jwk, "kid": "k1"}]}),
+                                                                 "application/json")
+    for name, revoked in (("suspension", set()), ("revocation", {5})):
+        payload = {"iss": ISSUER, "vc": {"issuer": ISSUER, "credentialSubject": {"encodedList": status_list(revoked)}}}
+        fake_net.pages[f"{ISSUER}/{name}"] = FakePage(sign(payload, es, kid="k1"), "application/vc+jwt")
+    status = [{"type": "BitstringStatusListEntry", "statusPurpose": "suspension", "statusListIndex": "5",
+               "statusListCredential": f"{ISSUER}/suspension"},
+              {"type": "BitstringStatusListEntry", "statusPurpose": "revocation", "statusListIndex": "5",
+               "statusListCredential": f"{ISSUER}/revocation"}]
+    data = _post(client, credential=sign(ob3_payload(ISSUER, "Data Analysis with Python", status=status), es,
+                                         kid="k1"))
+    assert _verdict(data) == "CONTRADICTED" and data["evidence"][0]["attributes"]["revocation"] == "revoked"
+    status[1]["statusListIndex"] = "6"
+    data = _post(client, credential=sign(ob3_payload(ISSUER, "Data Analysis with Python", status=status), es,
+                                         kid="k1"))
+    assert _verdict(data) == "VERIFIED" and data["evidence"][0]["attributes"]["revocation"] == "active"
+
+
+def test_malformed_issuer_keys_and_payloads_are_not_server_errors(client, fake_net):
+    rs = rs256_key()
+    fake_net.pages[f"{ISSUER}/.well-known/jwks.json"] = FakePage(json.dumps({"keys": [{**rs.jwk, "n": "a"}]}),
+                                                                 "application/json")
+    data = _post(client, credential=sign(ob3_payload(ISSUER, "Data Analysis with Python"), rs))
+    assert _verdict(data) == "NOT_CHECKABLE" and "KEY_UNRESOLVED" in data["warnings"]
+    import base64
+
+    def b64(value: bytes) -> str:
+        return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+    listed = f"{b64(json.dumps({'alg': 'EdDSA'}).encode())}.{b64(b'[1, 2]')}.c2ln"
+    data = _post(client, credential=listed)
+    assert data["verdicts"][0]["verdict"] == "NOT_FOUND"
+    assert "CREDENTIAL_INVALID" in {note["code"] for note in data["verdicts"][0]["integrityNotes"]}
+    response = client.post("/api/v1/verify/badge", headers=HEADERS, json={"claims": CLAIM, "credential": "[" * 50_000})
+    assert response.status_code == 422 and response.json()["detail"]["code"] == "BAD_CREDENTIAL"
+
+
+def test_expiry_allows_the_same_clock_skew_as_not_before(client, fake_net):
+    es = es256_key()
+    fake_net.pages[f"{ISSUER}/.well-known/jwks.json"] = FakePage(json.dumps({"keys": [{**es.jwk, "kid": "k1"}]}),
+                                                                 "application/json")
+    just_expired = sign(ob3_payload(ISSUER, "Data Analysis with Python", expires=NOW - timedelta(minutes=2)), es,
+                        kid="k1")
+    assert _verdict(_post(client, credential=just_expired)) == "VERIFIED"
+    expired = sign(ob3_payload(ISSUER, "Data Analysis with Python", expires=NOW - timedelta(minutes=10)), es, kid="k1")
+    assert _verdict(_post(client, credential=expired)) == "PARTLY_VERIFIED"

@@ -8,6 +8,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
+import java.net.URI;
+
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -46,6 +48,13 @@ class SecurityHeadersIntegrationTest {
     void anIncomingSafeRequestIdIsEchoed() throws Exception {
         mvc.perform(get("/api/v1/health").header("X-Request-Id", "trace-abc-12345"))
                 .andExpect(header().string("X-Request-Id", "trace-abc-12345"));
+    }
+
+    @Test
+    void percentEncodedApiPathsGetTheCspToo() throws Exception {
+        // R1-M2: MVC serves /%61pi/v1/health as /api/v1/health, so the header filter must recognise it as an API path.
+        mvc.perform(get(URI.create("/%61pi/v1/health")))
+                .andExpect(header().string("Content-Security-Policy", ApiSecurityHeadersFilter.API_CSP));
     }
 
     @Test

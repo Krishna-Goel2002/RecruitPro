@@ -13,10 +13,13 @@ import com.recruitpro.evidence.entity.CandidateClaim;
 import com.recruitpro.evidence.entity.ClaimType;
 import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.evidence.repository.CandidateClaimRepository;
+import com.recruitpro.evidence.repository.CandidateClaimVerificationRepository;
+import com.recruitpro.verification.entity.SubjectType;
 import com.recruitpro.verification.service.ClaimVerdictWithdrawal;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -35,15 +38,18 @@ public class CandidateClaimService {
     private final ResumeAnalysisFactRepository factRepository;
     private final MatchTriggerService matchTriggerService;
     private final ClaimVerdictWithdrawal verdictWithdrawal;
+    private final CandidateClaimVerificationRepository claimVerificationRepository;
 
     public CandidateClaimService(CandidateClaimRepository claimRepository, CandidateProfileService profileService,
                                  ResumeAnalysisFactRepository factRepository, MatchTriggerService matchTriggerService,
-                                 ClaimVerdictWithdrawal verdictWithdrawal) {
+                                 ClaimVerdictWithdrawal verdictWithdrawal,
+                                 CandidateClaimVerificationRepository claimVerificationRepository) {
         this.claimRepository = claimRepository;
         this.profileService = profileService;
         this.factRepository = factRepository;
         this.matchTriggerService = matchTriggerService;
         this.verdictWithdrawal = verdictWithdrawal;
+        this.claimVerificationRepository = claimVerificationRepository;
     }
 
     /** Not read-only: {@code getOrProvisionMine()} may create a missing candidate profile. */
@@ -91,7 +97,8 @@ public class CandidateClaimService {
 
     /**
      * Fact review with a changed value: creates or updates the SELF_CLAIMED claim linked to the fact. A changed
-     * value clears any earlier recruiter verification. Returns null for contact facts (no claim).
+     * value clears any earlier recruiter verification. Returns null for contact facts (no claim). Creating a new claim
+     * above {@code MAX_CLAIMS_PER_CANDIDATE} claims is a 400 (updating the fact's existing claim is always allowed).
      */
     public CandidateClaim upsertForFact(CandidateProfile candidate, ResumeAnalysisFact fact, String value) {
         ClaimType type = ClaimType.fromFactType(fact.getType());
@@ -99,6 +106,10 @@ public class CandidateClaimService {
             return null;
         }
         List<CandidateClaim> linked = claimRepository.findAllByCandidateIdAndSourceFactId(candidate.getId(), fact.getId());
+        // Integration pass (R2-U4): a new correction claim counts against the same cap as a free-standing claim.
+        if (linked.isEmpty() && claimRepository.countByCandidateId(candidate.getId()) >= MAX_CLAIMS_PER_CANDIDATE) {
+            throw new BadRequestException("You can keep at most " + MAX_CLAIMS_PER_CANDIDATE + " claims; delete one first");
+        }
         CandidateClaim claim = linked.isEmpty() ? new CandidateClaim() : linked.get(0);
         for (int i = 1; i < linked.size(); i++) {
             claimRepository.delete(linked.get(i));
@@ -108,8 +119,9 @@ public class CandidateClaimService {
             return claim;
         }
         if (claim.getId() != null) {
-            // The claim's value changes: verdicts about the old value no longer apply.
+            // The claim's value changes: verdicts and every organisation's verification of the old value no longer apply.
             verdictWithdrawal.withdrawForClaim(candidate.getId(), claim.getId());
+            claimVerificationRepository.deleteAllByClaimId(claim.getId());
         }
         claim.setCandidate(candidate);
         claim.setClaimType(type);
@@ -132,6 +144,29 @@ public class CandidateClaimService {
             verdictWithdrawal.withdrawForClaim(candidate.getId(), claim.getId());
         }
         matchTriggerService.requestMatchForCandidate(candidate.getId());
+    }
+
+    /**
+     * R2-M02: the facts of a deleted resume disappear: their correction claims are deleted and every current verdict
+     * about those facts or claims is withdrawn. Re-matching is queued when a claim was removed. Returns the number of
+     * claims deleted.
+     */
+    public int removeForDeletedFacts(CandidateProfile candidate, Collection<Long> factIds) {
+        if (factIds == null || factIds.isEmpty()) {
+            return 0;
+        }
+        List<CandidateClaim> linked = claimRepository.findAllByCandidateIdAndSourceFactIdIn(candidate.getId(), factIds);
+        claimRepository.deleteAll(linked);
+        for (CandidateClaim claim : linked) {
+            verdictWithdrawal.withdrawForClaim(candidate.getId(), claim.getId());
+        }
+        for (Long factId : factIds) {
+            verdictWithdrawal.withdrawForSubject(candidate.getId(), SubjectType.RESUME_FACT, factId);
+        }
+        if (!linked.isEmpty()) {
+            matchTriggerService.requestMatchForCandidate(candidate.getId());
+        }
+        return linked.size();
     }
 
     private static boolean belongsTo(ResumeAnalysisFact fact, CandidateProfile candidate) {

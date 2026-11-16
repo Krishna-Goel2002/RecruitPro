@@ -53,8 +53,20 @@ class RequirementCompilerServiceTest {
         assertEquals(List.of("QuickBooks"), result.requirements().get(1).alternatives());
         assertEquals(RequirementType.OTHER, result.requirements().get(2).type());
         assertTrue(result.requirements().get(2).mandatory());
-        assertTrue(result.requirements().get(2).knockout(), "knockout defaults to mandatory");
+        // R2-H01: knockout defaults to mandatory, except for OTHER, which is never scored and so never a ranking gate.
+        assertFalse(result.requirements().get(2).knockout(), "an OTHER suggestion is never a knockout");
         assertEquals("AGE_CODED", result.warnings().get(0).kind());
+    }
+
+    @Test
+    void titlesAndDescriptionsAsLongAsAJobsAreCutToTheAiServiceLimits() {
+        // Integration pass (R6-B1): a job title may have 255 characters and a description 50,000, but the compile
+        // request allowed only 200 / 20,000, so "Suggest requirements" failed for jobs that could be saved.
+        AtomicReference<AiCompileRequest> sent = new AtomicReference<>();
+        service(sent, () -> new AiCompileResponse("rules", List.of(), List.of()))
+                .compile(new CompileRequirementsRequest("T".repeat(255), "D".repeat(50000), null));
+        assertEquals(200, sent.get().title().length());
+        assertEquals(20000, sent.get().description().length());
     }
 
     @Test

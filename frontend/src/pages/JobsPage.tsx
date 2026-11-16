@@ -51,6 +51,11 @@ function writeParams(filters: Filters, page: number): URLSearchParams {
   return params
 }
 
+/** Filters as they look after a round trip through the URL (trimmed, unknown job types dropped). */
+export function normalize(filters: Filters): Filters {
+  return readFilters(writeParams(filters, 0))
+}
+
 /**
  * Find jobs (REDESIGN_PLAN A2): search + inline filters on desktop, search + a Filters sheet on phones; hairline
  * rows that are one link each, with an "Applied" marker and "Closes in N days". Filters live in the URL.
@@ -65,18 +70,32 @@ export function JobsPage() {
   // The inputs stay mounted; typing updates local state, and the URL (and query) follow after 300 ms.
   const [inputs, setInputs] = useState<Filters>(applied)
   const debounced = useDebouncedValue(inputs, DEBOUNCE_MS)
+  /** The filters this page last wrote to the URL (normalised the way the URL stores them). */
+  const lastWritten = useRef<Filters>(applied)
   useEffect(() => {
-    if (!sameFilters(debounced, readFilters(params))) setParams(writeParams(debounced, 0), { replace: true })
+    if (!sameFilters(normalize(debounced), readFilters(params))) {
+      const next = writeParams(debounced, 0)
+      lastWritten.current = readFilters(next)
+      setParams(next, { replace: true })
+    }
     // Only the debounced input triggers a URL update; `params` is read at that moment on purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced])
+  // The URL changed from outside (Back/Forward, the "Find jobs" nav link): the inputs follow it, otherwise they kept
+  // the old words, "Updating…" spun for ever and the results did not match the search box.
+  useEffect(() => {
+    if (sameFilters(applied, lastWritten.current)) return
+    lastWritten.current = applied
+    setInputs(applied)
+  }, [applied])
 
   const searchParams: JobSearchParams = { page, size: PAGE_SIZE, ...applied }
   const jobs = useQuery({ queryKey: queryKeys.jobs(searchParams), queryFn: () => jobsApi.search(searchParams), placeholderData: keepPreviousData })
   const applications = useQuery(recentApplicationsQuery)
   const appliedJobs = useMemo(() => new Map((applications.data?.content ?? []).filter(a => a.status !== 'WITHDRAWN').map(a => [a.jobId, a.id])), [applications.data])
 
-  const typing = !sameFilters(inputs, applied)
+  // Compared as the URL stores them: a trailing space must not leave "Updating…" on screen.
+  const typing = !sameFilters(normalize(inputs), applied)
   const updating = jobs.isFetching && jobs.isPlaceholderData
   const extraCount = [inputs.department, inputs.location, inputs.jobType].filter(Boolean).length
   const hasFilters = Boolean(inputs.search) || extraCount > 0
@@ -86,10 +105,10 @@ export function JobsPage() {
   const extraFields = (
     <>
       <Field label="Department">
-        <Input value={inputs.department} placeholder="Any department" onChange={e => set('department')(e.target.value)} />
+        <Input value={inputs.department} maxLength={100} placeholder="Any department" onChange={e => set('department')(e.target.value)} />
       </Field>
       <Field label="Location">
-        <Input value={inputs.location} placeholder="Any location" onChange={e => set('location')(e.target.value)} />
+        <Input value={inputs.location} maxLength={255} placeholder="Any location" onChange={e => set('location')(e.target.value)} />
       </Field>
       <Field label="Job type">
         <Select value={inputs.jobType} onChange={e => set('jobType')(e.target.value)}>
@@ -109,12 +128,14 @@ export function JobsPage() {
       <PageHeader title="Find jobs" description="Open roles you can apply to now. A person reviews every application." />
 
       <form className="j-filters" role="search" aria-label="Filter jobs" onSubmit={e => e.preventDefault()}>
-        <Field label="Job title or keyword" hideLabel={phone} className="j-search">
+        {/* GET /jobs `search` matches the job title only (JobService.listForCandidate), so the label says so. */}
+        <Field label="Job title" hideLabel={phone} className="j-search">
           <Input
             type="search"
             leading={<Icon icon={Search} size={16} />}
             value={inputs.search}
-            placeholder="Job title or keyword"
+            maxLength={255}
+            placeholder="Search job titles"
             onChange={e => set('search')(e.target.value)}
           />
         </Field>
@@ -154,11 +175,19 @@ export function JobsPage() {
         ) : jobs.isError && !jobs.data ? (
           <ErrorState error={jobs.error} onRetry={() => void jobs.refetch()} title="Jobs could not be loaded" />
         ) : jobs.data && jobs.data.content.length === 0 ? (
-          hasFilters ? (
+          page > 0 && jobs.data.totalElements > 0 ? (
+            // An old or hand-edited ?page= past the last page: the roles exist, just not on this page.
+            <EmptyState
+              icon={BriefcaseBusiness}
+              title="This page of results is empty"
+              description={`There are ${plural(jobs.data.totalElements, 'open role')} on earlier pages.`}
+              action={<Button onClick={() => setParams(writeParams(applied, 0))}>Go to the first page</Button>}
+            />
+          ) : hasFilters ? (
             <EmptyState
               icon={Search}
               title={inputs.search ? `No open roles match “${inputs.search}”` : 'No open roles match these filters'}
-              description="Try a broader keyword, or clear the filters to see every open role."
+              description="Try part of a job title or department name, or clear the filters to see every open role."
               action={<Button onClick={clear}>Clear filters</Button>}
             />
           ) : (

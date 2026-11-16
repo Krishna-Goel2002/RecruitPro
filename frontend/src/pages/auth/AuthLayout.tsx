@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import brand from '../../design/brand/active'
-import { EvidenceLadder, ThemeSwitch, VerdictChip } from '../../design/components'
+import { EvidenceLadder, Spinner, ThemeSwitch, VerdictChip } from '../../design/components'
 import { useDocumentTitle } from '../../design/components/PageHeader'
 import { reduced } from '../../design/motion'
 import './auth.css'
@@ -35,7 +35,16 @@ export function AuthLayout() {
         </div>
         <div className="auth-form-wrap">
           <div className="auth-form" key={location.pathname}>
-            <Outlet />
+            {/* Register, forgot, reset and verify are lazy routes: they need a boundary of their own here. */}
+            <Suspense
+              fallback={
+                <p className="auth-wait" role="status">
+                  <Spinner size={14} /> Loading…
+                </p>
+              }
+            >
+              <Outlet />
+            </Suspense>
           </div>
         </div>
         <p className="auth-foot">A person reviews every application. Nothing you connect is shown to employers until you choose.</p>

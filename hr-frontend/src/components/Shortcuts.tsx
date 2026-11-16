@@ -60,9 +60,18 @@ export function modalOpen(): boolean {
   return document.querySelector('dialog[open]') != null
 }
 
+/** Number of open modal dialogs (a confirm opened on top of a drawer makes two). */
+export function openModalCount(): number {
+  return document.querySelectorAll('dialog[open]').length
+}
+
+/** Controls whose own Space/Enter behaviour must win over page shortcuts. */
+const ACTIVATABLE = 'button, a[href], summary, input[type="checkbox"], input[type="radio"], [role="button"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], [role="option"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]'
+
 /**
  * Page-level single-key shortcuts. Ignored while typing, with modifiers (except Shift for "?"), or while a dialog is
- * open unless `inDialog` is set for that key.
+ * open unless `inDialog` is set for that key. `inDialog` keys only work while exactly ONE dialog is open (e.g. the
+ * quick-peek drawer): a confirmation opened on top of it must never receive page shortcuts.
  */
 export function useShortcuts(map: Record<string, (event: KeyboardEvent) => void>, enabled = true, inDialog: string[] = []) {
   const ref = useRef(map)
@@ -73,11 +82,12 @@ export function useShortcuts(map: Record<string, (event: KeyboardEvent) => void>
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
       if (isTypingTarget(event.target)) return
       const key = event.key
-      // Space and Enter on a button or link keep their native meaning.
-      if ((key === ' ' || key === 'Enter') && (event.target as HTMLElement | null)?.closest?.('button, a[href], summary, [role="button"], [role="tab"]')) return
+      // Space and Enter on a button, link, checkbox or radio keep their native meaning.
+      if ((key === ' ' || key === 'Enter') && (event.target as HTMLElement | null)?.closest?.(ACTIVATABLE)) return
       const handler = ref.current[key]
       if (!handler) return
-      if (modalOpen() && !inDialog.includes(key)) return
+      const modals = openModalCount()
+      if (modals > 1 || (modals === 1 && !inDialog.includes(key))) return
       // The key belongs to the shortcut: it must not also type into a field that the action focuses (a dialog).
       if (key.length === 1) event.preventDefault()
       handler(event)

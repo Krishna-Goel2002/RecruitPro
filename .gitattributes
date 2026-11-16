@@ -1,0 +1,32 @@
+# Line endings. The repository stores LF; these rules keep scripts runnable whatever core.autocrlf is set to.
+* text=auto
+
+# POSIX shell scripts must keep LF, or `./mvnw` fails in Git Bash / WSL / Docker with "/bin/sh^M: bad interpreter".
+mvnw text eol=lf
+*.sh text eol=lf
+# Files copied into Linux images or read by Linux tools.
+Dockerfile text eol=lf
+*.dockerignore text eol=lf
+nginx.conf text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Windows batch files need CRLF: cmd.exe can mis-parse labels and GOTO in LF-only files (mvnw.cmd).
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary files: never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.doc binary
+*.pptx binary
+*.zip binary
+*.jar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

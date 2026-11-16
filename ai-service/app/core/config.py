@@ -40,6 +40,16 @@ def _flag(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _number(env: Mapping[str, str], name: str, default: float, cast: type = float) -> float:
+    raw = (env.get(name) or "").strip()
+    if not raw:
+        return cast(default)
+    try:
+        return cast(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from None
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     provider = (env.get("LLM_PROVIDER") or "none").strip().lower()
@@ -52,12 +62,12 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         anthropic_base_url=(env.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com").rstrip("/"),
         openai_base_url=(env.get("OPENAI_BASE_URL") or "").rstrip("/") or None,
         openai_api_key=env.get("OPENAI_API_KEY") or None,
-        llm_timeout_seconds=float(env.get("LLM_TIMEOUT_SECONDS") or 20),
+        llm_timeout_seconds=_number(env, "LLM_TIMEOUT_SECONDS", 20),
         ocr_enabled=_flag(env.get("OCR_ENABLED")),
         soffice_path=(shutil.which("soffice") if soffice is None else (soffice.strip() or None)),
-        parse_workers=max(1, int(env.get("PARSE_WORKERS") or 2)),
-        parse_timeout_seconds=float(env.get("PARSE_TIMEOUT_SECONDS") or 60),
-        max_upload_bytes=int(env.get("MAX_UPLOAD_BYTES") or 10 * 1024 * 1024),
+        parse_workers=max(1, int(_number(env, "PARSE_WORKERS", 2, int))),
+        parse_timeout_seconds=_number(env, "PARSE_TIMEOUT_SECONDS", 60),
+        max_upload_bytes=int(_number(env, "MAX_UPLOAD_BYTES", 10 * 1024 * 1024, int)),
     )
 
 
@@ -65,6 +75,15 @@ def validate_settings(settings: Settings) -> None:
     """Raise ConfigError for configurations that must stop the service from starting."""
     if settings.llm_provider not in LLM_PROVIDERS:
         raise ConfigError(f"LLM_PROVIDER must be one of {', '.join(LLM_PROVIDERS)}")
+    if not 0 < settings.parse_timeout_seconds <= 600:
+        raise ConfigError("PARSE_TIMEOUT_SECONDS must be between 0 and 600")
+    if not 0 < settings.llm_timeout_seconds <= 300:
+        raise ConfigError("LLM_TIMEOUT_SECONDS must be between 0 and 300")
+    if not 1 <= settings.parse_workers <= 64:
+        raise ConfigError("PARSE_WORKERS must be between 1 and 64")
+    if not 1 <= settings.max_upload_bytes <= 10 * 1024 * 1024:
+        # The parser itself refuses files over 10 MiB (ingest.MAX_FILE_BYTES); a larger limit only wastes memory.
+        raise ConfigError("MAX_UPLOAD_BYTES must be between 1 and 10485760")
     if not settings.llm_enabled:
         return
     if not settings.llm_model:

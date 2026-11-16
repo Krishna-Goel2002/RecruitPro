@@ -148,6 +148,8 @@ export type Requirement = {
   minimumYears: number | null
   alternatives: string[]
   proficiency: Proficiency | null
+  /** Position HR set (0-based; integration pass). Lists come sorted by it; older servers omit it. */
+  displayOrder?: number
 }
 
 /**
@@ -171,16 +173,17 @@ export type JobStaff = {
   location: string
   jobType: JobType
   experienceLevel: ExperienceLevel
-  minimumSalary: number | null
-  maximumSalary: number | null
+  // The server omits null fields (Jackson non_null), so every nullable field can also be missing.
+  minimumSalary?: number | null
+  maximumSalary?: number | null
   vacancies: number
   status: JobStatus
-  publishedAt: string | null
-  deadline: string | null
+  publishedAt?: string | null
+  deadline?: string | null
   closedReason?: string | null
   requirementsVersion?: number
-  createdByEmail: string
-  createdByName?: string
+  createdByEmail?: string | null
+  createdByName?: string | null
   createdAt: string
   updatedAt: string
   requirements: Requirement[]
@@ -298,8 +301,9 @@ export type DecisionEvent = {
   previousStatus: ApplicationStatus
   newStatus: ApplicationStatus
   actionType: string
-  actorUserId: number
-  actorName: string
+  /** Null (or left out: the server omits nulls) for system events and hidden actors. */
+  actorUserId?: number | null
+  actorName?: string | null
   timestamp: string
   comment: string | null
   matchRunId?: number | null
@@ -445,6 +449,10 @@ export type Interview = {
   location: string | null
   status: InterviewStatus
   scorecard: Scorecard | null
+  /** Integration pass (R6-B4): the application's status, and whether a scorecard can be submitted / the existing one
+   *  edited now (false once the application is decided or withdrawn). Older servers omit both. */
+  applicationStatus?: ApplicationStatus
+  scorecardEditable?: boolean
 }
 
 export type InterviewDetail = Interview & { kit: InterviewQuestion[]; focusRequirements: RequirementEvidence[] }
@@ -561,7 +569,7 @@ export type AdminJob = {
   experienceLevel: string
   status: JobStatus
   vacancies: number
-  createdByEmail: string
+  createdByEmail?: string | null
   createdAt: string
   applicationCount: number
 }
@@ -589,6 +597,12 @@ export const AUDIT_ACTIONS = [
   'USER_STATUS_CHANGED', 'USER_ROLE_CHANGED', 'INVITATION_CREATED', 'INVITATION_REVOKED', 'INVITATION_ACCEPTED',
   'ORGANIZATION_CREATED', 'ORGANIZATION_UPDATED', 'AUDIT_EXPORTED', 'CANDIDATE_ACCOUNT_DELETED', 'LOGIN_LOCKED',
   'PASSWORD_CHANGED', 'PASSWORD_RESET', 'REFRESH_TOKEN_REUSE_DETECTED',
+  // WP-PLAT (backend audit/service/AuditActions.java)
+  'MFA_ENABLED', 'MFA_DISABLED', 'MFA_RECOVERY_CODES_REGENERATED', 'MFA_RECOVERY_CODE_USED', 'MFA_VERIFICATION_FAILED',
+  'SSO_LOGIN', 'SSO_IDENTITY_LINKED', 'SSO_LOGIN_REFUSED', 'WORK_SAMPLE_CANCELLED', 'WORK_SAMPLE_FILE_DOWNLOADED', 'SCORECARD_UPDATED',
+  // WP-VBE (backend verification/service/VerificationAuditActions.java)
+  'VERIFICATION_SOURCE_CONNECTED', 'VERIFICATION_SOURCE_REVOKED', 'VERIFICATION_OWNERSHIP_PROVEN', 'VERDICT_SHARED',
+  'VERDICT_REVIEWED', 'VERIFICATION_SETTINGS_CHANGED', 'REFERENCE_REQUESTED',
 ] as const
 
 // ---------------------------------------------------------------------------------------------------------------------

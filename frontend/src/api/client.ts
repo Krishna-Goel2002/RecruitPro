@@ -20,16 +20,34 @@ export const API_BASE_URL: string = (import.meta.env.VITE_API_BASE_URL || DEFAUL
 export const PORTAL_HEADER = 'X-RecruitPro-Portal'
 export const PORTAL = 'candidate'
 
+/** A machine code the server puts in front of a message, e.g. `OAUTH_NOT_CONFIGURED: connecting GitHub is …`. */
+const CODE_PREFIX = /^([A-Z][A-Z0-9]*_[A-Z0-9_]+):\s*(.*)$/s
+
+/** Splits `CODE: sentence` into the code and a sentence fit to show (first letter upper-cased). */
+export function splitCodedMessage(message: string): { code: string | null; text: string } {
+  const match = CODE_PREFIX.exec(message.trim())
+  if (!match) return { code: null, text: message }
+  const rest = match[2].trim()
+  return { code: match[1], text: rest ? `${rest.charAt(0).toUpperCase()}${rest.slice(1)}` : message }
+}
+
 export class ApiError extends Error {
   /** HTTP status; 0 for a network failure. */
   readonly status: number
   readonly fieldErrors: ApiFieldError[]
+  /** Machine code from a `CODE: message` answer (the code is removed from `message`). */
+  readonly code: string | null
+  /** Seconds from a `Retry-After` header (429), when the server sent one. */
+  readonly retryAfterSeconds: number | null
 
-  constructor(message: string, status: number, fieldErrors: ApiFieldError[] = []) {
-    super(message)
+  constructor(message: string, status: number, fieldErrors: ApiFieldError[] = [], options: { code?: string | null; retryAfterSeconds?: number | null } = {}) {
+    const coded = options.code === undefined ? splitCodedMessage(message) : { code: options.code, text: message }
+    super(coded.text)
     this.name = 'ApiError'
     this.status = status
     this.fieldErrors = fieldErrors
+    this.code = coded.code
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null
   }
 
   get isNetworkError(): boolean {
@@ -164,13 +182,25 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
+/** `Retry-After` as seconds (delta-seconds or an HTTP date); null when absent or unreadable. */
+export function retryAfterSeconds(header: string | null, now = Date.now()): number | null {
+  if (!header) return null
+  const value = header.trim()
+  if (/^\d+$/.test(value)) return Number(value)
+  const at = Date.parse(value)
+  return Number.isNaN(at) ? null : Math.max(0, Math.ceil((at - now) / 1000))
+}
+
 /** Turns a response into the envelope's `data`, or throws `ApiError`. */
 async function unwrap<T>(response: Response): Promise<T> {
   const payload = response.status === 204 ? undefined : await readJson(response)
   const envelope = isEnvelope(payload) ? payload : null
   if (!response.ok || (envelope !== null && !envelope.success)) {
     const serverMessage = envelope?.message ?? (isRecord(payload) && typeof payload.message === 'string' ? payload.message : null)
-    throw new ApiError(serverMessage || defaultMessage(response.status), response.status, toFieldErrors(envelope?.errors))
+    const status = response.status
+    throw new ApiError(serverMessage || defaultMessage(status), status, toFieldErrors(envelope?.errors), {
+      retryAfterSeconds: status === 429 ? retryAfterSeconds(response.headers.get('Retry-After')) : null,
+    })
   }
   // `data` is absent for "null" responses (the backend omits null fields); callers typed `T = void | null` accept that.
   return (envelope ? envelope.data ?? null : payload ?? null) as T
@@ -297,7 +327,14 @@ export async function apiDownload(path: string, options: RequestOptions = {}): P
 
 /** Message suitable for showing to the user. */
 export function errorMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
-  if (error instanceof ApiError) return error.message
+  if (error instanceof ApiError) {
+    const wait = error.retryAfterSeconds
+    if (error.status === 429 && wait !== null && wait > 0) {
+      const when = wait < 90 ? `${wait} second${wait === 1 ? '' : 's'}` : `${Math.ceil(wait / 60)} minutes`
+      return `${error.message} You can try again in ${when}.`
+    }
+    return error.message
+  }
   if (error instanceof Error && error.message) return error.message
   return fallback
 }

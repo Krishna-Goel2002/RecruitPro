@@ -3,6 +3,7 @@ package com.recruitpro.security.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.recruitpro.common.dto.ApiResponse;
 import com.recruitpro.common.web.ClientIp;
+import com.recruitpro.security.RequestPaths;
 import com.recruitpro.security.ratelimit.RateLimiterStore;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -34,6 +35,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     static final String SIGNUP_PATH = "/api/v1/organizations/signup";
     /** DELETE only: the password confirmation of account deletion must not be guessable without limit. */
     static final String ACCOUNT_DELETION_PATH = "/api/v1/candidates/me";
+    /** POST only (R1-H2): password-confirmed account changes and the MFA steps that also accept an mfaToken. */
+    static final String PASSWORD_CHANGE_PATH = "/api/v1/me/password";
+    static final String MFA_ENROLL_PATH = "/api/v1/me/mfa/enroll";
+    static final String MFA_CONFIRM_PATH = "/api/v1/me/mfa/confirm";
+    static final String MFA_DISABLE_PATH = "/api/v1/me/mfa/disable";
+    /** Integration pass (R1-U1): regenerating recovery codes now takes a code or the password, so it is limited too. */
+    static final String MFA_RECOVERY_CODES_PATH = "/api/v1/me/mfa/recovery-codes";
+    private static final List<String> ACCOUNT_POST_PATHS =
+            List.of(PASSWORD_CHANGE_PATH, MFA_ENROLL_PATH, MFA_CONFIRM_PATH, MFA_DISABLE_PATH, MFA_RECOVERY_CODES_PATH);
 
     private static final List<Rule> RULES = List.of(
             new Rule("/api/v1/auth/login", 10, Duration.ofMinutes(1)),
@@ -43,7 +53,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
             new Rule("/api/v1/auth/accept-invite", 10, Duration.ofMinutes(1)),
             new Rule("/api/v1/auth/mfa/verify", 10, Duration.ofMinutes(1)),
             new Rule(SIGNUP_PATH, 3, Duration.ofHours(1)),
-            new Rule(ACCOUNT_DELETION_PATH, 5, Duration.ofMinutes(15)));
+            new Rule(ACCOUNT_DELETION_PATH, 5, Duration.ofMinutes(15)),
+            new Rule(PASSWORD_CHANGE_PATH, 10, Duration.ofMinutes(15)),
+            new Rule(MFA_ENROLL_PATH, 10, Duration.ofMinutes(1)),
+            new Rule(MFA_CONFIRM_PATH, 10, Duration.ofMinutes(1)),
+            new Rule(MFA_DISABLE_PATH, 10, Duration.ofMinutes(15)),
+            new Rule(MFA_RECOVERY_CODES_PATH, 10, Duration.ofMinutes(15)));
 
     /** Every other route under /api/v1/auth/ (verify-email, reset-password, invitation preview, ...). */
     private static final Rule AUTH_DEFAULT = new Rule("/api/v1/auth/*", 30, Duration.ofMinutes(1));
@@ -69,7 +84,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         String path = path(request);
         boolean accountDeletion = path.equals(ACCOUNT_DELETION_PATH) && "DELETE".equalsIgnoreCase(request.getMethod());
-        return !(path.startsWith(AUTH_PREFIX) || path.equals(SIGNUP_PATH) || accountDeletion);
+        boolean accountChange = ACCOUNT_POST_PATHS.contains(path) && "POST".equalsIgnoreCase(request.getMethod());
+        return !(path.startsWith(AUTH_PREFIX) || path.equals(SIGNUP_PATH) || accountDeletion || accountChange);
     }
 
     @Override
@@ -110,19 +126,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return AUTH_DEFAULT;
     }
 
+    /** The decoded path MVC maps (R1-M2: {@code /api/v1/candidates/m%65} must count against the same limit). */
     private static String path(HttpServletRequest request) {
-        String uri = request.getRequestURI();
-        if (uri == null) {
-            return "";
-        }
-        String contextPath = request.getContextPath();
-        if (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)) {
-            uri = uri.substring(contextPath.length());
-        }
-        while (uri.length() > 1 && uri.endsWith("/")) {
-            uri = uri.substring(0, uri.length() - 1);
-        }
-        return uri;
+        return RequestPaths.of(request);
     }
 
     private record Rule(String route, int limit, Duration window) {

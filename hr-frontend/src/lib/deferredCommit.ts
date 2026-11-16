@@ -1,19 +1,41 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback } from 'react'
 import { useToast } from '../design/components'
 
 /**
  * "Send in 5 s, Undo" for actions that leave the building (decisions notify candidates and are audited). The UI
  * changes optimistically at once; the request is sent only when the window passes, so Undo needs no server call and
- * leaves no audit noise. Pending commits are flushed if the page is closed (the browser asks first).
+ * leaves no audit noise.
+ *
+ * Pending commits live at module level on purpose: navigating to another screen inside the app does not cancel a
+ * decision the user confirmed (it is still sent when its window passes). Closing or reloading the tab while one is
+ * pending makes the browser ask first (the listener is registered while anything is pending, independent of which
+ * component scheduled it). Signing out sends pending commits first (`flushDeferredCommits`).
  */
-type Pending = { timer: number; run: () => void }
+type Pending = { timer: number; run: () => Promise<void> }
 const pending = new Map<number, Pending>()
 let seq = 0
+let listening = false
 
 function onBeforeUnload(event: BeforeUnloadEvent) {
   if (pending.size === 0) return
   event.preventDefault()
   event.returnValue = ''
+}
+
+function syncUnloadGuard() {
+  if (typeof window === 'undefined') return
+  if (pending.size > 0 && !listening) {
+    window.addEventListener('beforeunload', onBeforeUnload)
+    listening = true
+  } else if (pending.size === 0 && listening) {
+    window.removeEventListener('beforeunload', onBeforeUnload)
+    listening = false
+  }
+}
+
+/** Number of commits still inside their Undo window (tests, sign-out). */
+export function pendingCommitCount(): number {
+  return pending.size
 }
 
 export interface DeferredOptions {
@@ -32,29 +54,26 @@ export interface DeferredOptions {
 export function useDeferredCommit() {
   const { toast, dismiss } = useToast()
 
-  useEffect(() => {
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [])
-
   return useCallback(
     (options: DeferredOptions) => {
       const id = ++seq
       const delay = options.delay ?? 5000
       let toastId = 0
-      const run = () => {
-        pending.delete(id)
+      const run = async () => {
+        if (!pending.delete(id)) return
+        syncUnloadGuard()
         dismiss(toastId)
-        options
-          .commit()
-          .then(() => options.onCommitted?.())
-          .catch(cause => {
-            options.revert()
-            options.onError?.(cause)
-          })
+        try {
+          await options.commit()
+          options.onCommitted?.()
+        } catch (cause) {
+          options.revert()
+          options.onError?.(cause)
+        }
       }
-      const timer = window.setTimeout(run, delay)
+      const timer = window.setTimeout(() => { void run() }, delay)
       pending.set(id, { timer, run })
+      syncUnloadGuard()
       toastId = toast({
         tone: 'info',
         title: options.title,
@@ -67,6 +86,7 @@ export function useDeferredCommit() {
             if (!entry) return
             window.clearTimeout(entry.timer)
             pending.delete(id)
+            syncUnloadGuard()
             options.revert()
           },
         },
@@ -77,10 +97,9 @@ export function useDeferredCommit() {
   )
 }
 
-/** Sends every pending commit now (e.g. before a bulk refresh). */
-export function flushDeferredCommits() {
-  for (const [, entry] of [...pending]) {
-    window.clearTimeout(entry.timer)
-    entry.run()
-  }
+/** Sends every pending commit now (e.g. before signing out) and resolves when they have all finished. */
+export function flushDeferredCommits(): Promise<void> {
+  const entries = [...pending.values()]
+  entries.forEach(entry => window.clearTimeout(entry.timer))
+  return Promise.all(entries.map(entry => entry.run())).then(() => undefined)
 }

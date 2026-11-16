@@ -54,8 +54,16 @@ def _monthly(year: int, months: range, day: int = 12) -> list[str]:
     return [f"{year}-{month:02d}-{day:02d}T10:00:00Z" for month in months]
 
 
-def demo_accounts(code: str = "") -> list[FakeAccount]:
+BULK_REPO_AGE_DAYS = 3
+
+
+def demo_accounts(code: str = "", now: datetime | None = None) -> list[FakeAccount]:
     bio = f"{LABEL} {code}".strip()
+    # demo-ravi's spring-shop is always a fresh repository with all commits on its creation day (BULK_HISTORY); a fixed
+    # date would age past the 14-day window and silently stop showing the note.
+    moment = now or datetime.now(timezone.utc)
+    bulk_created = (moment - timedelta(days=BULK_REPO_AGE_DAYS)).replace(microsecond=0)
+    bulk_day = (bulk_created + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     asha = FakeAccount(login="demo-asha", name=DEMO_HOLDER_NAME, bio=bio, created_at="2018-05-02T08:00:00Z", repos=[
         FakeRepo(name="react-dashboard", languages={"TypeScript": 82000, "CSS": 9000, "HTML": 3000},
                  topics=["react", "dashboard"],
@@ -89,8 +97,9 @@ def demo_accounts(code: str = "") -> list[FakeAccount]:
                         "pom.xml": "<project><dependencies><dependency><groupId>org.springframework.boot</groupId>"
                                    "<artifactId>spring-boot-starter-web</artifactId></dependency></dependencies>"
                                    "</project>"},
-                 commits=_commits("demo-ravi", "Ravi Synthetica", ["2025-11-10T10:00:00Z"] * 30),
-                 created_at="2025-11-10T09:00:00Z", pushed_at="2025-11-10T12:00:00Z", stats=[("demo-ravi", 30)]),
+                 commits=_commits("demo-ravi", "Ravi Synthetica", [bulk_day] * 30),
+                 created_at=bulk_created.strftime("%Y-%m-%dT%H:%M:%SZ"), pushed_at=bulk_day,
+                 stats=[("demo-ravi", 30)]),
         FakeRepo(name="tensorflow", languages={"Python": 900000}, fork=True,
                  commits=[FakeCommit("tf-maintainer", "TF Maintainer", "2024-01-01T00:00:00Z")],
                  created_at="2024-06-01T00:00:00Z"),

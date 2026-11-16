@@ -204,6 +204,58 @@ class JobRequirementsV2IntegrationTest {
     }
 
     @Test
+    void reorderingThePublishedJobsRequirementsSavesTheOrderWithoutANewVersionOrRematch() throws Exception {
+        // Integration pass (R6-B2): the order was not stored, and a reorder bumped the version and re-matched everyone.
+        var manager = user("owner@req.test", "HR_MANAGER");
+        Job job = fixtures.job(owner, "Ordered role", JobStatus.PUBLISHED);
+        Application open = application(job, "order@cand.test");
+        long[] ids = new long[3];
+        String[] names = {"Java", "Docker", "SQL"};
+        for (int i = 0; i < names.length; i++) {
+            ids[i] = mapper.readTree(mvc.perform(post("/api/v1/jobs/{id}/requirements", job.getId()).with(manager)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"type\":\"SKILL\",\"description\":\"" + names[i] + "\",\"mandatory\":false}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.displayOrder", is(i)))
+                    .andReturn().getResponse().getContentAsString()).path("data").path("id").asLong();
+        }
+        int version = jobs.findById(job.getId()).orElseThrow().getRequirementsVersion();
+        int audits = auditEvents.findAllByOrganizationIdAndActionOrderByIdAsc(organization.getId(),
+                AuditActions.JOB_REQUIREMENTS_CHANGED).size();
+        backgroundJobs.deleteAll();
+
+        String reordered = "{\"requirements\":["
+                + item(ids[2], "SQL") + "," + item(ids[0], "Java") + "," + item(ids[1], "Docker") + "]}";
+        mvc.perform(put("/api/v1/jobs/{id}/requirements", job.getId()).with(manager)
+                        .contentType(MediaType.APPLICATION_JSON).content(reordered))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requirementsVersion", is(version)))
+                .andExpect(jsonPath("$.data.requirements[*].description", contains("SQL", "Java", "Docker")));
+        mvc.perform(get("/api/v1/jobs/{id}", job.getId()).with(manager))
+                .andExpect(jsonPath("$.data.requirements[*].description", contains("SQL", "Java", "Docker")))
+                .andExpect(jsonPath("$.data.requirements[*].displayOrder", contains(0, 1, 2)));
+        assertEquals(audits, auditEvents.findAllByOrganizationIdAndActionOrderByIdAsc(organization.getId(),
+                AuditActions.JOB_REQUIREMENTS_CHANGED).size(), "a reorder is not audited as a change");
+        assertTrue(backgroundJobs.findAllByJobTypeAndEntityIdOrderByIdAsc(BackgroundJobType.MATCH_APPLICATION,
+                open.getId()).isEmpty(), "a reorder does not re-match");
+
+        // A content change (with a reorder) is a new version, as before, and keeps the requested order.
+        String changed = "{\"requirements\":["
+                + item(ids[1], "Docker") + "," + item(ids[2], "PostgreSQL") + "," + item(ids[0], "Java") + "]}";
+        mvc.perform(put("/api/v1/jobs/{id}/requirements", job.getId()).with(manager)
+                        .contentType(MediaType.APPLICATION_JSON).content(changed))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.requirementsVersion", is(version + 1)))
+                .andExpect(jsonPath("$.data.requirements[*].description", contains("Docker", "PostgreSQL", "Java")));
+        assertFalse(backgroundJobs.findAllByJobTypeAndEntityIdOrderByIdAsc(BackgroundJobType.MATCH_APPLICATION,
+                open.getId()).isEmpty(), "a content change re-matches");
+    }
+
+    private static String item(long id, String description) {
+        return "{\"id\":" + id + ",\"type\":\"SKILL\",\"description\":\"" + description + "\",\"mandatory\":false}";
+    }
+
+    @Test
     void candidatesGetJobPublicForOpenJobsOnlyAndStaffGetJobStaff() throws Exception {
         Job open = fixtures.job(owner, "Open role", JobStatus.PUBLISHED);
         screening.requirement(open, RequirementType.SKILL, "Java", true, true);
@@ -277,6 +329,15 @@ class JobRequirementsV2IntegrationTest {
         mvc.perform(post("/api/v1/jobs/compile-requirements").with(user("owner@req.test", "HR_MANAGER"))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"\",\"description\":\"x\"}"))
                 .andExpect(status().isBadRequest());
+        // Integration pass (R6-B1): the compile limits equal the job's (title 255), not the AI service's 200.
+        mvc.perform(post("/api/v1/jobs/compile-requirements").with(user("owner@req.test", "HR_MANAGER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"" + "T".repeat(256) + "\",\"description\":\"x\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/jobs/compile-requirements").with(user("owner@req.test", "HR_MANAGER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"" + "T".repeat(255) + "\",\"description\":\"x\"}"))
+                .andExpect(status().isServiceUnavailable());
         mvc.perform(post("/api/v1/jobs/compile-requirements").with(user("owner@req.test", "HR_MANAGER"))
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isServiceUnavailable())

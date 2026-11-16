@@ -46,7 +46,10 @@ export function ChangePasswordPage() {
       setDone(true)
     },
     onError: cause => {
-      if (isApiError(cause, 400) || isApiError(cause, 401)) setErrors({ current: 'That is not your current password.' })
+      // Only the server's "Current password is incorrect" belongs on that field; other 400s (same password, policy) and
+      // 429 are shown as they are.
+      if (isApiError(cause, 400) && !cause.fieldErrors.length && /current password/i.test(cause.message)) setErrors({ current: 'That is not your current password.' })
+      else if (isApiError(cause, 400) && /must be different/i.test(cause.message)) setErrors({ next: 'Choose a password that differs from the current one.' })
     },
   })
 
@@ -90,7 +93,7 @@ export function ChangePasswordPage() {
             <PasswordInput value={confirm} onChange={setConfirm} autoComplete="new-password" />
           </Field>
         </div>
-        {save.error && !errors.current && <InlineError error={save.error} />}
+        {save.error && !errors.current && !errors.next && <InlineError error={save.error} />}
         <div className="acc-actions">
           <Button type="submit" variant="primary" icon={KeyRound} loading={save.isPending}>Change password</Button>
         </div>

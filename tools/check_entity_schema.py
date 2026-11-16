@@ -8,7 +8,9 @@ CamelCaseToUnderscoresNamingStrategy), applies all migrations to a throwaway Pos
 reports:
   * tables or columns that do not exist,
   * Java types that Hibernate would not accept for the column's SQL type,
-  * @Column(nullable = false) fields whose column is nullable (warning only).
+  * @Column(nullable = false) fields whose column is nullable (warning only),
+  * fields whose Java type this script has no rule for (warning only: the column type was NOT checked, so add the
+    type to COMPATIBLE rather than assuming it matches).
 
 Usage:
     pip install pgserver psycopg2-binary tree-sitter tree-sitter-java
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import tempfile
 
@@ -146,7 +149,8 @@ def expected_columns(cls_name, classes):
 def load_schema():
     files = sorted((f for f in os.listdir(MIGRATIONS) if VERSION_RE.match(f)),
                    key=lambda f: tuple(int(p) for p in re.split(r"[._]", VERSION_RE.match(f).group(1))))
-    server = pgserver.get_server(tempfile.mkdtemp(prefix="rp-pg-schema-"), cleanup_mode="stop")
+    data_dir = tempfile.mkdtemp(prefix="rp-pg-schema-")
+    server = pgserver.get_server(data_dir, cleanup_mode="stop")
     server.psql("CREATE DATABASE recruitpro_schema;")
     conn = psycopg2.connect(server.get_uri("recruitpro_schema"))
     try:
@@ -164,6 +168,11 @@ def load_schema():
         return schema, len(files)
     finally:
         conn.close()
+        try:
+            server.cleanup()
+        except Exception:  # noqa: BLE001 - best effort; the server stops at exit anyway
+            pass
+        shutil.rmtree(data_dir, ignore_errors=True)
 
 
 def main(argv):
@@ -193,7 +202,10 @@ def main(argv):
                 allowed = {"character varying"} if "STRING" in fanns.get("Enumerated", "") else {"integer", "smallint"}
             else:
                 allowed = COMPATIBLE.get(base)
-            if allowed is not None and dtype not in allowed:
+            if allowed is None:
+                warnings.append(f"{name}.{fname} ({ftype}): no type rule for '{base}', column "
+                                f"'{table}.{column}' ({dtype}) not type-checked")
+            elif dtype not in allowed:
                 errors.append(f"{name}.{fname} ({ftype}): column '{table}.{column}' is {dtype}")
             if "nullable = false" in fanns.get("Column", "").replace("nullable=false", "nullable = false") and nullable:
                 warnings.append(f"{name}.{fname}: mapped nullable = false but '{table}.{column}' allows NULL")

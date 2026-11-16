@@ -77,7 +77,6 @@ def _check_zip(content: bytes) -> None:
 
 def _pdf(content: bytes) -> DocumentContent:
     from pypdf import PdfReader
-    from pypdf.errors import PdfReadError
 
     try:
         reader = PdfReader(io.BytesIO(content))
@@ -106,7 +105,8 @@ def _pdf(content: bytes) -> DocumentContent:
         return DocumentContent("pdf", "\n".join(texts)[:MAX_SNAPSHOT], metadata, len(reader.pages))
     except ExtractionError:
         raise
-    except (PdfReadError, ValueError, KeyError, TypeError, OSError, RecursionError) as exc:
+    except Exception as exc:  # noqa: BLE001 - malformed PDFs surface many pypdf types (PdfReadError, LimitReachedError,
+        # PyPdfError, AttributeError, IndexError, zlib/struct errors, RecursionError ...); none may become a 500
         raise ExtractionError("DOCUMENT_UNREADABLE", "the PDF could not be read") from exc
 
 
@@ -126,13 +126,13 @@ def _docx(content: bytes) -> DocumentContent:
     _check_zip(content)
     try:
         document = docx.Document(io.BytesIO(content))
+        lines = [paragraph.text for paragraph in document.paragraphs]
+        for table in document.tables:
+            for row in table.rows:
+                lines.append(" | ".join(cell.text for cell in row.cells))
+        metadata = _core(document.core_properties)  # parsed lazily: a broken docProps/core.xml fails here
     except Exception as exc:  # noqa: BLE001 - python-docx surfaces lxml/zip/key errors
         raise ExtractionError("DOCUMENT_UNREADABLE", "the DOCX could not be read") from exc
-    lines = [paragraph.text for paragraph in document.paragraphs]
-    for table in document.tables:
-        for row in table.rows:
-            lines.append(" | ".join(cell.text for cell in row.cells))
-    metadata = _core(document.core_properties)
     app_xml = _app_property(content, "docProps/app.xml", "Application")
     metadata["producer"] = app_xml
     return DocumentContent("docx", "\n".join(lines)[:MAX_SNAPSHOT], metadata)
@@ -144,14 +144,14 @@ def _pptx(content: bytes) -> DocumentContent:
     _check_zip(content)
     try:
         presentation = Presentation(io.BytesIO(content))
-    except Exception as exc:  # noqa: BLE001
+        lines: list[str] = []
+        for slide in presentation.slides:
+            for shape in slide.shapes:
+                if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
+                    lines.append(shape.text_frame.text)
+        metadata = _core(presentation.core_properties)
+    except Exception as exc:  # noqa: BLE001 - python-pptx surfaces lxml/zip/key errors, also from lazily read parts
         raise ExtractionError("DOCUMENT_UNREADABLE", "the PPTX could not be read") from exc
-    lines: list[str] = []
-    for slide in presentation.slides:
-        for shape in slide.shapes:
-            if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
-                lines.append(shape.text_frame.text)
-    metadata = _core(presentation.core_properties)
     metadata["producer"] = _app_property(content, "docProps/app.xml", "Application")
     return DocumentContent("pptx", "\n".join(lines)[:MAX_SNAPSHOT], metadata, len(presentation.slides))
 

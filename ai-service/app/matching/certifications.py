@@ -34,6 +34,19 @@ _GENERIC = frozenset(content_tokens("certified certification certificate certifi
                                     "credential exam passed valid active current course program programme holder"))
 
 
+# R4-U8 (integration pass): words that mark a partial or in-progress stage of a qualification ("CA Inter cleared",
+# "CFA Level II candidate", "Pursuing ACCA"). A held certification carrying one that the requirement does not name is
+# at most a partial match, never MATCHED. ("ITIL Foundation" still meets "ITIL": both sides carry "foundation".)
+_PARTIAL_STAGE_RE = re.compile(r"\b(inter|intermediate|foundation|ipcc|pursuing|appearing|appeared|aspirant|"
+                               r"part[- ]qualified|semi[- ]qualified|level\s+(?:1|2|i|ii))\b", re.I)
+
+
+def partial_stages(text: str) -> frozenset[str]:
+    """Partial-stage markers in a certification text (lower case, spaces normalised)."""
+    expanded = _ACRONYM_RE.sub(lambda match: f" {ACRONYMS[match.group(1).lower()]} ", text or "")
+    return frozenset(re.sub(r"[\s-]+", " ", match.group(1).lower()) for match in _PARTIAL_STAGE_RE.finditer(expanded))
+
+
 def certification_tokens(text: str) -> frozenset[str]:
     expanded = _ACRONYM_RE.sub(lambda match: f" {ACRONYMS[match.group(1).lower()]} ", text)
     return frozenset(content_tokens(expanded) - _GENERIC)

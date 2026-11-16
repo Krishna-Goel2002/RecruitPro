@@ -261,3 +261,94 @@ def test_gitlab(client, fake_net):
     assert _verdicts(data) == ["VERIFIED"]
     assert "GITLAB_NAME_ATTRIBUTION" in data["warnings"]
     assert "999" not in json.dumps(data) and "500" not in json.dumps(data["evidence"][1]["attributes"])
+
+
+# ------------------------------------------------------------------------------------- bug-hunt regressions
+@pytest.mark.parametrize("status,headers,body", [
+    (403, {"retry-after": "60", "x-ratelimit-remaining": "4000"}, {"message": "You have exceeded a secondary rate limit"}),
+    (403, {}, {"message": "API rate limit exceeded for 1.2.3.4."}),
+    (403, {"ratelimit-remaining": "0"}, {"message": "Forbidden"}),  # GitLab's header name
+    (429, {}, {}),
+])
+def test_rate_limits_are_reported_not_mistaken_for_a_missing_account(status, headers, body):
+    import httpx
+
+    from app.sources.common import SourceError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json=body, headers=headers)
+
+    settings = load_settings({"AGENT_SERVICE_TOKEN": "x"})
+    source = GitHubSource(settings, Budget(10, 30), None, transport=httpx.MockTransport(handler))
+    with pytest.raises(SourceError) as error:
+        source.profile("dev")
+    assert error.value.code == "RATE_LIMITED"
+
+
+def test_a_plain_403_is_still_not_found():
+    import httpx
+
+    from app.sources.common import SourceError
+
+    source = GitHubSource(load_settings({"AGENT_SERVICE_TOKEN": "x"}), Budget(10, 30), None,
+                          transport=httpx.MockTransport(lambda request: httpx.Response(403, json={"message": "Forbidden"})))
+    with pytest.raises(SourceError) as error:
+        source.profile("dev")
+    assert error.value.code == "SOURCE_NOT_FOUND"
+
+
+def test_gitlab_raw_files_are_streamed_and_capped(fake_net):
+    import httpx
+
+    from app.sources.common import MAX_FILE_BYTES
+
+    fake_net.gitlab = True
+    fake_net.accounts.append(FakeAccount(login="dev", name="Dev Person", repos=[
+        repo("a", languages=TS, files={"package.json": "{}"})]))
+    inner = fake_net.network().api_transport
+    pulled = {"chunks": 0}
+
+    def endless():
+        while True:
+            pulled["chunks"] += 1
+            yield b" " * 65536
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/raw"):
+            return httpx.Response(200, content=endless())
+        return inner.handle_request(request)
+
+    facts = GitLabSource(load_settings({"AGENT_SERVICE_TOKEN": "x"}), Budget(50, 30), None,
+                         transport=httpx.MockTransport(handler)).collect("dev", 10)
+    assert len(facts.repos[0].manifests["package.json"]) == MAX_FILE_BYTES
+    assert pulled["chunks"] <= MAX_FILE_BYTES // 65536 + 2
+
+
+def test_gitlab_raw_file_rate_limit_is_reported_like_github(fake_net):
+    import httpx
+
+    from app.sources.common import SourceError
+
+    fake_net.gitlab = True
+    fake_net.accounts.append(FakeAccount(login="dev", repos=[repo("a", languages=TS, files={"package.json": "{}"})]))
+    inner = fake_net.network().api_transport
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/raw"):
+            return httpx.Response(429, text="Retry later")
+        return inner.handle_request(request)
+
+    with pytest.raises(SourceError) as error:
+        GitLabSource(load_settings({"AGENT_SERVICE_TOKEN": "x"}), Budget(50, 30), None,
+                     transport=httpx.MockTransport(handler)).collect("dev", 10)
+    assert error.value.code == "RATE_LIMITED"
+
+
+def test_deeply_nested_manifests_do_not_crash_the_verification(client, fake_net):
+    from app.manifests import parse_manifest
+
+    assert parse_manifest("package.json", "[" * 100_000) == []
+    assert parse_manifest("Cargo.toml", "a = " + "[" * 100_000) == []
+    data = _post(client, fake_net, [repo("a", languages=TS, files={"package.json": "{\"a\":" * 50_000})],
+                 [("SKILL", "TypeScript")])
+    assert _verdicts(data) == ["PARTLY_VERIFIED"]

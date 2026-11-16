@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useLocation } from 'react-router-dom'
 import { ApiError, blockRefreshUntilSignIn, refreshSession, setAccessToken, subscribeSession } from '../api/client'
 import { authApi } from '../api/endpoints'
 import type { AuthResponse, AuthUser, LoginRequest, RegisterRequest } from '../api/types'
@@ -32,6 +33,14 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 const STAFF_MESSAGE = 'This portal is for candidate accounts. Staff members sign in on the HR portal.'
+
+/** Routes that work without a candidate session and must never call /auth/refresh. */
+const PUBLIC_ROUTES = [/^\/reference\/[^/]+\/?$/, /^\/__design\/?$/]
+
+/** Exactly the public routes of App.tsx; anything else (including unknown paths, which 404 inside the shell) is not. */
+export function isPublicPath(pathname: string): boolean {
+  return PUBLIC_ROUTES.some(route => route.test(pathname))
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
@@ -77,10 +86,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
   }, [])
 
-  // Restore the session from the httpOnly refresh cookie once on load (StrictMode-safe: refresh is single-flight).
+  // Restore the session from the httpOnly refresh cookie once (StrictMode-safe: refresh is single-flight). Public
+  // pages (the referee's link, the style guide) never touch the candidate's session: a referee opening the link in
+  // a browser where a candidate is signed in must not refresh (or rotate) that candidate's cookie. If the visitor
+  // later moves to an app route in the same page load, the restore happens then.
+  const { pathname } = useLocation()
+  const publicPage = isPublicPath(pathname)
+  const restoredOnce = useRef(false)
   useEffect(() => {
+    if (publicPage || restoredOnce.current) return
+    restoredOnce.current = true
     restore()
-  }, [restore])
+  }, [publicPage, restore])
 
   useEffect(
     () =>

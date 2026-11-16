@@ -47,6 +47,7 @@
   .r-analysis { min-width: 0; }
   .r-analysis-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
   .r-analysis-heading { min-width: 0; }
+  .r-analysis-actions { display: flex; gap: 4px; flex: none; }
   .r-panel { display: flex; flex-direction: column; gap: 16px; }
   .r-flags { border-top: 1px solid var(--border-hairline); border-bottom: 1px solid var(--border-hairline); padding: 10px 0; }
   .r-flags summary { color: var(--fg-default); cursor: pointer; font: 500 var(--text-sm) / var(--lh-sm) var(--font-sans); }

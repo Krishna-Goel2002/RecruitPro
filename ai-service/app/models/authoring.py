@@ -61,7 +61,7 @@ class WorkSampleResponse(BaseModel):
 class InterviewKitRequest(BaseModel):
     jobTitle: str = Field(min_length=1, max_length=200)
     requirements: list[MatchRequirement] = Field(default_factory=list, max_length=100)
-    focusRequirementIds: list[int] | None = None
+    focusRequirementIds: list[int] | None = Field(default=None, max_length=100)
 
 
 class InterviewQuestion(BaseModel):

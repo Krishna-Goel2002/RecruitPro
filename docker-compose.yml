@@ -21,7 +21,9 @@ name: recruitpro
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # Pinned (pgvector 0.8.7 on PostgreSQL 16, the variant the floating "pg16" tag pointed at). The pgvector extension
+    # is not used by any migration; this is plain PostgreSQL 16 for the app.
+    image: pgvector/pgvector:0.8.7-pg16
     environment:
       POSTGRES_DB: recruitpro
       POSTGRES_USER: recruitpro
@@ -36,7 +38,7 @@ services:
       retries: 20
 
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.33.1
     ports:
       - "127.0.0.1:8025:8025"   # web UI
       - "127.0.0.1:1025:1025"   # SMTP (for a backend run outside Docker)
@@ -81,10 +83,11 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+      # Both Python images have a HEALTHCHECK on /health; waiting for it avoids "AI service DOWN" on the first start.
       ai-service:
-        condition: service_started
+        condition: service_healthy
       agent-service:
-        condition: service_started
+        condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: dev
       DB_URL: jdbc:postgresql://postgres:5432/recruitpro
@@ -137,7 +140,12 @@ services:
     build:
       context: ./frontend
       args:
+        # The API URL is compiled into the bundle; API_ORIGIN (its scheme://host:port) goes into the nginx CSP
+        # connect-src. Change both together.
         VITE_API_BASE_URL: http://localhost:8080/api/v1
+        API_ORIGIN: http://localhost:8080
+    environment:
+      API_ORIGIN: http://localhost:8080
     depends_on:
       - backend
     ports:
@@ -149,6 +157,9 @@ services:
       context: ./hr-frontend
       args:
         VITE_API_BASE_URL: http://localhost:8080/api/v1
+        API_ORIGIN: http://localhost:8080
+    environment:
+      API_ORIGIN: http://localhost:8080
     depends_on:
       - backend
     ports:

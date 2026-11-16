@@ -10,7 +10,7 @@ import { ErrorState, FormError } from '../../components/Feedback'
 import { fieldErrorMap, focusFirstInvalid } from '../../components/Form'
 import { useNotify } from '../../components/Notices'
 import {
-  Badge, Button, Checkbox, Drawer, EmptyState, EvidenceLadder, Field, IconButton, Input, Menu, Section, Select, Skeleton, Stepper,
+  Alert, Badge, Button, Checkbox, Drawer, EmptyState, EvidenceLadder, Field, IconButton, Input, Menu, Section, Select, Skeleton, Stepper,
 } from '../../design/components'
 import { ArrowRight, Ellipsis, MailPlus, UserRoundCheck, X } from '../../design/icons'
 import { formatDate, plural } from '../../design/lib/format'
@@ -163,6 +163,7 @@ export function ReferencesSection({ onAsk }: { onAsk: () => void }) {
 export function ReferenceDrawer({ open, onClose, ledger }: { open: boolean; onClose: () => void; ledger: LedgerClaim[] | undefined }) {
   const queryClient = useQueryClient()
   const notify = useNotify()
+  const { atLimit } = useOpenReferences()
   const formRef = useRef<HTMLFormElement>(null)
   const [step, setStep] = useState(0)
   const [refereeName, setRefereeName] = useState('')
@@ -250,13 +251,18 @@ export function ReferenceDrawer({ open, onClose, ledger }: { open: boolean; onCl
       headerExtra={<Stepper steps={['Who', 'What to confirm']} current={step} label="Ask for a reference" className="v-stepper" />}
     >
       <form ref={formRef} className="v-step" onSubmit={next} noValidate key={step}>
+        {atLimit && (
+          <Alert tone="warning" title="You already have 5 open requests">
+            Wait for an answer or cancel a request before asking someone else. The server refuses a sixth open request.
+          </Alert>
+        )}
         {step === 0 ? (
           <>
             <Field label="Their name" error={errors.refereeName}>
               <Input autoComplete="off" maxLength={200} value={refereeName} autoFocus onChange={e => setRefereeName(e.target.value)} />
             </Field>
             <Field label="Their email" error={errors.refereeEmail} hint="A work address helps: its domain is compared with the employer.">
-              <Input type="email" autoComplete="off" maxLength={320} value={refereeEmail} onChange={e => setRefereeEmail(e.target.value)} />
+              <Input type="email" autoComplete="off" maxLength={255} value={refereeEmail} onChange={e => setRefereeEmail(e.target.value)} />
             </Field>
             <Field label="How do they know your work?" error={errors.relationship}>
               <Select value={relationship} onChange={e => setRelationship(e.target.value as ReferenceRelationship)}>

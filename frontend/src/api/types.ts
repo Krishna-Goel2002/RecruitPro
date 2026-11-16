@@ -81,6 +81,8 @@ export interface Requirement {
   minimumYears: number | null
   alternatives: string[]
   proficiency: Proficiency | null
+  /** Position the employer set (0-based; integration pass). Lists arrive in this order; older servers omit it. */
+  displayOrder?: number
 }
 
 /** What a candidate sees of a job (`GET /jobs`, `GET /jobs/{id}` as CANDIDATE). */
@@ -358,6 +360,8 @@ export interface CandidateWorkSample {
   /** WP-PLAT: set when the employer cancelled the assignment. */
   cancelledAt: IsoDateTime | null
   cancelReason: string | null
+  /** The application this task belongs to (integration pass; older servers omit it). */
+  applicationId?: number
 }
 
 /**
@@ -377,6 +381,8 @@ export interface CandidateInterview {
   durationMinutes: number
   location: string | null
   status: 'SCHEDULED' | 'COMPLETED' | 'CANCELLED' | string
+  /** The application this interview belongs to (integration pass; older servers omit it). */
+  applicationId?: number
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

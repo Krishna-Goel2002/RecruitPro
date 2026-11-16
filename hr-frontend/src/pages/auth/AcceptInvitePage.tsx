@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../../api/auth'
 import { errorMessage, isApiError } from '../../api/client'
+import { AuthResponse, MfaChallenge, isMfaChallenge } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
 import { homePath } from '../../auth/permissions'
 import { passwordError } from '../../components/PasswordChecklist'
@@ -10,9 +11,21 @@ import { Button, Field, Input, Skeleton, buttonProps } from '../../design/compon
 import { formatDate, relativeTime } from '../../design/lib/format'
 import { roleLabel } from '../../lib/format'
 import { AuthLayout, AuthNotice } from './AuthLayout'
+import { EnrollStep, MfaStep, RecoveryCodesStep } from './MfaSteps'
 import { NewPasswordField } from './PasswordPages'
 
-/** /accept-invite?token=… : the invitation as facts, then name and password; lands on the role's home screen. */
+type Step =
+  | { kind: 'form' }
+  | { kind: 'mfa'; challenge: MfaChallenge }
+  | { kind: 'enroll'; challenge: MfaChallenge }
+  | { kind: 'codes'; recoveryCodes: string[]; session: AuthResponse }
+  | { kind: 'signin'; message: string | null }
+
+/**
+ * /accept-invite?token=… : the invitation as facts, then name and password; lands on the role's home screen. In an
+ * organisation that requires two-step verification the server answers like a login (R1-M4: `mfaRequired`, no session):
+ * the same enrolment (or code) step as /login follows, and the recovery codes are shown before the workspace opens.
+ */
 export function AcceptInvitePage() {
   const [params] = useSearchParams()
   const token = params.get('token') ?? ''
@@ -30,6 +43,12 @@ export function AcceptInvitePage() {
   const [errors, setErrors] = useState<Record<string, string | null>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [step, setStep] = useState<Step>({ kind: 'form' })
+
+  async function adopt(auth: AuthResponse) {
+    const user = await acceptSession(auth)
+    navigate(homePath(user.role), { replace: true })
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -46,14 +65,41 @@ export function AcceptInvitePage() {
     }
     setBusy(true)
     try {
-      const auth = await authApi.acceptInvite({ token, firstName: firstName.trim(), lastName: lastName.trim(), password })
-      const user = await acceptSession(auth)
-      navigate(homePath(user.role), { replace: true })
+      const result = await authApi.acceptInvite({ token, firstName: firstName.trim(), lastName: lastName.trim(), password })
+      setPassword('')
+      if (isMfaChallenge(result)) {
+        setStep(result.mfaEnrollmentRequired ? { kind: 'enroll', challenge: result } : { kind: 'mfa', challenge: result })
+        return
+      }
+      await adopt(result)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
       setBusy(false)
     }
+  }
+
+  // The account exists once the invitation is accepted, so leaving the second step means signing in normally.
+  const toSignIn = (message?: string) => setStep({ kind: 'signin', message: message ?? null })
+  if (step.kind === 'enroll') {
+    return <EnrollStep challenge={step.challenge} backLabel="Sign in later" onRestart={toSignIn}
+      onConfirmed={(recoveryCodes, session) => setStep({ kind: 'codes', recoveryCodes, session })} />
+  }
+  if (step.kind === 'mfa') {
+    return <MfaStep challenge={step.challenge} email={preview.data?.email ?? ''} backLabel="Sign in later" onSession={adopt} onRestart={toSignIn} />
+  }
+  if (step.kind === 'codes') {
+    return <RecoveryCodesStep codes={step.recoveryCodes} email={preview.data?.email ?? ''} onContinue={() => adopt(step.session)} />
+  }
+  if (step.kind === 'signin') {
+    return (
+      <AuthLayout title="Your account is ready" intro="Your invitation was accepted. Sign in with your email and the password you just chose; two-step verification continues there.">
+        {step.message && <AuthNotice tone="warning">{step.message.replace(/ Enter your password again\.$/, '').replace(/; then enter your password again\.$/, '.')}</AuthNotice>}
+        <div className="hra-auth-actions">
+          <Link {...buttonProps('primary', 'lg')} to="/login">Go to sign in</Link>
+        </div>
+      </AuthLayout>
+    )
   }
 
   const invalid = !token || isApiError(preview.error, 404) || isApiError(preview.error, 410) || isApiError(preview.error, 400)

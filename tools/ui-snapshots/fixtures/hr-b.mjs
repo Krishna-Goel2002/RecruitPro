@@ -276,6 +276,7 @@ export const screens = [
   { name: 'b-interview-scorecard-partial', path: '/interviews/600', role: 'INTERVIEWER', action: seq(clickIn('Clear design with trade-offs', '.sx-rating-option'), clickIn('Measured, changed one thing', '.sx-rating-option'), clickIn('Strong yes', '.ui-seg-item')) },
   { name: 'b-interview-submitted', path: '/interviews/590', role: 'INTERVIEWER' },
   { name: 'b-interview-manager', path: '/interviews/601' },
+  { name: 'b-interview-locked', path: '/interviews/590', role: 'INTERVIEWER', override: [route('GET', '/interviews/590', () => ({ ...interviewDone, kit, focusRequirements: [], applicationStatus: 'REJECTED', scorecardEditable: false }))] },
   // Inbox and account
   { name: 'b-notifications', path: '/notifications' },
   { name: 'b-notifications-empty', path: '/notifications', override: [route('GET', '/me/notifications', page([], { size: 20 })), route('GET', '/me/notifications/unread-count', { count: 0 })] },
@@ -284,6 +285,9 @@ export const screens = [
   { name: 'b-security-off', path: '/account/security', override: [route('GET', '/me/mfa', mfa({ requiredByOrganization: true }))] },
   { name: 'b-security-enrol', path: '/account/security', override: [route('GET', '/me/mfa', mfa({}))], action: click('Set up two-step verification') },
   { name: 'b-security-codes', path: '/account/security', override: [route('GET', '/me/mfa', mfa({}))], action: seq(click('Set up two-step verification'), async (p) => { await p.type('input[autocomplete="one-time-code"]', '123456'); await new Promise((r) => setTimeout(r, 900)) }) },
+  // Integration pass: new recovery codes need a current authenticator code (R1-U1).
+  { name: 'b-security-regen', path: '/account/security', action: click('Create new recovery codes') },
+  { name: 'b-security-regen-wrong', path: '/account/security', override: [route('POST', '/me/mfa/recovery-codes', fail(400, 'The verification code is not valid'))], action: seq(click('Create new recovery codes'), async (p) => { await p.type('dialog[open] input[autocomplete="one-time-code"]', '123456'); await new Promise((r) => setTimeout(r, 900)) }) },
   // Administration
   { name: 'b-admin-overview', path: '/admin', role: 'ADMIN', settle: 900 },
   { name: 'b-admin-users', path: '/admin/users', role: 'ADMIN' },
@@ -293,6 +297,7 @@ export const screens = [
   { name: 'b-admin-organization-dirty', path: '/admin/organization', role: 'ADMIN', action: click('Blind review', 'label, .ui-switch') },
   { name: 'b-admin-jobs', path: '/admin/jobs', role: 'ADMIN' },
   { name: 'b-admin-audit', path: '/admin/audit', role: 'ADMIN' },
+  { name: 'b-admin-audit-truncated', path: '/admin/audit', role: 'ADMIN', override: [route('GET', '/admin/audit-export', { __status: 200, __headers: { 'Content-Disposition': 'attachment; filename="audit-2026-11.csv"', 'X-Export-Truncated': 'true' }, __body: 'id,action' })], action: click('Export CSV') },
   { name: 'b-admin-verification', path: '/admin/verification', role: 'ADMIN', settle: 900 },
   { name: 'b-admin-verification-ready', path: '/admin/verification', role: 'ADMIN', override: [route('GET', '/admin/verification/metrics', metrics(true))] },
   { name: 'b-admin-verification-queue', path: '/admin/verification?tab=queue', role: 'ADMIN' },

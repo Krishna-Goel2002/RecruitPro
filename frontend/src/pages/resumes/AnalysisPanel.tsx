@@ -205,20 +205,30 @@ function FactRow({ resumeId, fact, correctable }: { resumeId: number; fact: Resu
   const [validation, setValidation] = useState<string | null>(null)
   const editRef = useRef<HTMLButtonElement>(null)
 
+  /** Close the editor and put focus back on "Suggest a correction" (it is re-mounted, so wait a tick). */
+  function closeEditor() {
+    setEditing(false)
+    setValidation(null)
+    window.setTimeout(() => editRef.current?.focus(), 0)
+  }
+
   const save = useMutation({
     mutationFn: (value: string) => resumesApi.suggestCorrection(resumeId, fact.id, { value }),
-    onSuccess: () => {
-      setEditing(false)
-      notify('success', 'Saved as your claim', { body: 'Recruiters see it as unverified until it is checked. The text from your resume is kept.' })
+    onSuccess: (_updated, value) => {
+      closeEditor()
+      // Sending the text as read confirms the fact and removes an earlier correction (the server deletes that claim).
+      if (value === extracted) notify('success', 'Correction removed', { body: 'The text read from your resume is used again.' })
+      else notify('success', 'Saved as your claim', { body: 'Recruiters see it as unverified until it is checked. The text from your resume is kept.' })
       void queryClient.invalidateQueries({ queryKey: queryKeys.resumeAnalysis(resumeId) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.claims })
       void queryClient.invalidateQueries({ queryKey: queryKeys.verificationLedger })
-      window.setTimeout(() => editRef.current?.focus(), 0)
     },
   })
 
   function submit(event: FormEvent) {
     event.preventDefault()
+    // Enter calls requestSubmit(), which a busy button cannot block: never send the same correction twice.
+    if (save.isPending) return
     const value = draft.trim()
     if (!value) return setValidation('Enter the corrected value.')
     if (value.length > FACT_MAX) return setValidation(`Use at most ${FACT_MAX} characters.`)
@@ -281,7 +291,7 @@ function FactRow({ resumeId, fact, correctable }: { resumeId: number; fact: Resu
                     }
                     if (e.key === 'Escape') {
                       e.stopPropagation()
-                      setEditing(false)
+                      if (!save.isPending) closeEditor()
                     }
                   }}
                 />
@@ -293,9 +303,8 @@ function FactRow({ resumeId, fact, correctable }: { resumeId: number; fact: Resu
                   size="sm"
                   disabled={save.isPending}
                   onClick={() => {
-                    setEditing(false)
-                    setValidation(null)
                     save.reset()
+                    closeEditor()
                   }}
                 >
                   Cancel

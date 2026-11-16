@@ -24,6 +24,9 @@ export const accountApi = {
   mfaConfirm: (code: string) => api.post<MfaConfirmResult>('/me/mfa/confirm', { code }),
   /** `code` is a TOTP code or a recovery code. 400 for a wrong password/code or while the organisation requires MFA. */
   mfaDisable: (body: MfaDisableRequest) => api.post<null>('/me/mfa/disable', body),
-  /** The access token is enough (no extra code); earlier codes stop working. */
-  regenerateRecoveryCodes: () => api.post<RecoveryCodes>('/me/mfa/recovery-codes'),
+  /**
+   * Step-up (R1-U1): a current TOTP `code` (or the `password`). Wrong code/password: 400, counted towards the lockout;
+   * while locked: 429 with Retry-After. Earlier codes stop working.
+   */
+  regenerateRecoveryCodes: (body: { code?: string; password?: string }) => api.post<RecoveryCodes>('/me/mfa/recovery-codes', body),
 }

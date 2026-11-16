@@ -110,7 +110,8 @@ export function VerdictDetails({ verdict, revealed, blindText }: { verdict: Verd
   if (verdict.probeQuestion) rows.push({ term: 'Suggested question', body: <p className="vp-probe">{verdict.probeQuestion}</p> })
   rows.push({
     term: 'Evidence',
-    body: verdict.evidence == null ? (
+    // Blind-first, defended twice: the server withholds evidence before reveal; if it ever sent some, it is not shown.
+    body: verdict.evidence == null || !revealed ? (
       <p className="vp-muted vp-blind"><Icon icon={EyeOff} size={14} />{plural(verdict.evidenceCount, 'evidence item')} · {blindText ?? 'sources appear after identity is revealed'}</p>
     ) : verdict.evidence.length === 0 ? (
       <p className="vp-muted">No evidence items are linked to this result.</p>
@@ -126,7 +127,7 @@ export function VerdictDetails({ verdict, revealed, blindText }: { verdict: Verd
         <>
           <p className="vp-trust-line">
             <DomainTrustChip trust={t} />
-            {t.domain ? <span className="mono vp-domain">{t.domain}</span> : !revealed ? <span className="vp-muted">domain shown after reveal</span> : null}
+            {t.domain && revealed ? <span className="mono vp-domain">{t.domain}</span> : !revealed ? <span className="vp-muted">domain shown after reveal</span> : null}
           </p>
           {t.liftedByOrganization && <p className="vp-muted">Shown as Verified because your organisation trusts this domain. Other organisations see Partly verified.</p>}
           {t.candidateControlled && <p className="vp-muted">The domain belongs to a site the candidate proved they own, so it cannot vouch for an employer.</p>}
@@ -135,7 +136,7 @@ export function VerdictDetails({ verdict, revealed, blindText }: { verdict: Verd
       ),
     })
   }
-  if (verdict.candidateNote) rows.push({ term: 'Candidate’s note', body: <p className="vp-cnote">“{verdict.candidateNote}”</p> })
+  if (verdict.candidateNote && revealed) rows.push({ term: 'Candidate’s note', body: <p className="vp-cnote">“{verdict.candidateNote}”</p> })
 
   return (
     <dl className="vp-details">

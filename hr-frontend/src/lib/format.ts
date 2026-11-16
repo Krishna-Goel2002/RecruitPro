@@ -148,10 +148,5 @@ export function safeHttpUrl(value: string | null | undefined): string | null {
   }
 }
 
-/** Password policy (plan 5.2): 10–72 characters, at least one letter and one digit. */
-export function passwordProblem(password: string): string | null {
-  if (password.length < 10) return 'Use at least 10 characters.'
-  if (password.length > 72) return 'Use at most 72 characters.'
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return 'Include at least one letter and one digit.'
-  return null
-}
+// passwordProblem (ASCII-only letters, contradicting the server's Unicode policy) was removed: use
+// components/PasswordChecklist › passwordError.

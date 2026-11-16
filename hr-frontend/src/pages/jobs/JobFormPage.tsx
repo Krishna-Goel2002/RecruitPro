@@ -17,14 +17,15 @@ import { ArrowLeft, ArrowRight, BriefcaseBusiness, Check, CircleAlert, FileText,
 import { fromLocalInput, humanize, toLocalInput } from '../../lib/format'
 import { clearDraft, readDraft, writeDraft } from '../../lib/localDraft'
 import { useSearchState } from '../../lib/useSearchState'
+import { useAuth } from '../../auth/AuthContext'
 import { CompileSkeleton, CompileSuggestions } from './CompileSuggestions'
 import { useJobActions } from './jobActions'
 import { RequirementsEditor } from './RequirementsEditor'
-import { draftFrom, gateAllowed, requirementChecks, RequirementDraft, sameRequirements, toInput, validateDrafts } from './requirementDrafts'
+import { adoptServerIds, draftFrom, gateAllowed, MAX_REQUIREMENTS, requirementChecks, RequirementDraft, sameRequirements, sameRequirementSet, sortByDisplayOrder, toInput, validateDrafts } from './requirementDrafts'
 import './jobs.css'
 import './wizard.css'
 
-type FormState = {
+export type FormState = {
   title: string
   description: string
   department: string
@@ -43,9 +44,44 @@ const STEPS: { value: Step; label: string }[] = [
   { value: 'review', label: 'Review' },
 ]
 const EDITABLE = ['DRAFT', 'PUBLISHED', 'ON_HOLD']
-const NEW_DRAFT_KEY = 'job-new'
+/** Device draft of a job not created yet, per signed-in user (a shared computer never offers another user's draft). */
+export const newDraftKey = (userId: number | undefined) => `job-new:${userId ?? 'anon'}`
+/** Device drafts older than this are dropped instead of offered. */
+export const DRAFT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
-function initialForm(job?: JobStaff): FormState {
+/**
+ * A stored device draft, checked field by field: an old or corrupted entry (another app version, a hand-edited
+ * storage value) can never crash the form; unknown values fall back to the defaults. Null when nothing usable is left.
+ */
+export function readNewJobDraft(key: string, now = Date.now()): { value: FormState; savedAt: number } | null {
+  const stored = readDraft<Partial<Record<keyof FormState, unknown>>>(key)
+  if (!stored || typeof stored.savedAt !== 'number' || now - stored.savedAt > DRAFT_MAX_AGE_MS) {
+    if (stored) clearDraft(key)
+    return null
+  }
+  const raw = stored.value && typeof stored.value === 'object' ? stored.value : {}
+  const base = initialForm()
+  const text = (k: keyof FormState) => (typeof raw[k] === 'string' ? (raw[k] as string) : base[k] as string)
+  const value: FormState = {
+    title: text('title'),
+    description: text('description'),
+    department: text('department'),
+    location: text('location'),
+    jobType: (JOB_TYPES as readonly string[]).includes(raw.jobType as string) ? (raw.jobType as JobType) : base.jobType,
+    experienceLevel: (EXPERIENCE_LEVELS as readonly string[]).includes(raw.experienceLevel as string) ? (raw.experienceLevel as ExperienceLevel) : base.experienceLevel,
+    minimumSalary: text('minimumSalary').replace(/[^\d]/g, ''),
+    maximumSalary: text('maximumSalary').replace(/[^\d]/g, ''),
+    vacancies: text('vacancies'),
+    deadline: text('deadline'),
+  }
+  if (JSON.stringify(value) === JSON.stringify(base)) {
+    clearDraft(key)
+    return null
+  }
+  return { value, savedAt: stored.savedAt }
+}
+
+export function initialForm(job?: JobStaff): FormState {
   return {
     title: job?.title ?? '',
     description: job?.description ?? '',
@@ -60,7 +96,7 @@ function initialForm(job?: JobStaff): FormState {
   }
 }
 
-function toBody(form: FormState): JobInput {
+export function toBody(form: FormState): JobInput {
   return {
     title: form.title.trim(),
     description: form.description.trim(),
@@ -77,7 +113,7 @@ function toBody(form: FormState): JobInput {
 
 type Errors = Partial<Record<keyof FormState, string>>
 
-function validateBasics(form: FormState, original?: JobStaff): Errors {
+export function validateBasics(form: FormState, original?: JobStaff, now = Date.now()): Errors {
   const next: Errors = {}
   if (!form.title.trim()) next.title = 'Enter a job title.'
   if (!form.department.trim()) next.department = 'Enter a department.'
@@ -94,7 +130,7 @@ function validateBasics(form: FormState, original?: JobStaff): Errors {
     const deadline = fromLocalInput(form.deadline)
     const unchanged = original?.deadline && deadline && Math.abs(new Date(original.deadline).getTime() - new Date(deadline).getTime()) < 60_000
     if (!deadline) next.deadline = 'Enter a valid date and time.'
-    else if (!unchanged && new Date(deadline).getTime() <= Date.now()) next.deadline = 'The deadline must be in the future.'
+    else if (!unchanged && new Date(deadline).getTime() <= now) next.deadline = 'The deadline must be in the future.'
   }
   return next
 }
@@ -136,6 +172,8 @@ function JobWizard({ job }: { job?: JobStaff }) {
   const { toast } = useToast()
   const search = useSearchState()
   const actions = useJobActions()
+  const { user } = useAuth()
+  const draftKey = newDraftKey(user?.id)
   const mode: 'new' | 'draft' | 'live' = !job ? 'new' : job.status === 'DRAFT' ? 'draft' : 'live'
 
   const requestedStep = search.get('step') as Step
@@ -146,7 +184,7 @@ function JobWizard({ job }: { job?: JobStaff }) {
   }, [search])
 
   const [form, setForm] = useState<FormState>(() => initialForm(job))
-  const [drafts, setDrafts] = useState<RequirementDraft[]>(() => (job?.requirements ?? []).map(draftFrom))
+  const [drafts, setDrafts] = useState<RequirementDraft[]>(() => sortByDisplayOrder(job?.requirements ?? []).map(draftFrom))
   const [errors, setErrors] = useState<Errors>({})
   const [touched, setTouched] = useState<Set<keyof FormState>>(new Set())
   const [reqErrors, setReqErrors] = useState<Record<string, string>>({})
@@ -155,9 +193,12 @@ function JobWizard({ job }: { job?: JobStaff }) {
   const [openWarnings, setOpenWarnings] = useState(0)
 
   // What the server has (for dirty checks and autosave).
-  const saved = useRef({ form: initialForm(job), requirements: (job?.requirements ?? []).map(r => toInput(draftFrom(r))) })
+  const saved = useRef({ form: initialForm(job), requirements: sortByDisplayOrder(job?.requirements ?? []).map(r => toInput(draftFrom(r))) })
   const formDirty = JSON.stringify(form) !== JSON.stringify(saved.current.form)
   const requirementsDirty = !sameRequirements(drafts.map(toInput), saved.current.requirements)
+  // A pure reorder only saves the order on the server: no new version, no audit entry, no re-match (integration pass).
+  const reorderOnly = requirementsDirty && sameRequirementSet(drafts.map(toInput), saved.current.requirements)
+  const rematches = requirementsDirty && !reorderOnly
   const dirty = formDirty || requirementsDirty
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
@@ -171,19 +212,22 @@ function JobWizard({ job }: { job?: JobStaff }) {
   }
 
   // ------------------------------------------------------------------ new job: keep typing on this device
-  const [resume, setResume] = useState(() => (!job ? readDraft<FormState>(NEW_DRAFT_KEY) : null))
+  const [resume, setResume] = useState(() => (!job ? readNewJobDraft(draftKey) : null))
   useEffect(() => {
     if (mode !== 'new' || resume) return
     if (JSON.stringify(form) === JSON.stringify(initialForm())) return
     const timer = window.setTimeout(() => {
-      const at = writeDraft(NEW_DRAFT_KEY, form)
+      const at = writeDraft(draftKey, form)
       if (at) setSaveState({ kind: 'saved', at, where: 'device' })
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [form, mode, resume])
+  }, [form, mode, resume, draftKey])
 
   // ------------------------------------------------------------------ saving
-  const persist = useCallback(async (opts: { requirements: boolean }): Promise<JobStaff> => {
+  // Saves run one after another: an autosave that fires while the previous one is still in flight waits for it, so
+  // two PUTs (or two requirement replaces) never race and an older body can never land after a newer one.
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve())
+  const persistNow = useCallback(async (opts: { requirements: boolean }): Promise<JobStaff> => {
     let current = job
     const body = toBody(form)
     if (!current) {
@@ -195,17 +239,28 @@ function JobWizard({ job }: { job?: JobStaff }) {
     const inputs = drafts.map(toInput)
     if (opts.requirements && !sameRequirements(inputs, saved.current.requirements)) {
       current = await jobsApi.replaceRequirements(current.id, inputs)
-      saved.current.requirements = inputs
+      const withIds = adoptServerIds(drafts, current.requirements ?? [])
+      saved.current.requirements = withIds.map(toInput)
+      if (withIds !== drafts) {
+        const ids = new Map(withIds.map(d => [d.key, d.id]))
+        // The user may have kept typing while the save ran: only fill in ids, never overwrite their edits.
+        setDrafts(currentDrafts => currentDrafts.map(d => (d.id == null && ids.get(d.key) != null && d.description.trim() === withIds.find(w => w.key === d.key)?.description.trim() ? { ...d, id: ids.get(d.key) } : d)))
+      }
     }
     queryClient.setQueryData(qk.job(current.id), current)
     void queryClient.invalidateQueries({ queryKey: qk.jobs })
     return current
   }, [job, form, drafts, queryClient])
+  const persist = useCallback((opts: { requirements: boolean }): Promise<JobStaff> => {
+    const run = saveChain.current.catch(() => undefined).then(() => persistNow(opts))
+    saveChain.current = run
+    return run
+  }, [persistNow])
 
   const create = useMutation({
     mutationFn: () => persist({ requirements: false }),
     onSuccess: created => {
-      clearDraft(NEW_DRAFT_KEY)
+      clearDraft(draftKey)
       toast({ tone: 'success', title: 'Draft created', body: 'Saved automatically from now on.', duration: 4000 })
       navigate(`/jobs/${created.id}/edit?step=requirements`, { replace: true, state: { autoCompile: true } })
     },
@@ -238,14 +293,15 @@ function JobWizard({ job }: { job?: JobStaff }) {
     mutationFn: () => persist({ requirements: true }),
     onSuccess: savedJob => {
       setConfirmLive(false)
-      toast({ tone: 'success', title: 'Job saved', body: requirementsDirty ? `Requirements v${savedJob.requirementsVersion ?? ''}: applicants are being re-matched.` : undefined })
-      if (requirementsDirty) void queryClient.invalidateQueries({ queryKey: qk.applicants(savedJob.id) })
+      toast({ tone: 'success', title: 'Job saved', body: rematches ? `Requirements v${savedJob.requirementsVersion ?? ''}: applicants are being re-matched.` : reorderOnly ? 'Requirement order saved.' : undefined })
+      if (rematches) void queryClient.invalidateQueries({ queryKey: qk.applicants(savedJob.id) })
       navigate(`/jobs/${savedJob.id}`)
     },
   })
 
   // Leaving with unsaved changes asks first (live edits, or a draft autosave still pending).
-  const unsaved = (mode === 'live' && dirty && !saveLive.isPending && !saveLive.isSuccess) || saveState.kind === 'saving' || (mode === 'draft' && saveState.kind === 'error')
+  const unsaved = (mode === 'live' && dirty && !saveLive.isPending && !saveLive.isSuccess) || saveState.kind === 'saving'
+    || (mode === 'draft' && dirty && (saveState.kind === 'error' || saveState.kind === 'dirty'))
   // A draft published from the review step: go to the job page.
   const startedAsDraft = useRef(mode === 'draft')
   useEffect(() => {
@@ -260,7 +316,8 @@ function JobWizard({ job }: { job?: JobStaff }) {
 
   // ------------------------------------------------------------------ compiler
   const compile = useMutation({
-    mutationFn: () => jobsApi.compileRequirements({ title: form.title.trim(), description: form.description.trim(), experienceLevel: form.experienceLevel }),
+    // Server limits (CompileRequirementsRequest, integration pass): the job's own limits, title ≤ 255 and description ≤ 50 000.
+    mutationFn: () => jobsApi.compileRequirements({ title: form.title.trim().slice(0, 255), description: form.description.trim().slice(0, 50_000), experienceLevel: form.experienceLevel }),
     onSuccess: result => setOpenWarnings(result.warnings.length),
   })
   const compileTried = useRef(false)
@@ -277,10 +334,10 @@ function JobWizard({ job }: { job?: JobStaff }) {
       const draft = draftFrom(compile.data!.requirements[index])
       return { ...draft, knockout: draft.knockout && gateAllowed(draft) }
     })
-    if (how === 'replace') setDrafts(accepted)
+    if (how === 'replace') setDrafts(accepted.slice(0, MAX_REQUIREMENTS))
     else {
       const existing = new Set(drafts.map(draft => draft.description.trim().toLowerCase()))
-      setDrafts([...drafts, ...accepted.filter(draft => !existing.has(draft.description.trim().toLowerCase()))])
+      setDrafts([...drafts, ...accepted.filter(draft => !existing.has(draft.description.trim().toLowerCase()))].slice(0, MAX_REQUIREMENTS))
     }
     compile.reset()
     toast({ tone: 'success', title: `${plural(indexes.length, 'requirement')} added`, body: 'Adjust them below; nothing is fixed until you publish.', duration: 4000 })
@@ -317,7 +374,7 @@ function JobWizard({ job }: { job?: JobStaff }) {
     setReqErrors(reqs)
     if (Object.keys(basics).length) return goTo('basics')
     if (Object.keys(reqs).length) return goTo('requirements')
-    if (requirementsDirty) setConfirmLive(true)
+    if (rematches) setConfirmLive(true)
     else saveLive.mutate()
   }
 
@@ -372,7 +429,7 @@ function JobWizard({ job }: { job?: JobStaff }) {
           action={
             <span className="cluster">
               <Button size="sm" variant="primary" onClick={() => { setForm(resume.value); setResume(null) }}>Resume</Button>
-              <Button size="sm" variant="ghost" onClick={() => { clearDraft(NEW_DRAFT_KEY); setResume(null) }}>Start over</Button>
+              <Button size="sm" variant="ghost" onClick={() => { clearDraft(draftKey); setResume(null) }}>Start over</Button>
             </span>
           }
         >
@@ -481,6 +538,14 @@ function JobWizard({ job }: { job?: JobStaff }) {
                       <Button
                         variant="primary"
                         onClick={async () => {
+                          // Same checks as the other steps: never send an invalid job just to publish it.
+                          const basics = validateBasics(form, job)
+                          const reqs = validateDrafts(drafts)
+                          setErrors(basics)
+                          setReqErrors(reqs)
+                          setTouched(new Set(Object.keys(form) as (keyof FormState)[]))
+                          if (Object.keys(basics).length) return goTo('basics')
+                          if (Object.keys(reqs).length) return goTo('requirements')
                           try {
                             const latest = await persist({ requirements: true })
                             actions.run(latest, 'PUBLISH')
@@ -504,10 +569,10 @@ function JobWizard({ job }: { job?: JobStaff }) {
         <div className="hra-sticky-bar hra-wiz-live" role="region" aria-label="Unsaved changes">
           <p>
             <strong>Unsaved changes</strong>
-            <span className="subtle"> · {[formDirty ? 'role details' : null, requirementsDirty ? 'requirements (re-matches applicants)' : null].filter(Boolean).join(' and ')}</span>
+            <span className="subtle"> · {[formDirty ? 'role details' : null, rematches ? 'requirements (re-matches applicants)' : reorderOnly ? 'requirement order' : null].filter(Boolean).join(' and ')}</span>
           </p>
           <span className="cluster">
-            <Button variant="ghost" onClick={() => { setForm(saved.current.form); setDrafts((job?.requirements ?? []).map(draftFrom)) }}>Discard</Button>
+            <Button variant="ghost" onClick={() => { setForm(saved.current.form); setDrafts(sortByDisplayOrder(job?.requirements ?? []).map(draftFrom)) }}>Discard</Button>
             <Button variant="primary" onClick={submitLive} loading={saveLive.isPending}>Save changes</Button>
           </span>
         </div>

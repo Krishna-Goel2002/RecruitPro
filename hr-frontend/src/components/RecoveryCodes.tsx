@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import brand from '../design/brand/active'
 import { Button, Checkbox } from '../design/components'
 import { Check, Copy, Download } from '../design/icons'
@@ -32,14 +32,21 @@ export function RecoveryCodes({ codes, email, onDone, doneLabel = 'Done' }: { co
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)
   const [downloaded, setDownloaded] = useState(false)
+  const [copyFailed, setCopyFailed] = useState(false)
+  const timer = useRef<number>()
+  useEffect(() => () => window.clearTimeout(timer.current), [])
 
   async function copy() {
     try {
+      if (!navigator.clipboard) throw new Error('Clipboard unavailable')
       await navigator.clipboard.writeText(codes.join('\n'))
+      setCopyFailed(false)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600)
+      window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setCopied(false), 1600)
     } catch {
       setCopied(false)
+      setCopyFailed(true)
     }
   }
 
@@ -59,7 +66,7 @@ export function RecoveryCodes({ codes, email, onDone, doneLabel = 'Done' }: { co
         <Button variant="ghost" icon={copied ? Check : Copy} onClick={() => void copy()}>
           {copied ? 'Copied' : 'Copy all'}
         </Button>
-        <span className="sr-only" role="status">{copied ? 'Recovery codes copied' : ''}</span>
+        <span className={copyFailed ? 'sx-codes-copyfail' : 'sr-only'} role="status">{copied ? 'Recovery codes copied' : copyFailed ? 'Copying is blocked in this browser. Use Download instead.' : ''}</span>
       </div>
       <Checkbox label="I have saved these codes somewhere safe" description="They will not be shown again. Earlier codes no longer work." checked={saved} onChange={event => setSaved(event.target.checked)} />
       <div>

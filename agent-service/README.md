@@ -53,7 +53,7 @@ All `/api/*` routes need `X-Internal-Service-Token: $AGENT_SERVICE_TOKEN`. Respo
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AGENT_SERVICE_TOKEN` | (required) | shared secret with the backend; startup fails when empty |
+| `AGENT_SERVICE_TOKEN` | (required) | shared secret with the backend; startup fails when it is empty, shorter than 16 characters or the `.env.example` placeholder |
 | `AGENT_ALLOW_NO_TOKEN` | `false` | tests only: allow running without a token |
 | `LLM_PROVIDER` | `none` | `none`, `anthropic`, `openai_compatible` (only writes `summary`) |
 | `LLM_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `LLM_TIMEOUT_SECONDS` | | as in ai-service |
@@ -69,7 +69,7 @@ All `/api/*` routes need `X-Internal-Service-Token: $AGENT_SERVICE_TOKEN`. Respo
 
 ```bash
 pip install -r requirements-dev.txt
-AGENT_SERVICE_TOKEN=dev-token uvicorn app.main:app --port 8100
+AGENT_SERVICE_TOKEN=dev-only-local-agent-token-0123 uvicorn app.main:app --port 8100
 python -m pytest -q                 # no network: MockTransport, fake resolvers, real DNS is refused
 python -m eval.run --check          # synthetic gold set; fails if FCR > 0.02 or kappa < 0.70
 python ../tools/sync_taxonomy.py    # re-vendor the skills taxonomy from ai-service (a test fails on drift)

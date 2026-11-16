@@ -28,6 +28,10 @@ public class RequirementCompilerService {
     private final AiServiceClient aiServiceClient;
     private final HrJobAccessService jobAccess;
 
+    /** The AI service's request limits (ai-service {@code CompileRequest}). */
+    static final int AI_TITLE_MAX = 200;
+    static final int AI_DESCRIPTION_MAX = 20000;
+
     public RequirementCompilerService(AiServiceClient aiServiceClient, HrJobAccessService jobAccess) {
         this.aiServiceClient = aiServiceClient;
         this.jobAccess = jobAccess;
@@ -37,8 +41,9 @@ public class RequirementCompilerService {
         jobAccess.requireJobManager();
         AiCompileResponse response;
         try {
-            response = aiServiceClient.compileRequirements(new AiCompileRequest(request.title().trim(),
-                    request.description().trim(), request.experienceLevel() == null ? null : request.experienceLevel().name()));
+            response = aiServiceClient.compileRequirements(new AiCompileRequest(limit(request.title().trim(), AI_TITLE_MAX),
+                    limit(request.description().trim(), AI_DESCRIPTION_MAX),
+                    request.experienceLevel() == null ? null : request.experienceLevel().name()));
         } catch (RestClientResponseException ex) {
             int status = ex.getStatusCode().value();
             if (status >= 400 && status < 500 && status != 408 && status != 429) {
@@ -57,9 +62,12 @@ public class RequirementCompilerService {
         for (AiCompileResponse.Requirement item : response.requirements() == null ? List.<AiCompileResponse.Requirement>of() : response.requirements()) {
             if (item == null || item.description() == null || item.description().isBlank()) continue;
             boolean mandatory = item.mandatory() == null || item.mandatory();
-            boolean knockout = item.knockout() == null ? mandatory : item.knockout() && mandatory;
+            RequirementType type = requirementType(item.type());
+            // R2-H01: OTHER is never scored automatically, so it is never suggested as a knockout.
+            boolean knockout = type != RequirementType.OTHER
+                    && (item.knockout() == null ? mandatory : item.knockout() && mandatory);
             String description = item.description().trim();
-            requirements.add(new CompileRequirementsResponse.CompiledRequirement(requirementType(item.type()),
+            requirements.add(new CompileRequirementsResponse.CompiledRequirement(type,
                     description.length() > 500 ? description.substring(0, 500) : description, mandatory, knockout,
                     item.minimumYears() == null ? null : Math.max(0, Math.min(50, item.minimumYears())),
                     alternatives(item.alternatives()), proficiency(item.proficiency()),
@@ -107,5 +115,9 @@ public class RequirementCompilerService {
             }
         }
         return result;
+    }
+
+    private static String limit(String value, int max) {
+        return value.length() > max ? value.substring(0, max) : value;
     }
 }

@@ -50,7 +50,8 @@ export const OtpInput = forwardRef<HTMLInputElement, OtpInputProps>(function Otp
         inputMode="numeric"
         autoComplete="one-time-code"
         pattern="[0-9]*"
-        maxLength={length}
+        // Room for pasted separators (123 456, 123-456): onChange keeps the digits only.
+        maxLength={length * 2 + 2}
         spellCheck={false}
         disabled={disabled}
         value={value}

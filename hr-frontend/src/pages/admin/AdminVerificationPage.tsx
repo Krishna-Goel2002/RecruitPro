@@ -119,6 +119,9 @@ function ModeBlock({ admin, settings, settingsError, metrics, onOpenTab }: { adm
     onSuccess: updated => {
       setConfirm(null)
       queryClient.setQueryData(qk.verificationSettings, updated)
+      // Every applicant's Verification tab and the rankings change with the mode.
+      void queryClient.invalidateQueries({ queryKey: ['verification', 'application'] })
+      void queryClient.invalidateQueries({ queryKey: ['applicants'] })
       toast({ tone: 'success', title: updated.mode === 'VISIBLE' ? 'Verification is visible' : 'Back in shadow mode', body: updated.mode === 'VISIBLE' ? 'Reviewers now see shared results; reviewed candidates are re-ranked.' : 'Results are hidden from reviewers again; rankings ignore them.' })
     },
   })
@@ -249,7 +252,11 @@ function ShadowQueue() {
       if (ctx?.previous) queryClient.setQueryData(qk.shadowQueue(page), ctx.previous)
       toast({ tone: 'danger', title: 'The label was not saved', body: errorMessage(cause) })
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: qk.verificationMetrics }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.verificationMetrics })
+      // The tab count (unlabelled first) comes from page 0.
+      if (page !== 0) void queryClient.invalidateQueries({ queryKey: qk.shadowQueue(0) })
+    },
   })
 
   const move = (d: number) => {
@@ -267,6 +274,7 @@ function ShadowQueue() {
       key={selected.verdictId}
       item={selected}
       saving={label.isPending && label.variables?.item.verdictId === selected.verdictId}
+      keysEnabled={wide || drawerOpen}
       onSave={(verdict, note) => label.mutate({ item: selected, verdict, note })}
     />
   )
@@ -309,15 +317,17 @@ function ShadowQueue() {
   )
 }
 
-function QueueDetail({ item, saving, onSave }: { item: ShadowQueueItem; saving: boolean; onSave: (verdict: Verdict, note: string) => void }) {
+function QueueDetail({ item, saving, keysEnabled, onSave }: { item: ShadowQueueItem; saving: boolean; keysEnabled: boolean; onSave: (verdict: Verdict, note: string) => void }) {
   const [verdict, setVerdict] = useState<Verdict | null>(item.myLabel?.labelVerdict ?? null)
   const [note, setNote] = useState(item.myLabel?.note ?? '')
   const [problem, setProblem] = useState<string | null>(null)
 
+  // Only while the detail is on screen (side panel, or the open bottom sheet on phones): a closed sheet must not label.
+  const keys = ['1', '2', '3', '4', '5', 'Enter']
   useShortcuts({
     ...Object.fromEntries(VERDICTS.map((v, i) => [String(i + 1), () => setVerdict(v)])),
-    Enter: (event: KeyboardEvent) => { if (event.target === document.body) submit() },
-  })
+    Enter: (event: KeyboardEvent) => { if (event.target === document.body || (event.target as HTMLElement | null)?.closest?.('dialog') === event.target) submit() },
+  }, keysEnabled, keys)
 
   function submit(event?: FormEvent) {
     event?.preventDefault()
@@ -370,6 +380,8 @@ function useSettingsSave(onDone?: () => void) {
     onSuccess: updated => {
       queryClient.setQueryData(qk.verificationSettings, updated)
       void queryClient.invalidateQueries({ queryKey: qk.verificationMetrics })
+      void queryClient.invalidateQueries({ queryKey: ['verification', 'application'] })
+      void queryClient.invalidateQueries({ queryKey: ['applicants'] })
       toast({ tone: 'success', title: 'Verification settings saved', body: 'Audited; reviewed candidates are re-ranked.' })
       onDone?.()
     },

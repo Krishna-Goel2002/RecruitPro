@@ -3,11 +3,12 @@ import { useQueryClient } from '@tanstack/react-query'
 import { authApi } from '../api/auth'
 import { ApiError, onSessionChange, refreshSession, setSession } from '../api/client'
 import type { AuthResponse, AuthUser } from '../api/types'
+import { flushDeferredCommits } from '../lib/deferredCommit'
 import { Capability, can as roleCan, isStaff } from './permissions'
 
 type Status = 'restoring' | 'authenticated' | 'anonymous'
 
-type AuthContextValue = {
+export type AuthContextValue = {
   status: Status
   user: AuthUser | null
   /** Why the last session ended (shown on the sign-in page). */
@@ -23,9 +24,12 @@ type AuthContextValue = {
    * refreshes with the staff portal header. Resolves the user, or null when there is no usable staff session.
    */
   completeExternalSignIn: () => Promise<AuthUser | null>
+  /** Updates the signed-in user's cached fields after a change made elsewhere (email confirmed, organisation renamed). */
+  updateUser: (patch: Partial<Pick<AuthUser, 'emailVerified' | 'organizationName' | 'firstName' | 'lastName'>>) => void
 }
 
-const AuthContext = createContext<AuthContextValue | null>(null)
+/** Exported for tests (they provide a fixed session); the app uses AuthProvider. */
+export const AuthContext = createContext<AuthContextValue | null>(null)
 
 export const NON_STAFF_MESSAGE = 'This workspace is for organisation staff. Candidates sign in on the candidate portal.'
 
@@ -89,6 +93,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signingOut.current = true
     setSignedOutByUser(true)
     try {
+      // Decisions still inside their Undo window were confirmed by the user: send them while the session is valid.
+      await flushDeferredCommits().catch(() => undefined)
       await authApi.logout()
     } catch {
       // The local session is cleared even when the server cannot be reached.
@@ -114,6 +120,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return outcome.auth.user
   }, [])
 
+  const updateUser = useCallback((patch: Partial<Pick<AuthUser, 'emailVerified' | 'organizationName' | 'firstName' | 'lastName'>>) => {
+    setUser(current => (current ? { ...current, ...patch } : current))
+  }, [])
+
   const value = useMemo<AuthContextValue>(() => ({
     status,
     user,
@@ -123,7 +133,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     acceptSession,
     signOut,
     completeExternalSignIn,
-  }), [status, user, endedReason, signedOutByUser, acceptSession, signOut, completeExternalSignIn])
+    updateUser,
+  }), [status, user, endedReason, signedOutByUser, acceptSession, signOut, completeExternalSignIn, updateUser])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

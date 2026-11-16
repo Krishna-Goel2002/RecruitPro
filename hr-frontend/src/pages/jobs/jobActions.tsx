@@ -175,10 +175,9 @@ export function useJobActions() {
       icon: Link2,
       onSelect: () => {
         const url = `${window.location.origin}/jobs/${job.id}`
-        void navigator.clipboard?.writeText(url).then(
-          () => toast({ tone: 'success', title: 'Link copied', duration: 3000 }),
-          () => toast({ tone: 'warning', title: 'Could not copy the link', body: url }),
-        )
+        const failed = () => toast({ tone: 'warning', title: 'Could not copy the link', body: url })
+        if (!navigator.clipboard) failed()
+        else void navigator.clipboard.writeText(url).then(() => toast({ tone: 'success', title: 'Link copied', duration: 3000 }), failed)
       },
     })
     return items

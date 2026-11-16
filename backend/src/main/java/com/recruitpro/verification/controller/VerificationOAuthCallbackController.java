@@ -7,6 +7,8 @@ import com.recruitpro.verification.service.GitHubOAuthService;
 import com.recruitpro.verification.service.PublicEndpointRateLimiter;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -26,6 +28,8 @@ import java.net.URI;
 @RestController
 @RequestMapping("/api/v1/verification/oauth")
 public class VerificationOAuthCallbackController {
+
+    private static final Logger log = LoggerFactory.getLogger(VerificationOAuthCallbackController.class);
 
     private final GitHubOAuthService gitHubOAuthService;
     private final PublicEndpointRateLimiter rateLimiter;
@@ -50,6 +54,10 @@ public class VerificationOAuthCallbackController {
             target = gitHubOAuthService.callback(code, state, error, oauthCookie.read(request));
         } catch (TooManyRequestsException ex) {
             target = gitHubOAuthService.rateLimitedRedirect();
+        } catch (RuntimeException ex) {
+            // R3-B21: the browser always comes back to the portal (and the cookie is always cleared).
+            log.warn("GitHub OAuth callback failed: {}", ex.getClass().getSimpleName());
+            target = gitHubOAuthService.failedRedirect();
         }
         // The browser-binding cookie is single use: cleared on every answer.
         return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(target)).cacheControl(CacheControl.noStore())

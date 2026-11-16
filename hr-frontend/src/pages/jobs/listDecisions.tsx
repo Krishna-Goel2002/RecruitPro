@@ -72,6 +72,8 @@ export function useListDecisions(job: JobStaff) {
         }
         void queryClient.invalidateQueries({ queryKey: qk.applicants(job.id) })
         void queryClient.invalidateQueries({ queryKey: qk.job(job.id) })
+        // Shortlisting reveals the identity: cached verification views (blind evidence) are stale now.
+        rows.forEach(row => void queryClient.invalidateQueries({ queryKey: qk.applicantVerification(row.applicationId) }))
         if (failures.length) {
           toast({
             tone: 'danger',
@@ -86,8 +88,9 @@ export function useListDecisions(job: JobStaff) {
             duration: 5000,
           })
         }
-        // Keep the optimistic status until the refetched list shows the server's answer.
-        window.setTimeout(() => patch(ids, null), 4000)
+        // Settled overrides are dropped as soon as the refetched list shows the server's answer (see `applyOverride`);
+        // this timer only cleans up rows whose status ended somewhere else (another reviewer acted meanwhile).
+        window.setTimeout(() => patch(ids, null), 15_000)
       },
       revert: () => patch(ids, null),
     })
@@ -134,5 +137,15 @@ export function useListDecisions(job: JobStaff) {
     </ActionDialog>
   )
 
-  return { overrides, request, dialog }
+  return { overrides, request, dialog, isOpen: pending != null }
+}
+
+/**
+ * The row as the list should show it: an optimistic status while the decision is pending; once sent, the override
+ * stays only until the server's list catches up (so a slow refetch never flashes the old status).
+ */
+export function applyOverride<T extends { applicationStatus: ApplicationStatus }>(row: T, override: Override | undefined): T {
+  if (!override) return row
+  if (!override.pending && row.applicationStatus === override.status) return row
+  return { ...row, applicationStatus: override.status }
 }

@@ -12,6 +12,7 @@ import { ChevronDown, ChevronUp, CircleCheck, EyeOff, Icon, KeyRound, KeySquare,
 import { VERDICT_DESCRIPTION, type Verdict } from '../../design/lib/labels'
 import { humanize } from '../../lib/labels'
 import { INTEGRITY_NOTE_INTRO, candidateStatusDescription, candidateStatusLabel, sourceKindLabel } from '../../lib/verification'
+import { safeHref } from '../../lib/url'
 import { kindIcon } from './model'
 import { verificationErrorMessage } from './shared'
 
@@ -79,8 +80,10 @@ export function VerdictDrawer({ verdictId, queue, onNavigate, onClose }: Verdict
   useEffect(() => {
     if (verdictId === null) return
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement
-      if (t.closest('input, textarea, select, [contenteditable]')) return
+      // Plain J / K only: Ctrl+K, Cmd+J etc. belong to the browser or assistive tech.
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return
+      const t = e.target as HTMLElement | null
+      if (t?.closest?.('input, textarea, select, [contenteditable]')) return
       if (e.key === 'j' && next !== null) onNavigate(next)
       if (e.key === 'k' && prev !== null) onNavigate(prev)
     }
@@ -90,8 +93,10 @@ export function VerdictDrawer({ verdictId, queue, onNavigate, onClose }: Verdict
 
   const respond = useMutation({
     mutationFn: (action: VerdictAction) => verificationApi.respond(shownId as number, { action, note: note.trim() || null }),
-    onMutate: action => {
-      // Optimistic: the ledger row and the review list update at once; rolled back on error.
+    onMutate: async action => {
+      // Optimistic: the ledger row and the review list update at once; rolled back on error. A ledger refetch that is
+      // already in flight (polling, focus) is cancelled first, or its older answer would overwrite the change.
+      await queryClient.cancelQueries({ queryKey: queryKeys.verificationLedger })
       const previous = queryClient.getQueryData<LedgerClaim[]>(queryKeys.verificationLedger)
       if (action !== 'RECHECK') {
         const status = action === 'SHARE' ? 'SHARED' : 'HIDDEN'
@@ -245,7 +250,7 @@ export function VerdictDrawer({ verdictId, queue, onNavigate, onClose }: Verdict
                       source={sourceKindLabel(data.sourceKind)}
                       actor={`retrieved by the ${verifierLabel(data.verifier)}`}
                       at={item.retrievedAt}
-                      href={item.url ?? undefined}
+                      href={safeHref(item.url)}
                     />
                     <CodeField label="Fingerprint" value={item.contentHash.replace(/^sha256:/i, '')} truncate="middle" className="v-hash" />
                   </li>

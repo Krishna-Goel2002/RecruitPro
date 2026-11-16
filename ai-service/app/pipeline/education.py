@@ -15,14 +15,16 @@ _FIELD_WORDS = (
     "information|software|statistics|political|sociology|journalism|mass|nursing|public|business|education"
 )
 _FOLLOW = rf"(?=\s*(?:\(|in\b|of\b|[-,–/]|$|(?i:{_FIELD_WORDS})))"
+# "B.E", "M.S", "B.A" written without the final dot ("B.E Mechanical", "M.S in Data Science").
+_DOTTED_FOLLOW = rf"(?=\s*(?:\(|in\b|of\b|[-,–/]|$|(?i:{_FIELD_WORDS})|[A-Z][a-z]))"
 _DEGREES: tuple[tuple[re.Pattern[str], str, str | None], ...] = tuple(
     (re.compile(pattern, flags), level, field)
     for pattern, flags, level, field in (
         (r"\bPh\.?\s?D\b\.?|\bD\.?\s?Phil\b|\bdoctor(?:ate)?\s+of\s+philosophy\b|\bdoctorate\b", re.I, "DOCTORATE", None),
         (r"\bM\.?\s?Tech\b|\bmaster\s+of\s+(?:technology|engineering)\b", re.I, "MASTER", None),
-        (r"\bM\.\s?E\.(?=\s|$)|\bME" + _FOLLOW, 0, "MASTER", None),
+        (r"\bM\.\s?E\.(?=\s|$)|\bM\.\s?E\b(?!\.)" + _DOTTED_FOLLOW + r"|\bME" + _FOLLOW, 0, "MASTER", None),
         (r"\bM\.?\s?Sc\b\.?|\bmaster\s+of\s+science\b", re.I, "MASTER", None),
-        (r"\bM\.\s?S\.(?=\s|$)|\bMS" + _FOLLOW, 0, "MASTER", None),
+        (r"\bM\.\s?S\.(?=\s|$)|\bM\.\s?S\b(?!\.)" + _DOTTED_FOLLOW + r"|\bMS" + _FOLLOW, 0, "MASTER", None),
         (r"\bM\.?\s?C\.?\s?A\b\.?|\bmaster\s+of\s+computer\s+applications?\b", re.I, "MASTER", "computer science"),
         (r"\bM\.?\s?B\.?\s?A\b\.?|\bmaster\s+of\s+business\s+administration\b|\bPGDM\b|\bPGDBA\b", re.I, "MASTER", "business"),
         (r"\bM\.?\s?Com\b\.?|\bmaster\s+of\s+commerce\b", re.I, "MASTER", "commerce"),
@@ -32,27 +34,34 @@ _DEGREES: tuple[tuple[re.Pattern[str], str, str | None], ...] = tuple(
         (r"\bM\.?\s?Des\b\.?|\bmaster\s+of\s+design\b", re.I, "MASTER", "design"),
         (r"\bM\.?\s?Phil\b\.?", re.I, "MASTER", None),
         (r"\bmaster\s+of\s+arts\b", re.I, "MASTER", None),
-        (r"\bM\.\s?A\.(?=\s|$)|\bMA" + _FOLLOW, 0, "MASTER", None),
-        (r"\bmaster(?:'?s|s)?\b(?:\s+degree)?|\bpost[\s-]?graduat(?:e|ion)\b", re.I, "MASTER", None),
+        (r"\bM\.\s?A\.(?=\s|$)|\bM\.\s?A\b(?!\.)" + _DOTTED_FOLLOW + r"|\bMA" + _FOLLOW, 0, "MASTER", None),
+        # A bare "Master" is a title or a certification ("Scrum Master", "Master Trainer"), not a degree.
+        (r"\bmaster(?:'s|’s|s)\b(?:\s+degree)?|\bmaster\s+(?:degree|in|of)\b|\bpost[\s-]?graduat(?:e|ion)\b|"
+         r"\bmaster(?=\s*(?:/|or\b|and\b)\s*bachelor)|(?<=bachelor/)master\b|(?<=bachelor or )master\b", re.I, "MASTER", None),
         (r"\bB\.?\s?Tech\b\.?|\bbachelor\s+of\s+(?:technology|engineering)\b", re.I, "BACHELOR", None),
-        (r"\bB\.\s?E\.(?=\s|$)|\bBE" + _FOLLOW, 0, "BACHELOR", None),
+        (r"\bB\.\s?E\.(?=\s|$)|\bB\.\s?E\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBE" + _FOLLOW, 0, "BACHELOR", None),
         (r"\bB\.?\s?C\.?\s?A\b\.?|\bbachelor\s+of\s+computer\s+applications?\b", re.I, "BACHELOR", "computer science"),
         (r"\bB\.?\s?B\.?\s?A\b\.?|\bbachelor\s+of\s+business\s+administration\b|\bBMS\b", re.I, "BACHELOR", "business"),
         (r"\bB\.?\s?Com\b\.?|\bbachelor\s+of\s+commerce\b", re.I, "BACHELOR", "commerce"),
         (r"\bB\.?\s?Pharm\b\.?|\bbachelor\s+of\s+pharmacy\b", re.I, "BACHELOR", "pharmacy"),
         (r"\bLL\.?\s?B\b\.?|\bbachelor\s+of\s+laws\b|\bB\.?A\.?\s?LL\.?B\b", re.I, "BACHELOR", "law"),
-        (r"\bB\.?\s?Ed\b\.?|\bbachelor\s+of\s+education\b", re.I, "BACHELOR", "education"),
+        (r"\bB\.?\s?Ed\b\.?|\bB\.?\s?El\.?\s?Ed\b\.?|\bbachelor\s+of\s+(?:elementary\s+)?education\b", re.I, "BACHELOR", "education"),
         (r"\bB\.?\s?Des\b\.?|\bbachelor\s+of\s+design\b|\bB\.?\s?F\.?\s?A\b\.?|\bbachelor\s+of\s+fine\s+arts\b", re.I, "BACHELOR", "design"),
         (r"\bB\.?\s?Arch\b\.?|\bbachelor\s+of\s+architecture\b", re.I, "BACHELOR", "architecture"),
         (r"\bMBBS\b|\bBDS\b|\bbachelor\s+of\s+medicine\b", re.I, "BACHELOR", "medicine"),
         (r"\bB\.?\s?P\.?\s?T\b\.?|\bbachelor\s+of\s+physiotherapy\b", re.I, "BACHELOR", "medicine"),
         (r"\bB\.?\s?Sc\b\.?|\bbachelor\s+of\s+science\b", re.I, "BACHELOR", None),
-        (r"\bB\.\s?S\.(?=\s|$)|\bBS" + _FOLLOW, 0, "BACHELOR", None),
+        (r"\bB\.\s?S\.(?=\s|$)|\bB\.\s?S\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBS" + _FOLLOW, 0, "BACHELOR", None),
         (r"\bbachelor\s+of\s+arts\b", re.I, "BACHELOR", None),
-        (r"\bB\.\s?A\.(?=\s|$)|\bBA" + _FOLLOW, 0, "BACHELOR", None),
-        (r"\bbachelor(?:'?s|s)?\b(?:\s+degree)?|\bundergraduate\s+degree\b|\bgraduat(?:e|ion)\s+(?:degree|in)\b|\bany\s+graduate\b", re.I, "BACHELOR", None),
+        (r"\bB\.\s?A\.(?=\s|$)|\bB\.\s?A\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBA" + _FOLLOW, 0, "BACHELOR", None),
+        (r"\bbachelor(?:'s|’s|s)\b(?:\s+degree)?|\bbachelor\s+(?:degree|in|of)\b|\bundergraduate\s+degree\b|"
+         r"\bbachelor(?=\s*(?:/|or\b|and\b)\s*master)|(?<=master/)bachelor\b|(?<=master or )bachelor\b|"
+         r"\bgraduat(?:e|ion)\s+(?:degree|in)\b|\bany\s+graduate\b", re.I, "BACHELOR", None),
         (r"\bdiploma\b|\bpolytechnic\b|\bassociate(?:'s)?\s+degree\b", re.I, "DIPLOMA", None),
+        (r"\bD\.?\s?El\.?\s?Ed\b\.?|\bD\.\s?Ed\b\.?", re.I, "DIPLOMA", "education"),
+        (r"\bD\.?\s?Pharm\b\.?", re.I, "DIPLOMA", "pharmacy"),
         (r"\bGNM\b|\bANM\b", 0, "DIPLOMA", "nursing"),
+        (r"\bITI\b", 0, "DIPLOMA", None),
     )
 )
 _SCHOOL_RE = re.compile(r"\b(?:12th|10th|XII|HSC|SSC|higher\s+secondary|senior\s+secondary|secondary\s+school|matriculation|intermediate|class\s+(?:x|xii|10|12))\b", re.I)

@@ -64,11 +64,11 @@ export function JobDetailsTab({ job }: { job: JobStaff }) {
         <dl>
           <dt>Employment type</dt><dd>{humanize(job.jobType)}</dd>
           <dt>Experience level</dt><dd>{humanize(job.experienceLevel)}</dd>
-          <dt>Salary</dt><dd>{salaryText(job.minimumSalary, job.maximumSalary)}</dd>
+          <dt>Salary</dt><dd>{salaryText(job.minimumSalary ?? null, job.maximumSalary ?? null)}</dd>
           <dt>Openings</dt><dd className="numeric">{job.vacancies}</dd>
           <dt>Deadline</dt><dd>{job.deadline ? formatDateTime(job.deadline) : 'None'}</dd>
           <dt>Published</dt><dd>{job.publishedAt ? formatDate(job.publishedAt) : 'Not yet'}</dd>
-          <dt>Created by</dt><dd>{job.createdByName || job.createdByEmail}</dd>
+          <dt>Created by</dt><dd>{job.createdByName || job.createdByEmail || 'A former team member'}</dd>
           <dt>Last updated</dt><dd>{formatDateTime(job.updatedAt)}</dd>
           {job.requirementsVersion != null && <><dt>Requirements</dt><dd>Version {job.requirementsVersion}</dd></>}
         </dl>

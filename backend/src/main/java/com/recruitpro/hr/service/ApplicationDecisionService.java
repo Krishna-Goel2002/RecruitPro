@@ -21,8 +21,10 @@ import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.evidence.dto.CandidateClaimResponse;
 import com.recruitpro.evidence.dto.ClaimVerificationRequest;
 import com.recruitpro.evidence.entity.CandidateClaim;
+import com.recruitpro.evidence.entity.CandidateClaimVerification;
 import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.evidence.repository.CandidateClaimRepository;
+import com.recruitpro.evidence.repository.CandidateClaimVerificationRepository;
 import com.recruitpro.evidence.service.MatchTriggerService;
 import com.recruitpro.hr.dto.ApplicantDetailResponse;
 import com.recruitpro.hr.dto.ApplicationCommentRequest;
@@ -41,6 +43,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.file.NoSuchFileException;
+import java.time.LocalDateTime;
 import java.util.Locale;
 
 /**
@@ -69,6 +72,7 @@ public class ApplicationDecisionService {
     private final ResumeIntelligenceService resumeIntelligenceService;
     private final ResumeStorage resumeStorage;
     private final ApplicantQueryService queryService;
+    private final CandidateClaimVerificationRepository claimVerificationRepository;
 
     public ApplicationDecisionService(HrJobAccessService jobAccess, SecurityUtils securityUtils,
                                       ApplicationRepository applicationRepository,
@@ -78,7 +82,8 @@ public class ApplicationDecisionService {
                                       AuditService auditService, ApplicationNotifier notifier,
                                       MatchTriggerService matchTriggerService,
                                       ResumeIntelligenceService resumeIntelligenceService, ResumeStorage resumeStorage,
-                                      ApplicantQueryService queryService) {
+                                      ApplicantQueryService queryService,
+                                      CandidateClaimVerificationRepository claimVerificationRepository) {
         this.jobAccess = jobAccess;
         this.securityUtils = securityUtils;
         this.applicationRepository = applicationRepository;
@@ -93,6 +98,7 @@ public class ApplicationDecisionService {
         this.resumeIntelligenceService = resumeIntelligenceService;
         this.resumeStorage = resumeStorage;
         this.queryService = queryService;
+        this.claimVerificationRepository = claimVerificationRepository;
     }
 
     /** POST …/decisions (and the legacy /shortlist and /reject aliases). ADMIN and HR_MANAGER. */
@@ -106,6 +112,12 @@ public class ApplicationDecisionService {
         }
         Job job = jobAccess.requireManageAccess(jobId);
         Application application = lockForReview(job, applicationId);
+        // R2-L03: an anonymised (deleted) candidate's applications are kept for audit only; REOPEN would put them back
+        // into review and onward to interviews with nobody to contact.
+        User candidateUser = application.getCandidate() == null ? null : application.getCandidate().getUser();
+        if (candidateUser != null && candidateUser.getDeletedAt() != null) {
+            throw new BadRequestException("The candidate deleted their account, so this application can no longer change");
+        }
         ApplicationStatus previous = application.getStatus();
         ApplicationStatus target = ApplicationTransitions.target(previous, action);
         if (target == null) {
@@ -220,17 +232,26 @@ public class ApplicationDecisionService {
                 .orElseThrow(() -> new ResourceNotFoundException("Claim not found"));
         CurrentUser actor = securityUtils.currentUser();
         boolean verified = request.verified();
-        if (verified) {
-            if (claim.getTier() == null || claim.getTier().level() < EvidenceTier.CORROBORATED.level()) {
-                claim.setTier(EvidenceTier.CORROBORATED);
-            }
-        } else {
-            claim.setTier(EvidenceTier.SELF_CLAIMED);
-        }
-        claim.setVerifiedByUserId(actor.userId());
-        claim.setVerifiedAt(UtcTime.now());
+        LocalDateTime now = UtcTime.now();
         String note = normalize(request.note());
-        claim.setVerificationNote(note != null && note.length() > 500 ? note.substring(0, 500) : note);
+        note = note != null && note.length() > 500 ? note.substring(0, 500) : note;
+        EvidenceTier tier = verified ? EvidenceTier.CORROBORATED : EvidenceTier.SELF_CLAIMED;
+        // R2-H02: the verification is stored for this organisation only; another organisation's verification of the
+        // same claim is kept, never overwritten.
+        CandidateClaimVerification verification = claimVerificationRepository
+                .findByClaimIdAndOrganizationId(claim.getId(), job.getOrganizationId())
+                .orElseGet(CandidateClaimVerification::new);
+        verification.setClaimId(claim.getId());
+        verification.setOrganizationId(job.getOrganizationId());
+        verification.setTier(tier);
+        verification.setVerifiedByUserId(actor.userId());
+        verification.setVerifiedAt(now);
+        verification.setVerificationNote(note);
+        CandidateClaimVerification savedVerification = claimVerificationRepository.save(verification);
+        // The claim's own columns are only the candidate-facing summary of every organisation's row (integration pass:
+        // any corroboration wins over rejections, independent of which organisation checked last); never a decision
+        // input for an organisation.
+        claim.summarize(claimVerificationRepository.findAllByClaimId(claim.getId()));
         CandidateClaim saved = claimRepository.save(claim);
         auditService.record(AuditActions.CLAIM_VERIFIED, "CANDIDATE_CLAIM", String.valueOf(saved.getId()),
                 "Claim #" + saved.getId() + " " + (verified ? "verified" : "rejected") + " while reviewing application #"
@@ -238,7 +259,7 @@ public class ApplicationDecisionService {
         // The verification counts only for this organisation (ClaimEvidence), so only its applications are re-matched.
         matchTriggerService.requestMatchForCandidateInOrganization(candidateId, job.getOrganizationId());
         boolean revealed = ApplicantQueryService.isRevealed(application.getIdentityRevealedAt(), queryService.blindReview(job));
-        return CandidateClaimResponse.forStaff(saved, revealed, true);
+        return CandidateClaimResponse.forStaff(saved, revealed, savedVerification);
     }
 
     /** PATCH …/analysis/retry (ADMIN, HR_MANAGER): re-queues a failed resume analysis. */

@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -156,6 +157,64 @@ class AccountFlowsIntegrationTest {
                 .andExpect(status().isUnauthorized());
         mvc.perform(post("/api/v1/auth/refresh").cookie(new Cookie(REFRESH_COOKIE, newSession)))
                 .andExpect(status().isOk());
+        login("ChangedPassword123").andExpect(status().isOk());
+    }
+
+    @Test
+    void wrongCurrentPasswordsCountTowardsTheLockout() throws Exception {
+        // R1-H2: a stolen access token must not turn POST /me/password into an unlimited password oracle.
+        String access = accessToken(mapper, register());
+        for (int attempt = 1; attempt <= 5; attempt++) {
+            mvc.perform(post("/api/v1/me/password").header("Authorization", bearer(access))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"currentPassword\":\"guess-number-" + attempt + "\",\"newPassword\":\"ChangedPassword123\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+        User locked = users.findByEmail(EMAIL).orElseThrow();
+        assertNotNull(locked.getLockedUntil(), "five wrong current passwords lock the account like five wrong sign-ins");
+        // While locked even the right password is refused, and the password is unchanged.
+        mvc.perform(post("/api/v1/me/password").header("Authorization", bearer(access))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"" + PASSWORD + "\",\"newPassword\":\"ChangedPassword123\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", org.hamcrest.Matchers.matchesPattern("[1-9][0-9]*")));
+        assertNull(users.findByEmail(EMAIL).orElseThrow().getPasswordChangedAt());
+        login(PASSWORD).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void anInvalidPortalHeaderIsRefusedBeforeThePasswordChanges() throws Exception {
+        // R5#1: the portal header used to be checked after the change, so a bad header changed the password and
+        // revoked every session, then answered 400 without the new session.
+        MvcResult registered = register();
+        String access = accessToken(mapper, registered);
+        String otherSession = refreshCookie(login(PASSWORD).andExpect(status().isOk()).andReturn());
+        mvc.perform(post("/api/v1/me/password").header("Authorization", bearer(access))
+                        .header("X-RecruitPro-Portal", "mobile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"" + PASSWORD + "\",\"newPassword\":\"ChangedPassword123\"}"))
+                .andExpect(status().isBadRequest());
+        assertNull(users.findByEmail(EMAIL).orElseThrow().getPasswordChangedAt(), "the password is unchanged");
+        login(PASSWORD).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/auth/refresh").cookie(new Cookie(REFRESH_COOKIE, otherSession)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void changingThePasswordInvalidatesAnOutstandingResetLink() throws Exception {
+        // R1-L3: a reset link mailed before the change must not be usable afterwards.
+        String access = accessToken(mapper, register());
+        mvc.perform(post("/api/v1/auth/forgot-password").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + EMAIL + "\"}"))
+                .andExpect(status().isOk());
+        String resetToken = latestToken(NotificationTemplate.PASSWORD_RESET);
+        mvc.perform(post("/api/v1/me/password").header("Authorization", bearer(access))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"" + PASSWORD + "\",\"newPassword\":\"ChangedPassword123\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/v1/auth/reset-password").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + resetToken + "\",\"newPassword\":\"AttackerPassword123\"}"))
+                .andExpect(status().isBadRequest());
         login("ChangedPassword123").andExpect(status().isOk());
     }
 

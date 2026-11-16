@@ -16,11 +16,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    SOFFICE_PATH=/usr/bin/soffice \
     OCR_ENABLED=false
+# SOFFICE_PATH is deliberately not set: the service finds `soffice` on PATH (/usr/bin/soffice with LibreOffice), and
+# an image built with WITH_LIBREOFFICE=false then reports .doc conversion as unavailable instead of failing each call.
 
 WORKDIR /app
-RUN groupadd --system app && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+# The service user gets its own writable home (LibreOffice and fontconfig write caches there); the
+# application code under /app stays owned by root and read-only for the service user.
+RUN groupadd --system app && useradd --system --gid app --create-home --home-dir /home/app --shell /usr/sbin/nologin app
 
 # System packages: LibreOffice Writer without the GUI; libgl1 + libglib2.0-0 are the shared libraries
 # opencv-python (a RapidOCR dependency) loads at import time. No recommends, apt lists removed.
@@ -39,12 +42,13 @@ COPY requirements.txt requirements-ocr.txt ./
 RUN set -eux; \
     if [ "$WITH_OCR" = "true" ]; then pip install -r requirements-ocr.txt; else pip install -r requirements.txt; fi
 
-COPY . .
-RUN chown -R app:app /app
+COPY --chown=root:root . .
+RUN chmod -R a+rX,go-w /app
+ENV HOME=/home/app
 USER app
 
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 \
     CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]

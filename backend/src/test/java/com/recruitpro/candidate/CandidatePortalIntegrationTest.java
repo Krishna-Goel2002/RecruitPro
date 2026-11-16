@@ -98,6 +98,23 @@ class CandidatePortalIntegrationTest {
     }
 
     @Test
+    void savingTheProfileReturnsTheNewUpdatedAt() throws Exception {
+        // Integration pass (R5#6): the response carried updatedAt from before the flush.
+        CandidateProfile before = candidates.findById(candidate.getId()).orElseThrow();
+        LocalDateTime previous = before.getUpdatedAt();
+        Thread.sleep(20);
+        String body = mvc.perform(put("/api/v1/candidates/me").with(candidateAuth(candidateEmail))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"city\":\"Cuttack\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        LocalDateTime returned = mapper.treeToValue(mapper.readTree(body).path("data").path("updatedAt"), LocalDateTime.class);
+        LocalDateTime stored = candidates.findById(candidate.getId()).orElseThrow().getUpdatedAt();
+        org.junit.jupiter.api.Assertions.assertTrue(returned.isAfter(previous), "updatedAt moved forward");
+        // Compared to the millisecond (JSON and database precision differ below that).
+        org.junit.jupiter.api.Assertions.assertEquals(stored.truncatedTo(java.time.temporal.ChronoUnit.MILLIS),
+                returned.truncatedTo(java.time.temporal.ChronoUnit.MILLIS), "the response carries the stored value");
+    }
+
+    @Test
     void nonCandidateRolesCannotAccessPrivateCandidateResources() throws Exception {
         for (Role role : new Role[]{Role.ADMIN, Role.HR_MANAGER, Role.RECRUITER, Role.INTERVIEWER}) {
             var auth = SecurityMockMvcRequestPostProcessors.user(role.name().toLowerCase() + "@example.test")
@@ -141,6 +158,19 @@ class CandidatePortalIntegrationTest {
                 .andExpect(status().isOk());
         mvc.perform(get("/api/v1/candidates/me/resumes").with(auth)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()", is(3)));
+    }
+
+    @Test
+    void theCandidateDepartmentFilterMatchesPartOfTheDepartment() throws Exception {
+        // Integration pass (R5#4): the department filter is a free-text box, so it matches "contains" (case-insensitive).
+        var auth = candidateAuth(candidateEmail);
+        mvc.perform(get("/api/v1/jobs").with(auth).param("department", " engin "))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.content.length()", is(1)))
+                .andExpect(jsonPath("$.data.content[0].title", is(published.getTitle())));
+        mvc.perform(get("/api/v1/jobs").with(auth).param("department", "Marketing"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.content.length()", is(0)));
+        mvc.perform(get("/api/v1/jobs").with(auth).param("department", "%"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.content.length()", is(0)));
     }
 
     @Test

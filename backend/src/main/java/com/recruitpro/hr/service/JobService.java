@@ -46,6 +46,8 @@ public class JobService {
     static final int MAX_REQUIREMENTS = 100;
     static final int MAX_ALTERNATIVE_LENGTH = 200;
     public static final String CLOSED_BY_HR = "CLOSED_BY_HR";
+    /** Audit action of an HR job status change (R2-M03; the admin override and the deadline closer have their own). */
+    public static final String AUDIT_JOB_STATUS_CHANGED = "JOB_STATUS_CHANGED";
 
     private final JobRepository jobRepository;
     private final JobRequirementRepository requirementRepository;
@@ -145,7 +147,8 @@ public class JobService {
     /** Text fields, salary, vacancies and deadline; DRAFT, PUBLISHED and ON_HOLD jobs. */
     public JobStaffResponse update(Long id, JobUpdateRequest request) {
         validateSalary(request.minimumSalary(), request.maximumSalary());
-        Job job = jobAccess.requireManageAccess(id);
+        // R2-M04: lock the row first; an unlocked full-row UPDATE could write PUBLISHED back over a concurrent close.
+        Job job = lockedJob(id);
         requireEditable(job);
         if (!sameMillisecond(job.getDeadline(), request.deadline())) {
             validateDeadline(request.deadline());
@@ -156,7 +159,10 @@ public class JobService {
     }
 
     public JobStaffResponse transition(Long id, JobStatus target) {
-        Job job = jobAccess.requireManageAccess(id);
+        if (target == null) throw new BadRequestException("status is required");
+        // R2-M04: the deadline closer and the admin override lock the row; so does HR, so no transition is lost.
+        Job job = lockedJob(id);
+        JobStatus previous = job.getStatus();
         try {
             if (target == JobStatus.PUBLISHED) validatePublish(job);
             job.transitionTo(target);
@@ -164,6 +170,9 @@ public class JobService {
         if (target == JobStatus.CLOSED) {
             job.setClosedReason(CLOSED_BY_HR);
         }
+        // R2-M03: HR status changes are audited like the admin override and the automatic close.
+        auditService.record(AUDIT_JOB_STATUS_CHANGED, "JOB", String.valueOf(job.getId()),
+                "Job #" + job.getId() + " (" + job.getTitle() + "): " + previous + " -> " + target);
         return staffResponse(job);
     }
 
@@ -181,6 +190,7 @@ public class JobService {
         JobRequirement requirement = new JobRequirement();
         requirement.setJob(job);
         applyRequirement(requirement, request);
+        requirement.setDisplayOrder(requirementRepository.maxDisplayOrder(job.getId()) + 1);
         JobRequirement saved = requirementRepository.save(requirement);
         requirementsChanged(job, "Requirement added: " + saved.getDescription());
         return RequirementResponse.from(saved);
@@ -203,7 +213,10 @@ public class JobService {
 
     /**
      * Replaces every requirement of the job. Items carrying the id of one of the job's requirements update it in
-     * place; other items are created; requirements not listed are deleted.
+     * place; other items are created; requirements not listed are deleted. The request order is stored
+     * ({@code displayOrder} 0..n-1). R6-B2 (integration pass): when the list names exactly the job's requirements
+     * with unchanged content, only the order is saved: no new requirements version, no audit row, no re-match (and
+     * nothing at all when the order is the same too).
      */
     public JobStaffResponse replaceRequirements(Long jobId, RequirementsReplaceRequest request) {
         if (request == null || request.requirements() == null) throw new BadRequestException("requirements is required");
@@ -211,10 +224,19 @@ public class JobService {
             throw new BadRequestException("A job can have at most " + MAX_REQUIREMENTS + " requirements");
         Job job = lockedEditableJob(jobId);
         Map<Long, JobRequirement> existing = new LinkedHashMap<>();
-        for (JobRequirement requirement : requirementRepository.findByJobIdOrderById(job.getId())) {
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId())) {
             existing.put(requirement.getId(), requirement);
         }
+        if (onlyOrderDiffers(existing, request.requirements())) {
+            int position = 0;
+            for (RequirementInput input : request.requirements()) {
+                existing.get(input.id()).setDisplayOrder(position++);
+            }
+            requirementRepository.flush();
+            return staffResponse(job);
+        }
         Set<Long> kept = new HashSet<>();
+        int position = 0;
         for (RequirementInput input : request.requirements()) {
             if (input == null) throw new BadRequestException("Requirement entries must not be null");
             JobRequirement requirement = input.id() == null ? null : existing.get(input.id());
@@ -227,6 +249,7 @@ public class JobService {
                 requirement.setJob(job);
             }
             applyRequirement(requirement, input);
+            requirement.setDisplayOrder(position++);
             requirementRepository.save(requirement);
         }
         int removed = 0;
@@ -243,11 +266,44 @@ public class JobService {
 
     // ---- requirement helpers ----
 
+    /**
+     * True when {@code inputs} lists every one of the job's requirements exactly once, by id, each with the content it
+     * already has (after the same normalisation a save applies): a pure reorder (or no change at all). Invalid input
+     * fails here with the same 400 a save would give.
+     */
+    private boolean onlyOrderDiffers(Map<Long, JobRequirement> existing, List<RequirementInput> inputs) {
+        if (inputs.size() != existing.size()) return false;
+        Set<Long> seen = new HashSet<>();
+        for (RequirementInput input : inputs) {
+            if (input == null || input.id() == null || !seen.add(input.id())) return false;
+            JobRequirement stored = existing.get(input.id());
+            if (stored == null) return false;
+            JobRequirement wanted = new JobRequirement();
+            applyRequirement(wanted, input);
+            if (wanted.getType() != stored.getType()
+                    || !Objects.equals(wanted.getDescription(), stored.getDescription())
+                    || wanted.isMandatory() != stored.isMandatory()
+                    || wanted.isKnockout() != stored.isKnockout()
+                    || !Objects.equals(wanted.getMinimumYears(), stored.getMinimumYears())
+                    || !Objects.equals(wanted.getAlternatives(), stored.getAlternatives())
+                    || wanted.getProficiency() != stored.getProficiency()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** Loads the job for a requirement change and locks its row so that version increments do not race. */
     private Job lockedEditableJob(Long jobId) {
+        Job job = lockedJob(jobId);
+        requireEditable(job);
+        return job;
+    }
+
+    /** The caller's (managed) job re-read with its row locked (PESSIMISTIC_WRITE). */
+    private Job lockedJob(Long jobId) {
         Job job = jobAccess.requireManageAccess(jobId);
         entityManager.refresh(job, LockModeType.PESSIMISTIC_WRITE);
-        requireEditable(job);
         return job;
     }
 
@@ -272,6 +328,9 @@ public class JobService {
         boolean mandatory = input.mandatory() == null || input.mandatory();
         boolean knockout = input.knockout() == null ? mandatory : input.knockout();
         if (knockout && !mandatory) throw new BadRequestException("A knockout requirement must be mandatory");
+        // R2-H01: OTHER requirements are never scored automatically (they need human review), so as a ranking gate
+        // they would hold every applicant in MUST_HAVES_UNVERIFIED. They are never knockouts.
+        if (input.type() == RequirementType.OTHER) knockout = false;
         requirement.setType(input.type());
         requirement.setDescription(description);
         requirement.setMandatory(mandatory);
@@ -320,7 +379,13 @@ public class JobService {
                 if (status != null) filters.add(cb.equal(root.get("status"), status));
             }
             if (jobType != null) filters.add(cb.equal(root.get("jobType"), jobType));
-            if (StringUtils.hasText(department)) filters.add(cb.equal(cb.lower(root.get("department")), department.trim().toLowerCase(Locale.ROOT)));
+            if (StringUtils.hasText(department)) {
+                // Integration pass (R5#4): candidates type the department into a free-text box, so it matches as
+                // "contains" (like location); the staff list keeps the exact, case-insensitive match of its select.
+                filters.add(candidateOnly
+                        ? cb.like(cb.lower(root.get("department")), LikePatterns.containsLower(department), LikePatterns.ESCAPE)
+                        : cb.equal(cb.lower(root.get("department")), department.trim().toLowerCase(Locale.ROOT)));
+            }
             if (StringUtils.hasText(location)) filters.add(cb.like(cb.lower(root.get("location")), LikePatterns.containsLower(location), LikePatterns.ESCAPE));
             if (StringUtils.hasText(search)) filters.add(cb.like(cb.lower(root.get("title")), LikePatterns.containsLower(search), LikePatterns.ESCAPE));
             return cb.and(filters.toArray(Predicate[]::new));
@@ -363,7 +428,7 @@ public class JobService {
     }
 
     private List<RequirementResponse> requirementResponses(Long jobId) {
-        return requirementRepository.findByJobIdOrderById(jobId).stream().map(RequirementResponse::from).toList();
+        return requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(jobId).stream().map(RequirementResponse::from).toList();
     }
 
     private JobStaffResponse staffResponse(Job job) {

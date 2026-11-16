@@ -98,6 +98,14 @@ public class SsoService {
 
     /** Builds the provider's authorisation URL and stores the hashed state, hashed nonce and encrypted verifier. */
     public String start(String providerId) {
+        return begin(providerId).authorizeUrl();
+    }
+
+    /**
+     * As {@link #start}, also returning the raw {@code state}: the controller binds it to the browser in an httpOnly
+     * cookie, and {@link #callback} only accepts a state presented by the same browser (R1-M1, login CSRF).
+     */
+    public Started begin(String providerId) {
         if (!cipher.isConfigured()) {
             throw new SsoException("not_configured", "SSO needs app.encryption.key");
         }
@@ -117,7 +125,7 @@ public class SsoService {
             row.setExpiresAt(UtcTime.now().plusMinutes(Math.max(1, properties.getStateTtlMinutes())));
             stateRepository.save(row);
         });
-        return UriComponentsBuilder.fromUriString(provider.authorizationUri())
+        String url = UriComponentsBuilder.fromUriString(provider.authorizationUri())
                 .queryParam("response_type", "code")
                 .queryParam("client_id", provider.clientId())
                 .queryParam("redirect_uri", redirectUri(provider.id()))
@@ -130,14 +138,20 @@ public class SsoService {
                 .encode()
                 .build()
                 .toUriString();
+        return new Started(url, state);
     }
 
     /**
      * Handles the provider's redirect. Returns where to send the browser and, on success, the session whose refresh
-     * token goes into the staff cookie.
+     * token goes into the staff cookie. {@code browserState} is the state bound to the browser at {@link #begin}
+     * (cookie); a callback whose state was started in another browser is refused as {@code invalid_state}.
      */
-    public CallbackResult callback(String providerId, String code, String state, String error) {
+    public CallbackResult callback(String providerId, String code, String state, String error, String browserState) {
         try {
+            if (!sameState(state, browserState)) {
+                // Login CSRF: someone else's authorisation response (code + state) replayed in this browser.
+                throw new SsoException("invalid_state", "The state was not started in this browser");
+            }
             return new CallbackResult(hrPortalUrl + "/sso/complete", completeLogin(providerId, code, state, error));
         } catch (SsoException ex) {
             log.info("SSO sign-in refused: {}", ex.code());
@@ -151,6 +165,11 @@ public class SsoService {
     /** Where to send the browser when {@code start} fails before reaching the provider. */
     public String errorRedirect(String code) {
         return hrPortalUrl + "/login?ssoError=" + code;
+    }
+
+    /** How long the browser-binding cookie of a started sign-in lives (the state's lifetime). */
+    public long stateTtlSeconds() {
+        return Math.max(1, properties.getStateTtlMinutes()) * 60L;
     }
 
     private AuthSession completeLogin(String providerId, String code, String state, String error) {
@@ -317,8 +336,20 @@ public class SsoService {
         return trimmed;
     }
 
+    static boolean sameState(String state, String browserState) {
+        if (state == null || browserState == null || state.isBlank() || browserState.isBlank()) {
+            return false;
+        }
+        return MessageDigest.isEqual(state.trim().getBytes(StandardCharsets.US_ASCII),
+                browserState.trim().getBytes(StandardCharsets.US_ASCII));
+    }
+
     /** Where to redirect and the session to put into the staff cookie (null when refused). */
     public record CallbackResult(String redirectUrl, AuthSession session) {
+    }
+
+    /** The provider's authorisation URL and the raw state to bind to the browser. */
+    public record Started(String authorizeUrl, String state) {
     }
 
     private record PendingLogin(String nonceHash, String codeVerifier) {

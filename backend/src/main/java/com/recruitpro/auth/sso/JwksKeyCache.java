@@ -6,10 +6,12 @@ import io.jsonwebtoken.security.Jwk;
 import io.jsonwebtoken.security.Jwks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.security.Key;
 import java.security.PublicKey;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
@@ -31,15 +33,23 @@ public class JwksKeyCache {
     private final OidcHttpClient http;
     private final ObjectMapper objectMapper;
     private final Map<String, Entry> cache = new ConcurrentHashMap<>();
+    private final Clock clock;
 
+    @Autowired
     public JwksKeyCache(OidcHttpClient http, ObjectMapper objectMapper) {
+        this(http, objectMapper, Clock.systemUTC());
+    }
+
+    /** Tests: a controllable clock. */
+    JwksKeyCache(OidcHttpClient http, ObjectMapper objectMapper, Clock clock) {
         this.http = http;
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     /** The public key for {@code kid} (or the only key when the token has no kid); null when unknown. */
     public Key find(String jwksUri, String kid) {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         Entry entry = cache.get(jwksUri);
         if (entry != null && entry.fetchedAt().plus(MAX_AGE).isAfter(now)) {
             Key key = entry.lookup(kid);
@@ -47,8 +57,15 @@ public class JwksKeyCache {
                 return key;
             }
         }
-        if (entry == null || entry.fetchedAt().plus(MIN_REFRESH_INTERVAL).isBefore(now)) {
-            entry = fetch(jwksUri, now);
+        if (entry == null || entry.attemptedAt().plus(MIN_REFRESH_INTERVAL).isBefore(now)) {
+            Map<String, Key> fetched = fetch(jwksUri);
+            if (fetched != null) {
+                entry = new Entry(fetched, now, now);
+            } else {
+                // R1-L5: a failed refresh keeps the keys we already have (a provider hiccup must not log everybody
+                // out of SSO); the attempt time still throttles the next try.
+                entry = new Entry(entry == null ? Map.of() : entry.keys(), entry == null ? now : entry.fetchedAt(), now);
+            }
             cache.put(jwksUri, entry);
         }
         return entry.lookup(kid);
@@ -58,7 +75,8 @@ public class JwksKeyCache {
         cache.clear();
     }
 
-    private Entry fetch(String jwksUri, Instant now) {
+    /** The usable signing keys of the JWKS, or null when the document could not be fetched or read. */
+    private Map<String, Key> fetch(String jwksUri) {
         Map<String, Key> keys = new HashMap<>();
         try {
             JsonNode root = objectMapper.readTree(http.get(jwksUri));
@@ -78,11 +96,13 @@ public class JwksKeyCache {
             }
         } catch (Exception ex) {
             log.warn("Fetching JWKS {} failed: {}", jwksUri, ex.getClass().getSimpleName());
+            return null;
         }
-        return new Entry(Map.copyOf(keys), now);
+        return Map.copyOf(keys);
     }
 
-    record Entry(Map<String, Key> keys, Instant fetchedAt) {
+    /** {@code fetchedAt}: when {@code keys} were read; {@code attemptedAt}: the last fetch attempt (throttle). */
+    record Entry(Map<String, Key> keys, Instant fetchedAt, Instant attemptedAt) {
         Key lookup(String kid) {
             if (kid == null || kid.isBlank()) {
                 return keys.size() == 1 ? keys.values().iterator().next() : null;

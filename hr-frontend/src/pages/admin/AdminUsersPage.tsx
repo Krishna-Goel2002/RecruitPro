@@ -11,7 +11,7 @@ import { Avatar, Badge, Button, DataTable, EmptyState, Input, PageHeader, Pagina
 import { Icon, MailPlus, Search, Users } from '../../design/icons'
 import { plural, relativeTime } from '../../design/lib/format'
 import { fullName, roleLabel } from '../../lib/format'
-import { useSearchState } from '../../lib/useSearchState'
+import { oneOf, useClampPage, useSearchState } from '../../lib/useSearchState'
 import { InviteDrawer, ROLE_HELP, useUrlSearch } from './shared'
 import './admin.css'
 
@@ -24,11 +24,12 @@ export function AdminUsersPage() {
   const { toast } = useToast()
   const state = useSearchState()
   const search = useUrlSearch(state)
-  const role = state.get('role') as StaffRole | ''
-  const enabled = state.get('enabled')
+  const role = oneOf<StaffRole | ''>(state.get('role'), ['', ...STAFF_ROLES], '')
+  const enabled = oneOf(state.get('enabled'), ['', 'true', 'false'], '')
   const page = state.getPage()
   const params: AdminUserParams = { page, size: 20, search: search.value || undefined, role: role || undefined, enabled: enabled === '' ? undefined : enabled === 'true' }
   const users = useQuery({ queryKey: qk.adminUsers(params), queryFn: ({ signal }) => adminApi.users(params, signal), placeholderData: keepPreviousData })
+  useClampPage(state, page, users.isPlaceholderData ? undefined : users.data)
   const [change, setChange] = useState<Change | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const filtered = Boolean(search.value || role || enabled)

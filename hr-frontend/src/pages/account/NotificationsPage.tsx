@@ -27,7 +27,8 @@ const TEMPLATE: Record<string, { label: string; icon: IconComponent; fallback: s
 
 /** In-app path for a notification: the server's `link` when it is a safe internal path, else a route by template. */
 export function notificationTarget(n: AppNotification): string | null {
-  if (n.link && n.link.startsWith('/') && !n.link.startsWith('//')) return n.link
+  // Only same-origin paths: "/\\evil.com" is resolved by browsers like "//evil.com", so backslashes are refused too.
+  if (n.link && /^\/(?![/\\])/.test(n.link) && !n.link.includes('\\')) return n.link
   return TEMPLATE[n.template]?.fallback ?? null
 }
 
@@ -48,16 +49,19 @@ export function NotificationsPage() {
     queryClient.setQueryData<Page<AppNotification>>(qk.notificationPage(page), cur => cur && { ...cur, content: cur.content.map(n => (ids === 'all' || ids.includes(n.id) ? { ...n, readAt: n.readAt ?? at } : n)) })
     queryClient.setQueryData<{ count: number }>(qk.unreadCount, cur => ({ count: ids === 'all' ? 0 : Math.max(0, (cur?.count ?? 0) - ids.length) }))
   }
+  // Optimistic: cancel in-flight reads first (the sidebar's unread poll must not overwrite the change), and reconcile
+  // every cached page afterwards (mark-all affects pages other than this one).
   const markRead = useMutation({
     mutationFn: (id: number) => accountApi.markRead(id),
-    onMutate: id => setRead([id]),
-    onError: () => void queryClient.invalidateQueries({ queryKey: qk.notifications }),
+    onMutate: async id => { await queryClient.cancelQueries({ queryKey: qk.notifications }); setRead([id]) },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.notifications }),
   })
   const markAll = useMutation({
     mutationFn: () => accountApi.markAllRead(),
-    onMutate: () => setRead('all'),
+    onMutate: async () => { await queryClient.cancelQueries({ queryKey: qk.notifications }); setRead('all') },
     onSuccess: () => toast({ tone: 'success', title: 'All caught up', body: 'Every notification is marked as read.' }),
-    onError: cause => { toast({ tone: 'danger', title: 'Could not mark all as read', body: errorMessage(cause) }); void queryClient.invalidateQueries({ queryKey: qk.notifications }) },
+    onError: cause => toast({ tone: 'danger', title: 'Could not mark all as read', body: errorMessage(cause) }),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.notifications }),
   })
 
   function open(n: AppNotification) {
@@ -91,12 +95,18 @@ export function NotificationsPage() {
       ) : list.isError ? (
         <QueryError error={list.error} title="We couldn’t load your notifications" onRetry={() => void list.refetch()} retrying={list.isFetching} />
       ) : items.length === 0 ? (
-        <EmptyState
-          icon={Inbox}
-          title={filter === 'unread' ? 'No unread notifications' : 'No notifications yet'}
-          description={filter === 'unread' ? 'You have read everything on this page.' : 'Interview assignments, new applications and work-sample submissions appear here.'}
-          action={filter === 'unread' ? <Button size="sm" variant="secondary" onClick={() => search.set({ filter: null })}>Show all</Button> : undefined}
-        />
+        <>
+          <EmptyState
+            icon={Inbox}
+            title={filter === 'unread' ? 'No unread notifications on this page' : page > 0 ? 'Nothing on this page' : 'No notifications yet'}
+            description={filter === 'unread' ? (unreadCount > 0 ? 'There are unread notifications on other pages.' : 'You have read everything.') : page > 0 ? 'This page is past the end of your inbox.' : 'Interview assignments, new applications and work-sample submissions appear here.'}
+            action={filter === 'unread' ? <Button size="sm" variant="secondary" onClick={() => search.set({ filter: null, page: page || null })}>Show all</Button> : page > 0 ? <Button size="sm" variant="secondary" onClick={() => search.set({ page: null })}>First page</Button> : undefined}
+          />
+          {/* The pages stay reachable even when this page shows nothing (unread items can be on another page). */}
+          {list.data.totalElements > PAGE_SIZE && (
+            <Pagination page={list.data.page + 1} pageSize={PAGE_SIZE} total={list.data.totalElements} onPageChange={p => search.set({ page: p - 1, filter: filter === 'all' ? null : filter })} />
+          )}
+        </>
       ) : (
         <div className="nt" data-stale={list.isPlaceholderData || undefined}>
           {[...groups.entries()].map(([day, rows]) => (

@@ -240,6 +240,17 @@ class WorkSampleFilesIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void submittingAnExpiredAssignmentSaysItExpired() throws Exception {
+        // R2-L05: after the expiry sweep the candidate was told to "start the work sample first".
+        WorkSampleAssignment expired = assignment(sample, applicationA, WorkSampleAssignmentStatus.EXPIRED);
+        mvc.perform(post(MINE + "/{id}/submit", expired.getId()).with(candidate("a@wsf-cand.test"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"responseText\":\"Late answer\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", containsString("expired")));
+        assertEquals(WorkSampleAssignmentStatus.EXPIRED, assignments.findById(expired.getId()).orElseThrow().getStatus());
+    }
+
     // ---- helpers ----
 
     private Application application(String email) {

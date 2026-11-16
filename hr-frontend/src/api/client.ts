@@ -20,13 +20,72 @@ export const PORTAL = 'staff'
 export class ApiError extends Error {
   readonly status: number
   readonly fieldErrors: FieldError[]
+  /** Machine-readable code the server put in front of its message (`MFA_NOT_CONFIGURED: …`), else null. */
+  readonly code: string | null
+  /** Seconds from the `Retry-After` header of a 429 (every 429 carries one), else null. */
+  readonly retryAfterSeconds: number | null
 
-  constructor(status: number, message: string, fieldErrors: FieldError[] = []) {
+  constructor(status: number, message: string, fieldErrors: FieldError[] = [], code: string | null = null, retryAfterSeconds: number | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.fieldErrors = fieldErrors
+    this.code = code
+    this.retryAfterSeconds = retryAfterSeconds
   }
+}
+
+/** `Retry-After` as whole seconds (delta-seconds or an HTTP date); null when missing or unreadable. */
+export function parseRetryAfter(header: string | null | undefined, now = Date.now()): number | null {
+  const text = (header ?? '').trim()
+  if (!text) return null
+  if (/^\d+$/.test(text)) return Number(text)
+  const at = Date.parse(text)
+  if (Number.isNaN(at)) return null
+  return Math.max(0, Math.ceil((at - now) / 1000))
+}
+
+/**
+ * Some server errors carry a code in front of the message, e.g. `MFA_NOT_CONFIGURED: two-factor authentication is not
+ * available on this server` (backend MfaService.notConfigured, OrganizationService). Split it off so the UI can branch on
+ * the code and never shows the raw prefix.
+ */
+export function splitCodedMessage(message: string | null | undefined): { code: string | null; message: string } {
+  const text = (message ?? '').trim()
+  const match = /^([A-Z][A-Z0-9_]{2,63}):\s*([\s\S]*)$/.exec(text)
+  if (!match) return { code: null, message: text }
+  const rest = match[2].trim()
+  return { code: match[1], message: rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : '' }
+}
+
+/** Friendly copy for known server error codes (the code wins over the server's wording). */
+const CODE_MESSAGES: Record<string, string> = {
+  MFA_NOT_CONFIGURED: 'Two-step verification is not available on this server yet (no encryption key is configured). Ask your administrator.',
+  SSO_NOT_CONFIGURED: 'Single sign-on is not set up on this server.',
+}
+
+function toApiError(status: number, envelope: Envelope<unknown> | null, headers?: Headers): ApiError {
+  const { code, message } = splitCodedMessage(envelope?.message)
+  const text = (code && CODE_MESSAGES[code]) || message || defaultMessage(status)
+  const retryAfter = status === 429 ? parseRetryAfter(headers?.get('Retry-After')) : null
+  return new ApiError(status, text, envelope?.errors ?? [], code, retryAfter)
+}
+
+/**
+ * "Too many wrong codes / passwords" rather than "your session or step expired": the server answers a locked MFA step
+ * with 429 `MFA_LOCKED: …` and a Retry-After (integration pass); older servers used a 401 "Too many failed attempts".
+ */
+export function isLockout(cause: unknown): boolean {
+  if (!(cause instanceof ApiError)) return false
+  if (cause.code === 'MFA_LOCKED') return true
+  return (cause.status === 401 || cause.status === 429) && /too many/i.test(cause.message)
+}
+
+/** "about N minutes" / "about a minute" from a Retry-After, or null when the server did not say. */
+export function waitText(cause: unknown): string | null {
+  if (!(cause instanceof ApiError) || cause.retryAfterSeconds == null || cause.retryAfterSeconds <= 0) return null
+  const minutes = Math.ceil(cause.retryAfterSeconds / 60)
+  return minutes <= 1 ? 'about a minute' : `about ${minutes} minutes`
 }
 
 export function isApiError(value: unknown, status?: number): value is ApiError {
@@ -212,7 +271,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const response = await send(path, options, 'application/json')
   const envelope = await readEnvelope<T>(response)
   if (!response.ok || (envelope && envelope.success === false)) {
-    throw new ApiError(response.status, envelope?.message || defaultMessage(response.status), envelope?.errors ?? [])
+    throw toApiError(response.status, envelope, response.headers)
   }
   return (envelope?.data ?? undefined) as T
 }
@@ -252,10 +311,18 @@ function sanitizeFilename(name: string) {
 
 /** Downloads a file through the authenticated client and saves it with the server's filename. */
 export async function downloadFile(path: string, fallbackName: string, query?: Query): Promise<string> {
+  return (await downloadFileWithHeaders(path, fallbackName, query)).filename
+}
+
+/**
+ * Like downloadFile, but also returns the response headers (e.g. `X-Export-Truncated` on the audit CSV, which the
+ * server exposes through CORS).
+ */
+export async function downloadFileWithHeaders(path: string, fallbackName: string, query?: Query): Promise<{ filename: string; headers: Headers }> {
   const response = await send(path, { query }, '*/*')
   if (!response.ok) {
     const envelope = await readEnvelope<unknown>(response)
-    throw new ApiError(response.status, envelope?.message || defaultMessage(response.status), envelope?.errors ?? [])
+    throw toApiError(response.status, envelope, response.headers)
   }
   const blob = await response.blob()
   const filename = filenameFromDisposition(response.headers.get('Content-Disposition')) ?? fallbackName
@@ -269,5 +336,5 @@ export async function downloadFile(path: string, fallbackName: string, query?: Q
   anchor.click()
   anchor.remove()
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000)
-  return filename
+  return { filename, headers: response.headers }
 }

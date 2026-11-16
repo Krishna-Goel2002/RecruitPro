@@ -10,14 +10,27 @@ export interface ProvenanceLineProps {
   /** Actor or verifier ("checked by Priya S.", "agent"). */
   actor?: ReactNode
   at?: string | Date | null
-  href?: string
+  /** Only http(s) URLs become a link; anything else (javascript:, data:, relative…) is not rendered as a link. */
+  href?: string | null
   hrefLabel?: string
   className?: string
+}
+
+/** The href when it is an absolute http(s) URL, else undefined (evidence URLs come from candidates and agents). */
+export function provenanceHref(href: string | null | undefined): string | undefined {
+  if (!href) return undefined
+  try {
+    const url = new URL(href.trim())
+    return url.protocol === 'http:' || url.protocol === 'https:' ? href.trim() : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Who/what/when line (§9.13), directly under the quote it qualifies: icon · source · actor · time · View source ↗. */
 export function ProvenanceLine({ icon, source, actor, at, href, hrefLabel = 'View source', className }: ProvenanceLineProps) {
   const date = at ? new Date(at) : null
+  const safe = provenanceHref(href)
   return (
     <p className={cx('ui-provenance', className)}>
       {icon && <Icon icon={icon} size={14} />}
@@ -36,8 +49,8 @@ export function ProvenanceLine({ icon, source, actor, at, href, hrefLabel = 'Vie
           </time>
         </>
       )}
-      {href && (
-        <a className="ui-provenance-link" href={href} target="_blank" rel="noreferrer noopener">
+      {safe && (
+        <a className="ui-provenance-link" href={safe} target="_blank" rel="noreferrer noopener">
           {hrefLabel}
           <Icon icon={ArrowUpRight} size={12} />
           <span className="sr-only"> (opens in a new tab)</span>

@@ -60,6 +60,20 @@ PUBLIC_SECOND_LEVEL = frozenset({"co", "com", "net", "org", "ac", "gov", "edu", 
 LEGAL_WORDS = frozenset({"inc", "incorporated", "ltd", "limited", "llc", "llp", "lp", "plc", "pvt", "private", "corp",
                          "corporation", "co", "company", "gmbh", "ag", "sa", "sas", "sarl", "bv", "nv", "pte", "pty",
                          "srl", "spa", "oy", "ab", "kk", "kg", "the", "and", "of"})
+# Platforms that hand out subdomains to anyone (the "private" part of the public suffix list, abridged; no PSL is
+# vendored). The platform's registration date says nothing about who controls ``someone.github.io``, so the RDAP walk
+# up to the platform's own domain must not make such a subdomain look established.
+SHARED_HOSTING_SUFFIXES = frozenset({
+    "github.io", "githubusercontent.com", "gitlab.io", "bitbucket.io", "codeberg.page", "sourceforge.io",
+    "netlify.app", "netlify.com", "vercel.app", "now.sh", "pages.dev", "workers.dev", "herokuapp.com", "herokussl.com",
+    "web.app", "firebaseapp.com", "appspot.com", "blogspot.com", "wordpress.com", "wixsite.com", "weebly.com",
+    "squarespace.com", "azurewebsites.net", "azurestaticapps.net", "cloudapp.net", "cloudfront.net", "amazonaws.com",
+    "onrender.com", "fly.dev", "glitch.me", "repl.co", "replit.app", "replit.dev", "surge.sh", "neocities.org",
+    "readthedocs.io", "notion.site", "carrd.co", "medium.com", "substack.com", "tumblr.com", "ngrok.io",
+    "ngrok-free.app", "ngrok.app", "duckdns.org", "no-ip.org", "ddns.net", "000webhostapp.com", "webflow.io",
+    "framer.website", "framer.app", "deno.dev", "railway.app", "up.railway.app", "pythonanywhere.com",
+    "streamlit.app", "hf.space", "translate.goog", "digitaloceanspaces.com", "ondigitalocean.app",
+})
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
 MxLookup = Callable[[str], list[str]]
@@ -100,6 +114,23 @@ def listed(domain: str, entries: list[str] | None) -> str | None:
     return None
 
 
+def shared_hosting_platform(domain: str) -> str | None:
+    """The shared-hosting platform ``domain`` is a subdomain of (``mira.github.io`` -> ``github.io``), else None."""
+    domain = normalise_domain(domain)
+    return next((suffix for suffix in SHARED_HOSTING_SUFFIXES if domain.endswith("." + suffix)), None)
+
+
+def _shared_hosting(trust: "DomainTrust") -> bool:
+    platform = shared_hosting_platform(trust.domain)
+    trust.signals["sharedHosting"] = platform
+    if platform is None:
+        return False
+    trust.snapshot.append(f"Subdomain of the shared hosting platform {platform}.")
+    trust.reasons.append(f"The domain is a subdomain of {platform}, where anyone can publish; the platform's "
+                         "registration date says nothing about who controls it.")
+    return True
+
+
 def name_tokens(name: str | None) -> list[str]:
     return [token for token in tokens(name or "") if token not in LEGAL_WORDS]
 
@@ -128,7 +159,7 @@ def _bootstrap(fetcher: Fetcher, cache: TtlCache) -> dict[str, list[str]] | None
     try:
         result = fetcher.fetch(BOOTSTRAP_URL, accept=RDAP_TYPES, max_bytes=BOOTSTRAP_MAX_BYTES, respect_robots=False)
         document = json.loads(result.text()) if result.ok else None
-    except (FetchError, ValueError):
+    except (FetchError, ValueError, RecursionError):
         return None
     services: dict[str, list[str]] = {}
     for service in (document or {}).get("services", []) if isinstance(document, dict) else []:
@@ -194,7 +225,7 @@ def rdap_lookup(domain: str, fetcher: Fetcher, cache: TtlCache) -> RdapResult:
             break
         try:
             document = json.loads(result.text())
-        except ValueError:
+        except (ValueError, RecursionError):
             return RdapResult("unreachable", queried=name, server=base, detail="RDAP answer is not JSON")
         registered = _registration(document)
         if registered is None:
@@ -361,6 +392,8 @@ def assess_employer_domain(domain: str, employer_name: str | None, *, now: datet
     if trust.candidate_controlled:
         trust.reasons.append("The candidate proved ownership of this domain, so it cannot vouch for the employer.")
         return _finish(trust, UNTRUSTED, None)
+    if _shared_hosting(trust):
+        return _finish(trust, WEAK, None)
     if fetcher is None or cache is None:
         trust.signals["rdap"] = "unreachable"
         trust.reasons.append("The domain could not be checked (no network).")
@@ -392,6 +425,8 @@ def assess_issuer_domain(domain: str, *, now: datetime, fetcher: Fetcher | None,
     if trust.candidate_controlled:
         trust.reasons.append("The candidate proved ownership of the issuer's domain, so the badge is self-issued.")
         return _finish(trust, UNTRUSTED, None)
+    if _shared_hosting(trust):
+        return _finish(trust, WEAK, None)
     if fetcher is None or cache is None:
         trust.signals["rdap"] = "unreachable"
         trust.reasons.append("The issuer domain could not be checked (no network).")

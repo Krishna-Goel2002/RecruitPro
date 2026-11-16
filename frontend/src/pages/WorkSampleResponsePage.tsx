@@ -16,7 +16,7 @@ import { ArrowRight, Check, CircleCheck, Clock, Download, Icon, ListChecks } fro
 import { formatDate, formatFileSize } from '../design/lib/format'
 import { useDraft } from '../lib/drafts'
 import { saveBlob, safeFilename } from '../lib/download'
-import { WORK_SAMPLE_ACCEPT, WORK_SAMPLE_MAX_BYTES, WORK_SAMPLE_MAX_FILES, validateWorkSampleFiles } from '../lib/files'
+import { WORK_SAMPLE_ACCEPT, WORK_SAMPLE_MAX_BYTES, WORK_SAMPLE_MAX_FILES, mergeWorkSampleFiles, validateWorkSampleFiles } from '../lib/files'
 import { describeDuration, formatDuration, formatLongDateTime, formatTime } from '../lib/format'
 import { useBeforeUnload, useNow } from '../lib/hooks'
 import { readStored } from '../lib/storage'
@@ -28,7 +28,8 @@ import './tasks/tasks.css'
 
 /** Plan 5.6: submissions are accepted until startedAt + time limit + 5 minutes. */
 const GRACE_SECONDS = 5 * 60
-const RESPONSE_MAX = 20000
+/** WorkSampleSubmitRequest.responseText is @Size(max = 50000) on the server (was 20000 here, cutting long answers). */
+const RESPONSE_MAX = 50000
 const URL_MAX = 500
 const ANNOUNCE_AT_SECONDS = [600, 300, 60]
 
@@ -398,19 +399,24 @@ function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
             <FileDropzone
               compact
               multiple
-              maxFiles={WORK_SAMPLE_MAX_FILES - files.length}
-              disabled={files.length >= WORK_SAMPLE_MAX_FILES}
+              disabled={files.length >= WORK_SAMPLE_MAX_FILES || submit.isPending}
               accept={WORK_SAMPLE_ACCEPT}
               maxSize={WORK_SAMPLE_MAX_BYTES}
               prompt={files.length >= WORK_SAMPLE_MAX_FILES ? 'Three files attached.' : 'Drop files here, or'}
               hint="Up to 3 files: PDF, ZIP, DOCX, PPTX, PNG or JPG, 20 MB each."
               onFiles={chosen => {
-                const next = [...files, ...chosen].slice(0, WORK_SAMPLE_MAX_FILES)
-                setFiles(next)
-                setErrors(current => ({ ...current, files: validateWorkSampleFiles(next).join(' ') }))
+                // Extra files are reported, not silently dropped (the dropzone used to cut the list without a word).
+                const merged = mergeWorkSampleFiles(files, chosen)
+                setFiles(merged.files)
+                setErrors(current => ({ ...current, files: merged.problems.join(' ') }))
               }}
               files={files.map((file, i) => ({ id: i, name: file.name, size: file.size }))}
-              onRemove={i => setFiles(current => current.filter((_, position) => position !== i))}
+              onRemove={i => {
+                const next = files.filter((_, position) => position !== i)
+                setFiles(next)
+                // Re-check what is left: an error about the removed file must not stay on screen.
+                setErrors(current => ({ ...current, files: validateWorkSampleFiles(next).join(' ') }))
+              }}
               error={errors.files || undefined}
             />
           </div>

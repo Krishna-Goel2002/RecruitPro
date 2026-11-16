@@ -43,6 +43,9 @@ export function RequirementsEditor({ drafts, onChange, errors }: {
     onChange(next)
     if (refocus) window.requestAnimationFrame(() => refocus.focus())
   }
+  // Undo must restore into the CURRENT list: edits made while the toast was up are kept.
+  const latest = useRef(drafts)
+  latest.current = drafts
   const remove = (index: number) => {
     const removed = drafts[index]
     onChange(drafts.filter((_, i) => i !== index))
@@ -50,7 +53,13 @@ export function RequirementsEditor({ drafts, onChange, errors }: {
       tone: 'info',
       title: `Removed “${removed.description.trim() || 'untitled requirement'}”`,
       duration: 6000,
-      action: { label: 'Undo', onClick: () => onChange(insertAt(drafts.filter(d => d.key !== removed.key), index, removed)) },
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const now = latest.current.filter(d => d.key !== removed.key)
+          onChange(insertAt(now, Math.min(index, now.length), removed))
+        },
+      },
     })
   }
   const add = () => {
@@ -145,6 +154,8 @@ function RequirementRow({ draft, index, total, error, expanded, dragging, onTogg
 
   const onKeyDown = (event: KeyboardEvent<HTMLLIElement>) => {
     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+    // Alt+↓ on a <select> opens its list (Windows); leave it alone.
+    if ((event.target as HTMLElement).tagName === 'SELECT') return
     event.preventDefault()
     onMove(event.key === 'ArrowUp' ? -1 : 1, document.activeElement as HTMLElement)
   }

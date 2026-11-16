@@ -95,14 +95,9 @@ class GitLabSource:
                 repo.manifests[name] = text
 
     def _raw(self, base: str, name: str, branch: str) -> str | None:
-        self.api.budget.charge()
-        try:
-            response = self.api._client.get(f"{base}/repository/files/{quote(name, safe='')}/raw", params={"ref": branch})
-        except httpx.HTTPError:
-            return None
-        if response.status_code != 200:
-            return None
-        return response.content[:MAX_FILE_BYTES].decode("utf-8", errors="replace")
+        # Streamed and capped (the file is the candidate's: it may be huge); rate limits map like every API call.
+        return self.api.get_raw(f"{base}/repository/files/{quote(name, safe='')}/raw", {"ref": branch},
+                                max_bytes=MAX_FILE_BYTES)
 
     def _commits(self, profile: ProfileFacts, repo: RepoFacts, base: str) -> None:
         status, commits = self.api.get(f"{base}/repository/commits", {"per_page": 100})

@@ -16,9 +16,10 @@ export function InterviewsPage() {
   const query = useQuery({ queryKey: qk.myInterviews, queryFn: ({ signal }) => interviewsApi.mine(signal) })
   const now = Date.now()
   const all = query.data ?? []
-  const waiting = all.filter(i => i.status === 'SCHEDULED' && !i.scorecard && new Date(i.scheduledAt).getTime() <= now).sort(byTime)
+  // A scorecard the server says is closed (the application was decided or withdrawn, R6-B4) is not "waiting".
+  const waiting = all.filter(i => i.status === 'SCHEDULED' && !i.scorecard && i.scorecardEditable !== false && new Date(i.scheduledAt).getTime() <= now).sort(byTime)
   const upcoming = all.filter(i => i.status === 'SCHEDULED' && new Date(i.scheduledAt).getTime() > now).sort(byTime)
-  const past = all.filter(i => i.status !== 'SCHEDULED' || (i.scorecard && new Date(i.scheduledAt).getTime() <= now)).sort((a, b) => byTime(b, a))
+  const past = all.filter(i => i.status !== 'SCHEDULED' || ((i.scorecard || i.scorecardEditable === false) && new Date(i.scheduledAt).getTime() <= now)).sort((a, b) => byTime(b, a))
   const days = groupByDay(upcoming)
 
   return (
@@ -97,7 +98,8 @@ function Row({ interview: i, waiting, past }: { interview: Interview; waiting?: 
         {waiting ? <span {...buttonProps('primary', 'sm')} aria-hidden="true">Write scorecard</span>
           : i.scorecard ? <Badge tone="success">Scorecard in</Badge>
             : i.status === 'CANCELLED' ? <Badge tone="neutral" variant="outline">Cancelled</Badge>
-              : <span className="iv-rel">{relativeTime(i.scheduledAt)}</span>}
+              : i.scorecardEditable === false ? <Badge tone="neutral" variant="outline">Scorecard closed</Badge>
+                : <span className="iv-rel">{relativeTime(i.scheduledAt)}</span>}
         <Icon icon={ChevronRight} size={16} className="iv-chev" />
       </div>
     </li>

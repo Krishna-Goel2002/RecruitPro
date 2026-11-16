@@ -6,6 +6,7 @@ import { authApi, resumesApi } from '../api/endpoints'
 import { queryKeys } from '../api/queryKeys'
 import type { Resume } from '../api/types'
 import { useCurrentUser } from '../auth/AuthProvider'
+import { ErrorState } from '../components/Feedback'
 import { useNotify } from '../components/Notices'
 import {
   Button, CountUp, EvidenceLadder, FileDropzone, IconButton, LoadingRegion, PageHeader, Panel, Skeleton, Spinner, buttonProps,
@@ -23,6 +24,7 @@ import {
 } from '../lib/queries'
 import { RESUME_REVIEWED_KEY, readStored, writeStored } from '../lib/storage'
 import { ApplicationStatusBadge, NextStepText } from './ApplicationsPage'
+import { POLL_INTERVAL_MS } from './resumes/useResumeAnalysis'
 import './common.css'
 import './home/home.css'
 
@@ -44,7 +46,10 @@ export function HomePage() {
 
   // A new account sees the checklist alone; the rest of the overview appears once there is something to show.
   const settled = user.emailVerified && (resumes.data?.length ?? 0) > 0 && (sources.data?.length ?? 0) > 0 && (applications.data?.totalElements ?? 0) > 0
-  const loading = resumes.isPending || applications.isPending || ledger.isPending
+  // Sources decide the "Strengthen" step, so the checklist waits for them too (it flashed that step as current).
+  const loading = resumes.isPending || applications.isPending || ledger.isPending || sources.isPending
+  // A failed load must not look like a brand-new account (the checklist would ask for a resume the candidate has).
+  const failed = [resumes, sources, applications, ledger].find(q => q.isError && q.data === undefined)
   const active = (applications.data?.content ?? []).filter(a => ['SUBMITTED', 'SHORTLISTED', 'INTERVIEWING'].includes(a.status)).length
 
   return (
@@ -66,6 +71,14 @@ export function HomePage() {
             <Skeleton width="100%" height={120} />
           </div>
         </LoadingRegion>
+      ) : failed ? (
+        <ErrorState
+          error={failed.error}
+          title="Your overview could not be loaded"
+          onRetry={() => {
+            for (const q of [resumes, sources, applications, ledger]) if (q.isError) void q.refetch()
+          }}
+        />
       ) : (
         <>
           <Checklist
@@ -103,7 +116,14 @@ function Checklist({ emailVerified, email, resumes, hasSources, hasApplications 
   const notify = useNotify()
   const [hidden, setHidden] = useState(() => readStored(HIDE_KEY) === '1')
   const latest = latestResume(resumes)
-  const analysis = useQuery({ queryKey: queryKeys.resumeAnalysis(latest?.id ?? 0), queryFn: () => resumesApi.analysis(latest!.id), enabled: !!latest })
+  const analysis = useQuery({
+    queryKey: queryKeys.resumeAnalysis(latest?.id ?? 0),
+    queryFn: () => resumesApi.analysis(latest!.id),
+    enabled: !!latest,
+    // While the resume is being read, check again so the next step opens by itself (about 2 minutes at most).
+    refetchInterval: q =>
+      (q.state.data?.status === 'PENDING' || q.state.data?.status === 'PROCESSING') && q.state.dataUpdateCount < 40 ? POLL_INTERVAL_MS : false,
+  })
   const analysed = analysis.data?.status === 'COMPLETED' || analysis.data?.status === 'PARTIAL'
   const reading = analysis.data?.status === 'PENDING' || analysis.data?.status === 'PROCESSING'
 

@@ -26,6 +26,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.util.AopTestUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
@@ -33,6 +35,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -58,6 +61,7 @@ class AdminPortalIntegrationTest {
     @Autowired ResumeRepository resumes;
     @Autowired ApplicationRepository applications;
     @Autowired AuditEventRepository auditEvents;
+    @Autowired com.recruitpro.audit.service.AuditService auditService;
 
     private Organization organization;
     private User primaryAdmin;
@@ -474,8 +478,33 @@ class AdminPortalIntegrationTest {
                 .andExpect(header().string("Content-Disposition", containsString("attachment")))
                 .andExpect(content().contentTypeCompatibleWith("text/csv"))
                 .andExpect(content().string(startsWith("id,createdAt,action,actorEmail")))
-                .andExpect(content().string(containsString("ADMIN_JOB_STATUS_OVERRIDE")));
+                .andExpect(content().string(containsString("ADMIN_JOB_STATUS_OVERRIDE")))
+                // R6-B5 / R1-U8: never cached, and the portal is told whether the row cap cut the file off.
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("X-Export-Truncated", "false"));
         assertEquals(1, auditEvents.findAllByOrganizationIdAndActionOrderByIdAsc(organization.getId(), "AUDIT_EXPORTED").size());
+
+        Object auditTarget = AopTestUtils.getUltimateTargetObject(auditService);
+        ReflectionTestUtils.setField(auditTarget, "maxExportRows", 1);
+        try {
+            mvc.perform(get("/api/v1/admin/audit-export").with(adminPrincipal))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("X-Export-Truncated", "true"));
+            List<com.recruitpro.audit.entity.AuditEvent> exports =
+                    auditEvents.findAllByOrganizationIdAndActionOrderByIdAsc(organization.getId(), "AUDIT_EXPORTED");
+            assertThat(exports.get(exports.size() - 1).getDetails(), startsWith("Exported 1 audit events"));
+            assertThat(exports.get(exports.size() - 1).getDetails(), containsString("cut off at the row limit"));
+        } finally {
+            ReflectionTestUtils.setField(auditTarget, "maxExportRows", 50_000);
+        }
+
+        // Bug hunt R1: a plain 'to' date includes the whole of that UTC day (it used to mean its first instant).
+        String day = auditEvents.findAllByOrganizationIdAndActionOrderByIdAsc(organization.getId(), "ADMIN_JOB_STATUS_OVERRIDE")
+                .get(0).getCreatedAt().toLocalDate().toString();
+        mvc.perform(get("/api/v1/admin/audit-export").param("from", day).param("to", day).with(adminPrincipal))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("ADMIN_JOB_STATUS_OVERRIDE")));
 
         mvc.perform(get("/api/v1/admin/audit-export").param("from", "yesterday").with(adminPrincipal))
                 .andExpect(status().isBadRequest());

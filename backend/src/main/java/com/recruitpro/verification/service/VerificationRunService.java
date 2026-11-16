@@ -97,8 +97,14 @@ public class VerificationRunService {
         if (runRepository.existsBySourceIdAndStatusIn(source.getId(), ACTIVE)) {
             throw new DuplicateResourceException("A check of this source is already running");
         }
-        if (runRepository.countByCandidateIdAndCreatedAtAfter(candidateId, UtcTime.now().minusHours(24)) >= maxRunsPerDay) {
-            throw new TooManyRequestsException("You can run at most " + maxRunsPerDay + " checks in 24 hours. Please try again later.");
+        LocalDateTime now = UtcTime.now();
+        LocalDateTime windowStart = now.minusHours(24);
+        if (runRepository.countByCandidateIdAndCreatedAtAfter(candidateId, windowStart) >= maxRunsPerDay) {
+            // Integration pass (R5#3): Retry-After = when the oldest run of the window leaves it.
+            LocalDateTime oldest = runRepository.findFirstByCandidateIdAndCreatedAtAfterOrderByCreatedAtAsc(candidateId, windowStart)
+                    .map(VerificationRun::getCreatedAt).orElse(null);
+            throw new TooManyRequestsException("You can run at most " + maxRunsPerDay + " checks in 24 hours. Please try again later.",
+                    PublicEndpointRateLimiter.secondsUntilFree(oldest, java.time.Duration.ofHours(24), now));
         }
         VerificationRun run = new VerificationRun();
         run.setSourceId(source.getId());
@@ -156,7 +162,7 @@ public class VerificationRunService {
         }
         CandidateProfile profile = profileRepository.findById(run.getCandidateId()).orElse(null);
         User user = profile == null ? null : profile.getUser();
-        String holderName = user == null ? null : (nullToEmpty(user.getFirstName()) + " " + nullToEmpty(user.getLastName())).trim();
+        String holderName = user == null ? null : holderName(user.getFirstName(), user.getLastName());
         String holderEmail = user == null ? null : user.getEmail();
         boolean codeHost = source.getKind() == VerificationSourceKind.GITHUB || source.getKind() == VerificationSourceKind.GITLAB;
         List<AgentModels.Claim> claims = new ArrayList<>();
@@ -192,5 +198,17 @@ public class VerificationRunService {
 
     private static String nullToEmpty(String value) {
         return value == null ? "" : value;
+    }
+
+    /** Maximum {@code holderName} the agent accepts (agent-service {@code models.py}, 200 characters). */
+    static final int MAX_HOLDER_NAME = 200;
+
+    /**
+     * "First Last", trimmed and cut to {@value #MAX_HOLDER_NAME} characters (R3-B07: names are up to 100 + 100
+     * characters, and a longer holderName made the agent reject the whole run with 422).
+     */
+    static String holderName(String firstName, String lastName) {
+        String name = (nullToEmpty(firstName) + " " + nullToEmpty(lastName)).trim();
+        return name.length() > MAX_HOLDER_NAME ? name.substring(0, MAX_HOLDER_NAME).trim() : name;
     }
 }

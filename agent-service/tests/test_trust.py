@@ -320,3 +320,27 @@ def test_demo_employer_domains(demo_client):
     verdict = young["verdicts"][0]
     assert verdict["verdict"] == "PARTLY_VERIFIED"
     assert {"EMPLOYER_DOMAIN_UNPROVEN", "EMPLOYER_DOMAIN_NEW"} <= _codes(verdict)
+
+
+# ------------------------------------------------------------------------------------- bug-hunt regressions
+@pytest.mark.parametrize("issuer", ["https://mira.github.io", "https://badges.mira.netlify.app"])
+def test_issuer_on_a_shared_hosting_subdomain_does_not_inherit_the_platform_age(client, fake_net, issuer):
+    """Anyone can publish a JWKS on <name>.github.io; RDAP 404s there and the walk reached github.io (registered in
+    2008), so a self-issued badge used to verify. The platform's age must not count."""
+    fake_net.registered.update({"mira.github.io": None, "badges.mira.netlify.app": None, "mira.netlify.app": None})
+    verdict = _badge(client, credential=_jwks_badge(fake_net, issuer))
+    assert verdict["verdict"] == "PARTLY_VERIFIED" and "ISSUER_UNTRUSTED" in _codes(verdict)
+    trust = verdict["domainTrust"]
+    assert trust["status"] == WEAK and trust["signals"]["sharedHosting"] in {"github.io", "netlify.app"}
+    assert not any("rdap.test" in call for call in fake_net.calls)
+    # an organisation may still trust it explicitly
+    verdict = _badge(client, credential=_jwks_badge(fake_net, issuer),
+                     trustedIssuerDomains=[issuer.split("://", 1)[1]])
+    assert verdict["verdict"] == "VERIFIED"
+
+
+def test_employer_domain_on_shared_hosting_is_weak():
+    trust = assess_employer_domain("acme.herokuapp.com", "Acme", now=NOW, fetcher=None, mx_lookup=None,
+                                   cache=TtlCache())
+    assert trust.status == WEAK and trust.signals["sharedHosting"] == "herokuapp.com"
+    assert assess_issuer_domain("github.io", now=NOW, fetcher=None, cache=None).signals["sharedHosting"] is None

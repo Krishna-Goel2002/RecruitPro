@@ -22,6 +22,10 @@ import java.util.UUID;
  * reason ROTATED and replaced by the next token of the same family). Presenting a token rotated less than
  * {@code app.auth.refresh-grace-seconds} (30 s) ago returns a fresh access token without a new refresh token
  * (concurrent tabs). Presenting it later is treated as theft: the whole family is revoked (REUSE_DETECTED).
+ *
+ * <p>R1-U2: a family also has an absolute lifetime ({@code app.jwt.refresh-absolute-lifetime-days}, default 30)
+ * counted from the sign-in that started it; no token of the family expires later, and a token presented after it
+ * is refused like an expired one (the family is revoked with reason SESSION_LIFETIME).</p>
  */
 @Service
 public class RefreshTokenService {
@@ -31,6 +35,7 @@ public class RefreshTokenService {
     public static final String REASON_REUSE_DETECTED = "REUSE_DETECTED";
     public static final String REASON_PASSWORD_CHANGED = "PASSWORD_CHANGED";
     public static final String REASON_ACCOUNT_DISABLED = "ACCOUNT_DISABLED";
+    public static final String REASON_SESSION_LIFETIME = "SESSION_LIFETIME";
 
     static final String INVALID_REFRESH_TOKEN = "Invalid or expired refresh token";
     private static final Logger log = LoggerFactory.getLogger(RefreshTokenService.class);
@@ -39,34 +44,58 @@ public class RefreshTokenService {
     private final AuditService auditService;
     private final long refreshTokenExpiryMs;
     private final long graceSeconds;
+    private final long absoluteLifetimeDays;
 
     public RefreshTokenService(RefreshTokenRepository repository, AuditService auditService,
                                @Value("${app.jwt.refresh-token-expiry-ms}") long refreshTokenExpiryMs,
-                               @Value("${app.auth.refresh-grace-seconds:30}") long graceSeconds) {
+                               @Value("${app.auth.refresh-grace-seconds:30}") long graceSeconds,
+                               @Value("${app.jwt.refresh-absolute-lifetime-days:30}") long absoluteLifetimeDays) {
         this.repository = repository;
         this.auditService = auditService;
         this.refreshTokenExpiryMs = refreshTokenExpiryMs;
         this.graceSeconds = graceSeconds;
+        this.absoluteLifetimeDays = Math.max(1, absoluteLifetimeDays);
     }
 
     /** Starts a new family (a new sign-in) and returns the raw token. */
     @Transactional
     public String issueNewFamily(User user) {
-        return issue(user, UUID.randomUUID().toString());
+        return issue(user, UUID.randomUUID().toString(), UtcTime.now());
     }
 
-    /** Issues the next token of a family and returns the raw token. */
+    /**
+     * Issues a token of the given family and returns the raw token. An existing family keeps its sign-in time (the
+     * absolute lifetime is never restarted); an unknown family starts now.
+     */
     @Transactional
     public String issue(User user, String familyId) {
+        LocalDateTime startedAt = repository.findFirstByFamilyIdOrderByIdAsc(familyId)
+                .map(first -> first.getFamilyStartedAt() != null ? first.getFamilyStartedAt() : first.getCreatedAt())
+                .orElse(null);
+        return issue(user, familyId, startedAt != null ? startedAt : UtcTime.now());
+    }
+
+    /**
+     * Issues the next token of a family started at {@code familyStartedAt}; it expires after the sliding lifetime but
+     * never after the family's absolute end.
+     */
+    private String issue(User user, String familyId, LocalDateTime familyStartedAt) {
         String raw = TokenHashing.newToken();
+        LocalDateTime sliding = UtcTime.now().plusNanos(refreshTokenExpiryMs * 1_000_000L);
+        LocalDateTime absoluteEnd = absoluteEnd(familyStartedAt);
         RefreshToken token = RefreshToken.builder()
                 .user(user)
                 .tokenHash(TokenHashing.sha256(raw))
                 .familyId(familyId)
-                .expiresAt(UtcTime.now().plusNanos(refreshTokenExpiryMs * 1_000_000L))
+                .familyStartedAt(familyStartedAt)
+                .expiresAt(sliding.isBefore(absoluteEnd) ? sliding : absoluteEnd)
                 .build();
         repository.save(token);
         return raw;
+    }
+
+    private LocalDateTime absoluteEnd(LocalDateTime familyStartedAt) {
+        return familyStartedAt.plusDays(absoluteLifetimeDays);
     }
 
     /**
@@ -94,6 +123,16 @@ public class RefreshTokenService {
         if (!current.getExpiresAt().isAfter(now)) {
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
         }
+        LocalDateTime familyStartedAt = current.getFamilyStartedAt() == null ? current.getCreatedAt()
+                : current.getFamilyStartedAt();
+        if (familyStartedAt == null) {
+            familyStartedAt = now;
+        }
+        if (!absoluteEnd(familyStartedAt).isAfter(now)) {
+            // R1-U2: the sign-in is older than the absolute session lifetime; the user signs in again.
+            repository.revokeFamily(current.getFamilyId(), REASON_SESSION_LIFETIME, now);
+            throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
+        }
         if (!user.isEnabled() || user.getDeletedAt() != null) {
             repository.revokeFamily(current.getFamilyId(), REASON_ACCOUNT_DISABLED, now);
             throw new UnauthorizedException(INVALID_REFRESH_TOKEN);
@@ -104,7 +143,7 @@ public class RefreshTokenService {
             current.setReplacedAt(now);
             current.setRevokedReason(REASON_ROTATED);
             repository.save(current);
-            return new Rotation(user, issue(user, current.getFamilyId()));
+            return new Rotation(user, issue(user, current.getFamilyId(), familyStartedAt));
         }
         boolean rotated = REASON_ROTATED.equals(current.getRevokedReason());
         boolean withinGrace = current.getReplacedAt() != null

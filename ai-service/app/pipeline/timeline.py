@@ -31,6 +31,16 @@ _TITLE_WORDS = (
     "researcher", "instructor", "coach", "counsellor", "counselor", "controller", "secretary", "receptionist",
     "salesperson", "owner", "generalist", "bdm", "bde", "educator", "principal", "dietitian", "physiotherapist",
     "radiographer", "phlebotomist", "storekeeper", "merchandiser", "chemist", "biologist", "statistician",
+    # Non-technical and Indian titles (surnames such as Cook, Driver, Baker, Mason, Dean or Teller are left out:
+    # a title word in the header block stops it from being read as the candidate's name).
+    "midwife", "paramedic", "surgeon", "dentist", "caregiver", "chef", "mechanic", "electrician", "plumber", "welder",
+    "machinist", "illustrator", "photographer", "animator", "videographer", "copywriter", "journalist", "reporter",
+    "producer", "translator", "interpreter", "librarian", "economist", "actuary", "underwriter", "inspector",
+    "surveyor", "estimator", "draftsman", "draughtsman", "dispatcher", "telecaller", "tele-caller", "promoter",
+    "proprietor", "entrepreneur", "superintendent", "warden", "headmaster", "headmistress", "registrar",
+    "faculty", "pgt", "tgt", "prt", "mentor", "facilitator", "attendant", "stewardess", "hostess",
+    "beautician", "stylist", "trainer", "housekeeper", "caretaker", "optometrist", "audiologist", "sonographer",
+    "anaesthetist", "anesthetist", "psychologist", "psychiatrist", "veterinarian", "pharmacologist", "nutritionist",
 )
 TITLE_RE = re.compile(r"\b(?:" + "|".join(re.escape(word) for word in _TITLE_WORDS) + r")s?\b", re.I)
 _EMPLOYER_RE = re.compile(
@@ -138,15 +148,24 @@ def _has_words(text: str) -> bool:
     return len(re.findall(r"[A-Za-z]{2,}", re.sub(r"\b(?:present|current|now|till|date|to)\b", "", text, flags=re.I))) > 0
 
 
+_DANGLING_RE = re.compile(r"(?:\s+(?:from|since|between|during|for|dated|period|duration|tenure|w\.?e\.?f\.?))+\s*$", re.I)
+
+
 def _clean(text: str) -> str:
-    return re.sub(r"^[\s|,@\-–—:()]+|[\s|,@\-–—:()]+$", "", " ".join(text.split()))
+    """Trim separators and a connective left behind by a removed date ("... Pvt Ltd from")."""
+    cleaned = re.sub(r"^[\s|,@\-–—:()]+|[\s|,@\-–—:()]+$", "", " ".join(text.split()))
+    previous = None
+    while previous != cleaned:
+        previous = cleaned
+        cleaned = re.sub(r"^[\s|,@\-–—:()]+|[\s|,@\-–—:()]+$", "", _DANGLING_RE.sub("", cleaned))
+    return cleaned
 
 
 def split_title_employer(header: str | None) -> tuple[str | None, str | None]:
     if not header:
         return None, None
     parts = [_clean(part) for part in _SEPARATORS_RE.split(header)]
-    parts = [part for part in parts if part and part.lower() not in _LOCATIONS and re.search(r"[A-Za-z]{2,}", part)]
+    parts = [part for part in parts if part and part.lower() not in _LOCATIONS and len(re.findall(r"[A-Za-z]", part)) >= 2]
     if not parts:
         return None, None
     title = next((part for part in parts if has_title_word(part) and not _EMPLOYER_RE.search(part)), None)

@@ -238,7 +238,7 @@ function ReviewPanel({ verdict, claim, jobId, applicationId }: { verdict: StaffV
             <span className="ap-muted"> by {review.reviewerName ?? 'a former team member'} · {relativeTime(review.at)}</span>
           </p>
           {review.note && <p className="vt-review-note">“{review.note}”</p>}
-          {can('verification.review') && <Button size="sm" variant="ghost" onClick={() => { setDecision(review.decision); setEditing(true) }}>Change review</Button>}
+          {can('verification.review') && <Button size="sm" variant="ghost" onClick={() => { setDecision(review.decision); setNote(review.note ?? ''); setProblem(null); save.reset(); setEditing(true) }}>Change review</Button>}
         </div>
       ) : can('verification.review') ? (
         <form className="vt-review-form" onSubmit={submit} noValidate>

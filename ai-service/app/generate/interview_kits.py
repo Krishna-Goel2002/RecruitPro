@@ -107,16 +107,20 @@ def _generate_llm(request: InterviewKitRequest, provider: LLMProvider) -> Interv
                                                f"Requirements:\n{listing}")
     ids = {req.id for req in request.requirements}
     questions: list[InterviewQuestion] = []
-    for item in data.get("questions") or []:
+    items = data.get("questions")
+    for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict) or not isinstance(item.get("question"), str) or not item["question"].strip():
             continue
         anchors = item.get("anchors")
         requirement_id = item.get("requirementId")
+        if isinstance(requirement_id, bool) or (requirement_id is not None and not isinstance(requirement_id, int)):
+            continue  # true/false or "3" are not requirement ids
         if not isinstance(anchors, dict) or not all(isinstance(anchors.get(key), str) and anchors[key].strip() for key in "1234"):
             continue
         if requirement_id is not None and requirement_id not in ids:
             continue
-        follow_ups = [text.strip()[:300] for text in item.get("followUps") or [] if isinstance(text, str) and text.strip()][:5]
+        raw_follow_ups = item.get("followUps") if isinstance(item.get("followUps"), list) else []
+        follow_ups = [text.strip()[:300] for text in raw_follow_ups if isinstance(text, str) and text.strip()][:5]
         questions.append(InterviewQuestion(id=f"q{len(questions) + 1}", requirementId=requirement_id,
                                            question=item["question"].strip()[:600], followUps=follow_ups,
                                            anchors={key: anchors[key].strip()[:400] for key in "1234"}))
@@ -135,4 +139,6 @@ def generate_interview_kit(request: InterviewKitRequest, settings: Settings | No
             return _generate_llm(request, provider)
         except (LLMError, ValidationError) as exc:
             logger.warning("LLM interview-kit generation failed, using rules: %s", exc)
+        except Exception:  # noqa: BLE001 - malformed model output must fall back to the rules kit
+            logger.warning("LLM interview-kit generation returned unusable output, using rules", exc_info=True)
     return generate_rules(request)

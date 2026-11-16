@@ -82,7 +82,10 @@ app:
   jwt:
     secret: ${JWT_SECRET:}
     access-token-expiry-ms: 900000         # 15 minutes (D11)
-    refresh-token-expiry-ms: 1209600000    # 14 days
+    refresh-token-expiry-ms: 1209600000    # 14 days (sliding: each rotation starts a new 14 days)
+    # R1-U2: absolute session lifetime. A refresh family (one sign-in) ends this many days after the sign-in,
+    # however often it is rotated; the user signs in again.
+    refresh-absolute-lifetime-days: ${JWT_REFRESH_ABSOLUTE_LIFETIME_DAYS:30}
     issuer: recruitment-platform
 
   auth:
@@ -212,6 +215,8 @@ app:
   ai-service:
     base-url: ${AI_SERVICE_URL:http://localhost:8000}
     timeout-ms: 30000
+    # R2-H03: resume parsing has its own read time-out (LibreOffice/OCR/LLM plus queueing); never below timeout-ms.
+    parse-timeout-ms: ${AI_SERVICE_PARSE_TIMEOUT_MS:120000}
     health-timeout-ms: 2000
     service-token: ${AI_SERVICE_TOKEN:}
 

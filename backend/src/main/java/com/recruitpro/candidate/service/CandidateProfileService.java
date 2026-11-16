@@ -31,7 +31,8 @@ public class CandidateProfileService {
         p.setYearsOfExperience(request.yearsOfExperience()); p.setCurrentCompany(trim(request.currentCompany()));
         p.setCurrentDesignation(trim(request.currentDesignation())); p.setExpectedSalary(request.expectedSalary());
         p.setNoticePeriodDays(request.noticePeriodDays()); p.setProfileSummary(trim(request.profileSummary()));
-        return CandidateProfileResponse.from(p);
+        // R5#6: flush so the auditing listener sets updatedAt now; the response would otherwise carry the old value.
+        return CandidateProfileResponse.from(profileRepository.saveAndFlush(p));
     }
 
     public CandidateProfile getOrProvisionMine() { return currentProfile(); }

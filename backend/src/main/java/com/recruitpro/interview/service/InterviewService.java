@@ -233,6 +233,11 @@ public class InterviewService {
                 changed = true;
             }
         }
+        if (changed && !SCHEDULABLE.contains(application.getStatus())) {
+            // R2-M05: a rejected, selected or withdrawn candidate must not get a new invitation; cancel instead.
+            throw new BadRequestException("The application is " + application.getStatus()
+                    + ", so this interview can only be cancelled, not rescheduled");
+        }
         if (changed) {
             // WP-PLAT: the same calendar event (UID) with a higher SEQUENCE replaces the earlier invitation.
             interview.setIcsSequence(interview.getIcsSequence() + 1);
@@ -297,7 +302,7 @@ public class InterviewService {
         }
         Job job = application.getJob();
         Set<Long> requirementIds = new HashSet<>();
-        for (JobRequirement requirement : requirementRepository.findByJobIdOrderById(job.getId())) {
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId())) {
             requirementIds.add(requirement.getId());
         }
         Map<String, Long> kitLinks = new HashMap<>();
@@ -341,6 +346,23 @@ public class InterviewService {
             ApplicationStatus.REJECTED, ApplicationStatus.WITHDRAWN);
 
     /**
+     * Integration pass (R6-B4): whether a scorecard can be submitted (none yet: {@link #submitScorecard}) or the
+     * existing one edited ({@link #updateScorecard}) in this interview and application state. The same rules as those
+     * methods' checks; the caller must additionally be the assigned interviewer. Shown to the portal as
+     * {@code scorecardEditable}.
+     */
+    public static boolean scorecardEditable(InterviewStatus interviewStatus, ApplicationStatus applicationStatus,
+                                            boolean hasScorecard) {
+        if (interviewStatus == null || interviewStatus == InterviewStatus.CANCELLED || applicationStatus == null) {
+            return false;
+        }
+        if (hasScorecard) {
+            return !SCORECARD_LOCKED.contains(applicationStatus);
+        }
+        return interviewStatus != InterviewStatus.COMPLETED && applicationStatus != ApplicationStatus.WITHDRAWN;
+    }
+
+    /**
      * PUT /api/v1/interviews/{id}/scorecard (WP-PLAT): the scorecard's author (the assigned interviewer who submitted
      * it) replaces ratings, recommendation and summary until the application is SELECTED, REJECTED or WITHDRAWN. The
      * replaced version is stored in {@code interview_scorecard_revisions}; audited as SCORECARD_UPDATED; re-matching is
@@ -370,7 +392,7 @@ public class InterviewService {
         }
         Job job = application.getJob();
         Set<Long> requirementIds = new HashSet<>();
-        for (JobRequirement requirement : requirementRepository.findByJobIdOrderById(job.getId())) {
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId())) {
             requirementIds.add(requirement.getId());
         }
         Map<String, Long> kitLinks = new HashMap<>();
@@ -592,15 +614,47 @@ public class InterviewService {
         }
     }
 
+    /**
+     * R2-M01: the candidate withdrew the application or deleted the account. Every SCHEDULED interview of the
+     * application is cancelled (ICS SEQUENCE raised, so calendars drop the event): the interviewer gets
+     * INTERVIEW_CANCELLED with a CANCEL invitation, and so does the candidate unless the account was deleted. Runs in
+     * the caller's transaction (application row locked). Returns how many interviews were cancelled.
+     */
+    public int cancelScheduledForDeparture(Application application, boolean accountDeleted) {
+        int cancelled = 0;
+        for (Interview interview : interviewRepository.findAllByApplicationIdAndStatus(application.getId(),
+                InterviewStatus.SCHEDULED)) {
+            interview.setStatus(InterviewStatus.CANCELLED);
+            interview.setIcsSequence(interview.getIcsSequence() + 1);
+            Interview saved = interviewRepository.saveAndFlush(interview);
+            User interviewer = userRepository.findById(saved.getInterviewerUserId()).orElse(null);
+            String label = ApplicantQueryService.blindName(application.getId());
+            notifyCancelled(saved, application, application.getJob(), interviewer, !accountDeleted,
+                    "The interview was cancelled because you withdrew your application.",
+                    accountDeleted ? "The application of " + label + " was closed, so you no longer need to interview them."
+                            : label + " withdrew the application, so you no longer need to interview them.");
+            cancelled++;
+        }
+        return cancelled;
+    }
+
     private void notifyCancelled(Interview interview, Application application, Job job, User interviewer) {
+        notifyCancelled(interview, application, job, interviewer, true,
+                "The hiring team will contact you if a new time is arranged.",
+                "You no longer need to interview " + ApplicantQueryService.blindName(application.getId()) + ".");
+    }
+
+    private void notifyCancelled(Interview interview, Application application, Job job, User interviewer,
+                                 boolean notifyCandidate, String candidateMessage, String interviewerMessage) {
         String when = UtcTime.format(interview.getScheduledAt());
-        User candidate = candidateUser(application);
+        // A deleted account is not contacted and not named in the interviewer's cancellation either.
+        User candidate = notifyCandidate ? candidateUser(application) : null;
         if (candidate != null) {
             Map<String, String> params = new HashMap<>();
             params.put("firstName", candidate.getFirstName() == null ? "" : candidate.getFirstName());
             params.put("jobTitle", job.getTitle());
             params.put("scheduledAt", when);
-            params.put("message", "The hiring team will contact you if a new time is arranged.");
+            params.put("message", candidateMessage);
             NotificationAttachment cancel = calendar.forCandidate(interview, application, job, candidate,
                     activeUser(interviewer) ? interviewer : null, IcsCalendar.Method.CANCEL);
             notificationService.notify(NotificationRecipient.of(candidate), NotificationTemplate.INTERVIEW_CANCELLED, params, cancel);
@@ -610,7 +664,7 @@ public class InterviewService {
             params.put("firstName", interviewer.getFirstName() == null ? "" : interviewer.getFirstName());
             params.put("jobTitle", job.getTitle());
             params.put("scheduledAt", when);
-            params.put("message", "You no longer need to interview " + ApplicantQueryService.blindName(application.getId()) + ".");
+            params.put("message", interviewerMessage);
             NotificationAttachment cancel = calendar.forInterviewer(interview, application, job, candidate, interviewer,
                     trimTrailingSlash(hrPortalUrl) + "/interviews/" + interview.getId(), IcsCalendar.Method.CANCEL);
             notificationService.notify(NotificationRecipient.of(interviewer), NotificationTemplate.INTERVIEW_CANCELLED, params, cancel);

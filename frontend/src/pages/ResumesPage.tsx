@@ -1,14 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { errorMessage } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
 import { resumesApi } from '../api/endpoints'
 import { queryKeys } from '../api/queryKeys'
 import type { Resume, ResumeAnalysisStatus } from '../api/types'
+import { ConfirmDialog } from '../components/Dialog'
 import { ErrorState } from '../components/Feedback'
 import { useNotify } from '../components/Notices'
 import { Badge, EmptyState, FileDropzone, IconButton, LoadingRegion, PageHeader, Skeleton, Spinner, buttonProps, type Tone } from '../design/components'
-import { Download, FileText, Icon, ScrollText } from '../design/icons'
+import { Download, FileText, Icon, ScrollText, Trash2 } from '../design/icons'
 import { formatFileSize, relativeTime } from '../design/lib/format'
 import { safeFilename, saveBlob } from '../lib/download'
 import { ANALYSIS_STATUS_LABEL } from '../lib/labels'
@@ -108,7 +109,7 @@ export function ResumesPage() {
             </ul>
             <p className="c-meta r-files-note">Applications keep the file they were sent with. New applications use the file you choose.</p>
           </nav>
-          {selected && <SelectedAnalysis resume={selected} key={selected.id} />}
+          {selected && <SelectedAnalysis resume={selected} key={selected.id} onDeleted={() => setParams({}, { replace: true })} />}
         </div>
       )}
     </>
@@ -147,9 +148,39 @@ function FileRow({ resume, newest, selected, onSelect }: { resume: Resume; newes
   )
 }
 
-function SelectedAnalysis({ resume }: { resume: Resume }) {
+/** Why a resume could not be deleted, in plain words (409: an application still uses it). */
+export function resumeDeleteError(error: unknown): string | null {
+  if (!error) return null
+  if (error instanceof ApiError && error.status === 409) {
+    return 'An application uses this file, so it is kept: employers review the resume you applied with. You can still upload a newer one.'
+  }
+  if (error instanceof ApiError && error.status === 404) return 'This file was already deleted.'
+  return errorMessage(error)
+}
+
+function SelectedAnalysis({ resume, onDeleted }: { resume: Resume; onDeleted: () => void }) {
   const notify = useNotify()
+  const queryClient = useQueryClient()
   const analysis = useResumeAnalysis(resume.id)
+  const [confirming, setConfirming] = useState(false)
+  const remove = useMutation({
+    mutationFn: () => resumesApi.remove(resume.id),
+    onSuccess: () => {
+      setConfirming(false)
+      queryClient.setQueryData<Resume[]>(queryKeys.resumes, current => current?.filter(r => r.id !== resume.id))
+      queryClient.removeQueries({ queryKey: queryKeys.resumeAnalysis(resume.id) })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resumes })
+      // Its correction claims and their verdicts went with it.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.claims })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.verificationLedger })
+      onDeleted()
+      notify('success', `${resume.originalFilename} deleted`, { body: 'Its analysis and the corrections you made to it were deleted too.' })
+    },
+    onError: error => {
+      // Someone else (another tab) deleted it already: show the list as it is now.
+      if (error instanceof ApiError && error.status === 404) void queryClient.invalidateQueries({ queryKey: queryKeys.resumes })
+    },
+  })
   const download = useMutation({
     mutationFn: () => resumesApi.download(resume.id),
     onSuccess: file => {
@@ -174,7 +205,10 @@ function SelectedAnalysis({ resume }: { resume: Resume }) {
           </h2>
           <p className="c-meta c-break">{resume.originalFilename}</p>
         </div>
-        <IconButton label={`Download ${resume.originalFilename}`} icon={Download} variant="secondary" loading={download.isPending} onClick={() => download.mutate()} />
+        <span className="r-analysis-actions">
+          <IconButton label={`Download ${resume.originalFilename}`} icon={Download} variant="secondary" loading={download.isPending} onClick={() => download.mutate()} />
+          <IconButton label={`Delete ${resume.originalFilename}`} icon={Trash2} variant="ghost" onClick={() => setConfirming(true)} />
+        </span>
       </header>
       <AnalysisPanel resume={resume} analysis={analysis} />
       {done && (
@@ -186,6 +220,23 @@ function SelectedAnalysis({ resume }: { resume: Resume }) {
           </Link>
         </div>
       )}
+      <ConfirmDialog
+        open={confirming}
+        title="Delete this resume?"
+        confirmLabel="Delete resume"
+        busy={remove.isPending}
+        error={resumeDeleteError(remove.error)}
+        onCancel={() => {
+          setConfirming(false)
+          remove.reset()
+        }}
+        onConfirm={() => remove.mutate()}
+      >
+        <p>
+          “{resume.originalFilename}” and what we read from it are deleted, including corrections you made to it. A resume
+          that an application was sent with cannot be deleted.
+        </p>
+      </ConfirmDialog>
     </section>
   )
 }

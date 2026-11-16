@@ -7,6 +7,7 @@ verifier. Fetched text is never placed in an LLM system prompt and the LLM has n
 from __future__ import annotations
 
 import re
+import unicodedata
 
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:ignore|disregard|forget|override)\s+(?:all\s+|any\s+)?(?:the\s+|your\s+)?(?:previous|prior|above|"
@@ -32,6 +33,18 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# Zero-width and other invisible format characters that would split a phrase without changing how it reads.
+_INVISIBLE = re.compile("[­͏؜ᅟᅠ឴឵᠋-᠏​-‏‪-‮"
+                        "⁠-⁯ㅤ︀-️﻿ﾠ]")
+
+
+def _normalise(text: str) -> str:
+    """NFKC (full-width and compatibility letters become ASCII) without invisible characters."""
+    return unicodedata.normalize("NFKC", _INVISIBLE.sub("", text))
+
+
 def find_markers(text: str) -> list[str]:
-    """Sorted kinds of instruction-like content found in ``text``."""
-    return sorted({kind for pattern, kind in _PATTERNS if pattern.search(text)})
+    """Sorted kinds of instruction-like content found in ``text`` (also when disguised with zero-width characters or
+    full-width letters)."""
+    normalised = _normalise(text)
+    return sorted({kind for pattern, kind in _PATTERNS if pattern.search(text) or pattern.search(normalised)})

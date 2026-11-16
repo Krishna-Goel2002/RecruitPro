@@ -63,6 +63,8 @@ function validate(key: Key, value: string): string | undefined {
     const n = Number(v.replace(/,/g, ''))
     if (!Number.isFinite(n) || n < rule.min || n > rule.max) return `Enter a number from ${rule.min} to ${rule.max.toLocaleString('en-IN')}.`
     if (rule.integer && !Number.isInteger(n)) return 'Enter a whole number.'
+    // expectedSalary is @Digits(integer = 10, fraction = 2) on the server.
+    if (!rule.integer && !/^\d+(\.\d{1,2})?$/.test(v.replace(/,/g, ''))) return 'Enter an amount in rupees, with at most 2 decimal places.'
   }
   return undefined
 }
@@ -128,17 +130,25 @@ function ProfileForm({ profile }: { profile: CandidateProfile }) {
   const [values, setValues] = useState<FormValues>(initial)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const dirty = (Object.keys(values) as Key[]).some(k => values[k] !== initial[k])
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
 
+  // New server data (a refetch on reconnect, another tab's save) replaces the form only while nothing is being
+  // edited: before, any refetch silently threw away the candidate's unsaved changes.
   useEffect(() => {
     const next = toForm(profile)
     setInitial(next)
-    setValues(next)
+    if (!dirtyRef.current) setValues(next)
   }, [profile])
   useBeforeUnload(dirty)
 
   const save = useMutation({
-    mutationFn: () => profileApi.update(toUpdate(values)),
-    onSuccess: updated => {
+    mutationFn: (sent: FormValues) => profileApi.update(toUpdate(sent)),
+    onSuccess: (updated, sent) => {
+      // What was saved is the new baseline; edits typed while the request was in flight stay dirty.
+      const saved = toForm(updated)
+      setInitial(saved)
+      setValues(current => ((Object.keys(current) as Key[]).every(k => current[k] === sent[k]) ? saved : current))
       queryClient.setQueryData(queryKeys.profile, updated)
       notify('success', 'Profile saved')
     },
@@ -158,18 +168,19 @@ function ProfileForm({ profile }: { profile: CandidateProfile }) {
       if (problem) next[key] = problem
     }
     setErrors(next)
-    if (Object.keys(next).length === 0) save.mutate()
-    else focusFirstInvalid(formRef.current)
+    if (Object.keys(next).length === 0) {
+      if (!save.isPending) save.mutate(values)
+    } else focusFirstInvalid(formRef.current)
   }
 
-  // Ctrl/⌘ + S saves while there are changes.
+  // Ctrl/⌘ + S saves while there are changes (and only then: it used to send an unchanged profile).
   const submitRef = useRef(submit)
   submitRef.current = submit
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        submitRef.current()
+        if (dirtyRef.current) submitRef.current()
       }
     }
     document.addEventListener('keydown', onKey)

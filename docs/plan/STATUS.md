@@ -1,6 +1,37 @@
 # Plan v2 status, 16 Nov 2026
 
-Branch `Kshitij`, commit `50e7b39` (demo patches and the review fixes of 16 Nov evening are committed). Plan: [IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md). How to run and click through everything:
+**Current truth for both branches** (updated by the R7 infrastructure audit, [BUG_HUNT_R7_INFRA.md](../audit/BUG_HUNT_R7_INFRA.md)):
+
+| Branch | Head (16 Nov) | Contains | Compiled / built? |
+|---|---|---|---|
+| `Kshitij` (**demo**) | `f4aaf15` (`50e7b39`, docs commits, two portal fixes `dd05c42` and `f4aaf15`) | plan v2 (`2fedafb`), demo patches and review fixes (`50e7b39`, section B), original portal UI, migrations V1–V25 | No `./mvnw verify` recorded after `9ad341a`; static checks, Python suites, migrations and portal builds pass (C) |
+| `Kshitij-redesign` | `2fb0555` (+ the bug-hunt fixes of 16 Nov in the working tree, not committed) | everything in `Kshitij` + trust fixes (B2, V26) and WP-OPS (`57bfff9`), the design system and the redesign of both portals (`87bc31d`, `5219f3f`, `2fb0555`) | Same as `Kshitij`; Docker images not built in the authoring environment |
+
+**Bug hunt, 16 Nov 2026** (working tree of `Kshitij-redesign`, not committed). Seven reviewers and one integration
+pass found 266 findings: 1 critical, 34 high, 109 medium, 120 low and 2 info. All are fixed except the product and
+ops items listed in the summary.
+
+The integration pass made these changes:
+- A recruiter's claim verification is now per organisation everywhere. The old `candidate_claims` verification columns
+  are only a candidate-facing summary.
+- Migrations are now V27 (hiring core) and V28 (requirement order, absolute session lifetime).
+- Every 429 sends `Retry-After`. Business caps answer 409 with a code.
+- MFA lockout answers 429 `MFA_LOCKED`.
+- Recovery codes need a step-up (an authenticator code or the password).
+- Sign-ins have an absolute lifetime of 30 days.
+- The HR portal's accept-invite page handles the MFA challenge.
+
+None of the Java has been compiled yet; `./mvnw verify` is the first gate. The summary also covers what to port to
+`Kshitij`: [BUG_HUNT_SUMMARY.md](../audit/BUG_HUNT_SUMMARY.md). Section B #7 below ("claim rejected by a
+recruiter") now applies only within the organisation that rejected the claim.
+
+CI (`.github/workflows/ci.yml`) now runs on pushes to both branches (and `master`/`main`, pull requests, manual runs):
+`mvnw verify`, a backend smoke test on PostgreSQL 16, both Python suites with their evaluations, migrations and
+entity/schema checks, the Java static check, design and taxonomy sync, `docker compose config`, portal tests (when a
+`test` script exists) and builds, and a `docker-stack` job that builds every image and starts the stack. Its first
+run on each branch is the first real compile of the plan v2 Java.
+
+Plan: [IMPLEMENTATION_PLAN_V2.md](IMPLEMENTATION_PLAN_V2.md). How to run and click through everything (both branches):
 [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md). Detailed explanations: [docs/handbook/](../handbook/).
 The older WP-INT status (audit findings C1–L13) follows further down and is still valid except where this section says
 otherwise.
@@ -14,7 +45,8 @@ otherwise.
 | WP-PLAT | Staff MFA (TOTP, recovery codes, org requirement), OIDC SSO for staff (Google, Microsoft, generic; PKCE, nonce, JWKS), multi-instance safety (job dedupe key, notification row claims, database rate-limit store), `X-Request-Id`, Prometheus, structured logs, security headers and nginx CSP, ICS invitations, scorecard editing with revisions, work-sample file uploads and HR cancellation, fairness date range, demo assessment seed (V23, V24) | [WP-PLAT-NOTES.md](WP-PLAT-NOTES.md) |
 | WP-FE-CAND2 / WP-FE-HR2 | Candidate "Strengthen your application" (`/verification`) and referee page (`/reference/:token`); HR applicant Verification tab, admin Verification page, account security (MFA), MFA and SSO sign-in, `/sso/complete`, work-sample attachments and cancellation, fairness range | [WP-FE-FINISH-NOTES.md](WP-FE-FINISH-NOTES.md) |
 | Demo patches (committed in `50e7b39`) | Demo assessment seed in its own transaction; scorecard **Edit** button; require-MFA and SSO-domain controls on the organisation page; compose passes SSO/LLM/`AGENT_GITHUB_TOKEN`; `.env.example` key fix; `tools/totp.py` | [RUN_AND_TEST_GUIDE.md](../guides/RUN_AND_TEST_GUIDE.md) section 0.2 |
-| WP-OPS (branch `redesign`, uncommitted) | Scheduled data-retention purge (`backend/.../retention/`, `app.retention.*`, audit `RETENTION_PURGE`); ai-service image with LibreOffice Writer (headless) and the RapidOCR extra (`OCR_ENABLED` still false); compose network isolation (AI service and PostgreSQL internal only, agent on its own internal + egress networks, dev ports on 127.0.0.1); requirement proficiency in matching (`evidence-ladder-4`) | [WP-OPS-NOTES.md](WP-OPS-NOTES.md) |
+| WP-OPS (`Kshitij-redesign`, committed in `57bfff9`) | Scheduled data-retention purge (`backend/.../retention/`, `app.retention.*`, audit `RETENTION_PURGE`); ai-service image with LibreOffice Writer (headless) and the RapidOCR extra (`OCR_ENABLED` still false); compose network isolation (AI service and PostgreSQL internal only, agent on its own internal + egress networks, dev ports on 127.0.0.1); requirement proficiency in matching (`evidence-ladder-4`) | [WP-OPS-NOTES.md](WP-OPS-NOTES.md) |
+| Redesign (`Kshitij-redesign`, `87bc31d`, `5219f3f`, `2fb0555`) | Design system (tokens, light/dark, brand presets, 43 components) in both portals, byte-identical `src/design` (`tools/check_design_sync.py`); redesigned candidate portal (Overview, Add-a-source drawer, verdict drawer), HR portal (job wizard, ranking with keyboard triage and Undo window, applicant decision bar, MFA QR code, admin verification tabs incl. trusted domains); headless screenshot harness `tools/ui-snapshots/` | [docs/design/](../design/) `*-REDESIGN-NOTES.md`; guide 0.3 |
 
 ## B. Review fixes, 16 Nov 2026 (evening)
 
@@ -29,7 +61,7 @@ otherwise.
 | 7 | Verdicts of a disappeared subject stayed in use | Deleting a claim, replacing it with the extracted value, or changing its value marks that claim's current verdicts WITHDRAWN (`ClaimVerdictWithdrawal`). Verdicts whose subject is no longer current (fact of a re-analysed resume, claim rejected by a recruiter) are left out of the staff view, reviews, the shadow queue and matching (`VerificationStaffSupport.withCurrentSubjects`) | `StaffVerificationIntegrationTest.verdictsOfSubjectsThatDisappearedAreWithdrawnOrLeftOut` |
 | 8 | Org requires MFA but `APP_ENCRYPTION_KEY` missing: MFA silently skipped | Staff sign-in now fails closed with 503 `MFA_NOT_CONFIGURED` | `MfaNotConfiguredIntegrationTest` |
 
-## B2. Trust fixes (branch `redesign`, uncommitted): employer domains and badge issuers
+## B2. Trust fixes (`Kshitij-redesign`, committed in `57bfff9`): employer domains and badge issuers
 
 Both were listed under "design limits" in E; details in [WP-AG-NOTES.md](WP-AG-NOTES.md) "Trust fixes".
 
@@ -58,14 +90,16 @@ Verifier versions: `badge-1.1`, `reference-1.1`.
 | Java logic | read-through reviews by independent agents during WP-VBE and WP-PLAT | 2 test bugs (WP-VBE) and 4 minor runtime issues (WP-PLAT) found and fixed |
 | Core platform `9ad341a` | `./mvnw verify` on JDK 21 + `docker compose up --build` (teammate, 15 Nov) | 239 tests, 0 failures, 6 skipped; stack started |
 
-Python ran on 3.10 in the sandbox (CI uses 3.12). All tests are offline (no network).
+Python ran on 3.10 in the sandbox (CI and the images use 3.11 for ai-service, 3.12 for agent-service). All tests are offline (no network).
 
 ## D. Not compiled or not run yet
 
 - **No Java written after `9ad341a` has been compiled**: `2fedafb` (WP-VBE, WP-PLAT), the demo patches, the review
   fixes above and the trust fixes (B2). The sandbox has JDK 11 and no Maven Central. First step on a JDK 21 machine: `cd backend && ./mvnw verify`
   (RUN_AND_TEST_GUIDE 4.1). Expect a few small compile or test fixes.
-- The Docker images of agent-service and of the new backend have not been built.
+- The Docker images (backend, agent-service, the LibreOffice/OCR ai-service image, the redesigned portals) have not been
+  built in the authoring environment; CI's `docker-stack` job builds them and starts the stack (R7). The portal nginx
+  configuration was tested with nginx 1.18 locally (headers, SPA fallback, caching, gzip).
 - No flow of plan v2 has been clicked through against a live stack; flows were traced through the code and the agent
   fixtures were run in-process.
 - Real GitHub OAuth, real identity providers (Google, Entra), real SMTP with ICS in mail clients and a Prometheus scrape
@@ -102,7 +136,7 @@ Python ran on 3.10 in the sandbox (CI uses 3.12). All tests are offline (no netw
 - **Re-check un-shares:** a new verdict starts as AWAITING_CANDIDATE and the earlier review does not carry over.
 - Public verification rate limits are per instance (memory); the shadow queue is paged in memory; REFERENCE_REQUEST
   e-mails survive account deletion; uploaded documents are stored unencrypted (like resumes); de-identification is
-  lexical; no QR code for MFA enrolment (secret and `otpauth://` URI as text); no candidate resume-delete endpoint.
+  lexical; no QR code for MFA enrolment on `Kshitij` (secret and `otpauth://` URI as text; `Kshitij-redesign` renders a QR code in the browser); no candidate resume-delete endpoint.
 
 ---
 

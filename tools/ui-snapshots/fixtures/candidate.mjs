@@ -5,6 +5,13 @@ const user = {
   id: 501, email: 'meera.iyer@example.com', firstName: 'Meera', lastName: 'Iyer', role: 'CANDIDATE', emailVerified: false,
 }
 
+/**
+ * The backend serialises most DTOs with `default-property-inclusion: non_null`: null fields are absent, not null.
+ * Jobs, applications, notifications, claims, resume facts and the profile go through this so the screens are
+ * checked against what the server really sends. (Verification, work-sample and interview records are ALWAYS.)
+ */
+const nn = (value) => JSON.parse(JSON.stringify(value, (_key, v) => (v === null ? undefined : v)))
+
 const req = (id, type, description, mandatory, extra = {}) => ({
   id, type, description, mandatory, knockout: false, minimumYears: null, alternatives: [], proficiency: null, ...extra,
 })
@@ -118,7 +125,7 @@ const verdictDetail = {
   ],
   integrityNotes: [],
   probeQuestion: 'Walk me through how you chose the partition key for the ledger tables.',
-  evidence: [{ id: 1, key: 'e1', kind: 'REPO_FILE', url: 'https://github.com/meera-iyer/ledger-svc/blob/main/db/V7__partition.sql', title: 'ledger-svc · db/V7__partition.sql', retrievedAt: ago(26), contentHash: 'sha256:9f2c4e1ab07d5c3e88f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7', excerpt: 'CREATE TABLE ledger_entries (...) PARTITION BY RANGE (created_at);', attributes: null }],
+  evidence: [{ id: 1, key: 'e1', kind: 'REPOSITORY', url: 'https://github.com/meera-iyer/ledger-svc/blob/main/db/V7__partition.sql', title: 'ledger-svc · db/V7__partition.sql', retrievedAt: ago(26), contentHash: 'sha256:9f2c4e1ab07d5c3e88f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7', excerpt: 'CREATE TABLE ledger_entries (...) PARTITION BY RANGE (created_at);', attributes: null }],
   createdAt: ago(26),
 }
 
@@ -142,19 +149,23 @@ export const routes = [
   route('POST', '/auth/refresh', session(user)),
   route('POST', '/auth/logout', null),
   route('GET', '/me/notifications/unread-count', { count: 2 }),
-  route('GET', '/me/notifications', page(notifications, { size: 20 })),
+  route('GET', '/me/notifications', nn(page(notifications, { size: 20 }))),
   route('GET', '/jobs', ({ query }) => {
     const q = (query.get('search') || '').toLowerCase()
     const list = jobs.filter((j) => !q || j.title.toLowerCase().includes(q))
-    return page(list, { size: 10 })
+    const pageNo = Number(query.get('page') || 0)
+    return nn({ ...page(list, { size: 10 }), page: pageNo, content: pageNo > 0 ? [] : list })
   }),
-  route('GET', '/jobs/(\\d+)', ({ match }) => jobs.find((j) => j.id === Number(match[1])) ?? fail(404, 'This job is not open any more.')),
-  route('GET', '/candidates/me', profile),
+  route('GET', '/jobs/(\\d+)', ({ match }) => {
+    const job = jobs.find((j) => j.id === Number(match[1]))
+    return job ? nn(job) : fail(404, `Job not found: ${match[1]}`)
+  }),
+  route('GET', '/candidates/me', nn(profile)),
   route('GET', '/candidates/me/resumes', resumes),
-  route('GET', '/candidates/me/resumes/(\\d+)/analysis', ({ match }) => (Number(match[1]) === 71 ? analysis : { ...analysis, resumeId: 70, status: 'NEEDS_OCR', facts: [], flags: [{ code: 'OCR_USED', detail: null }] })),
-  route('GET', '/candidates/me/claims', claims),
-  route('GET', '/candidates/me/applications', page(applications, { size: 10 })),
-  route('GET', '/candidates/me/applications/(\\d+)', applicationDetail),
+  route('GET', '/candidates/me/resumes/(\\d+)/analysis', ({ match }) => nn(Number(match[1]) === 71 ? analysis : { ...analysis, resumeId: 70, status: 'NEEDS_OCR', facts: [], flags: [{ code: 'OCR_USED', detail: null }] })),
+  route('GET', '/candidates/me/claims', nn(claims)),
+  route('GET', '/candidates/me/applications', nn(page(applications, { size: 10 }))),
+  route('GET', '/candidates/me/applications/(\\d+)', { ...nn(applicationDetail), workSamples, interviews: applicationDetail.interviews }),
   route('GET', '/candidates/me/work-samples', workSamples),
   route('GET', '/candidates/me/interviews', [{ id: 601, jobTitle: 'Senior Backend Engineer', scheduledAt: ahead(72), durationMinutes: 45, location: 'https://meet.example.com/nwl-be-3001', status: 'SCHEDULED' }]),
   route('GET', '/candidates/me/equal-opportunity', fail(404, 'No answers stored.')),
@@ -296,4 +307,15 @@ export const screens = [
   { name: 'resumes-loading', path: '/resumes', waitUntil: 'domcontentloaded', settle: 1400, override: [route('GET', '/candidates/me/resumes', delayed(20000, resumes))] },
   { name: 'error-verification', path: '/verification', override: [route('GET', '/candidates/me/verification/ledger', fail(503, 'The service is unavailable.'))] },
   { name: 'error-jobs', path: '/jobs', override: [route('GET', '/jobs', fail(503, 'The service is unavailable.'))] },
+  // R5 bug hunt: states added with the fixes (failed loads no longer look like a new account, URL edge cases).
+  // 5xx answers are retried twice (1 s, 2 s) before the error shows, hence the long settle.
+  { name: 'home-error', path: '/home', settle: 4500, override: [route('GET', '/candidates/me/resumes', fail(503, 'The service is unavailable.'))] },
+  { name: 'error-sources', path: '/verification', settle: 4500, override: [route('GET', '/candidates/me/verification/sources', fail(503, 'The service is unavailable.'))] },
+  { name: 'jobs-past-end', path: '/jobs?page=7' },
+  { name: 'add-source-connect-nokind', path: '/verification?add=source&step=connect&kind=NOPE', settle: 800 },
+  { name: 'reference-drawer-limit', path: '/verification?ask=reference', settle: 800, override: [route('GET', '/candidates/me/verification/references', [1, 2, 3, 4, 5].map((n) => ({ ...references[0], id: 30 + n, refereeName: `Referee ${n}` })))] },
+  // Integration pass: resume delete (R2-U9), coded limits (409 SOURCE_LIMIT / 429 with Retry-After).
+  { name: 'resumes-delete-confirm', path: '/resumes', action: clickSel('button[aria-label^="Delete "]') },
+  { name: 'resumes-delete-in-use', path: '/resumes', override: [route('DELETE', '/candidates/me/resumes/(\\d+)', fail(409, 'This resume is used by an application and cannot be deleted'))], action: async (p) => { await clickSel('button[aria-label^="Delete "]')(p); await clickText('Delete resume')(p) } },
+  { name: 'add-source-github-limited', path: '/verification?add=source&step=connect&kind=GITHUB', settle: 800, override: [route('GET', '/candidates/me/verification/oauth/github/start', { ...fail(429, 'You started connecting GitHub too often. Please try again later.'), __headers: { 'Retry-After': '1800' } })], action: async (p) => { await clickSel('.v-add-body input[type="checkbox"]')(p); await clickSel('.v-add-body button[type="submit"]')(p); await new Promise((r) => setTimeout(r, 700)) } },
 ]

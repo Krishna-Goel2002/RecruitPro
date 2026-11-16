@@ -26,7 +26,8 @@ export function useSources(onFinished?: () => void) {
     queryFn: verificationApi.sources,
     refetchInterval: q => {
       const running = anyRunActive(q.state.data)
-      return pollingRef.current ? pollingRef.current.nextInterval(running) : running ? POLL_INTERVAL_MS : false
+      const fetches = q.state.dataUpdateCount + q.state.errorUpdateCount
+      return pollingRef.current ? pollingRef.current.nextInterval(running, fetches) : running ? POLL_INTERVAL_MS : false
     },
     refetchIntervalInBackground: false,
   })

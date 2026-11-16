@@ -38,6 +38,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -157,7 +158,8 @@ class MfaIntegrationTest {
         mvc.perform(get("/api/v1/me/mfa").with(staff())).andExpect(jsonPath("$.data.recoveryCodesRemaining", is(8)));
         assertEquals(2, auditEvents.findAllByActionOrderByIdAsc(AuditActions.MFA_RECOVERY_CODE_USED).size());
 
-        JsonNode regenerated = data(mvc.perform(post("/api/v1/me/mfa/recovery-codes").with(staff()))
+        JsonNode regenerated = data(mvc.perform(post("/api/v1/me/mfa/recovery-codes").with(staff())
+                        .contentType(MediaType.APPLICATION_JSON).content(json("code", code(enrolment.secret(), currentStep()))))
                 .andExpect(status().isOk()).andReturn());
         assertEquals(10, regenerated.path("recoveryCodes").size());
         verify(challenge(), null, enrolment.recoveryCodes().get(2)).andExpect(status().isUnauthorized());
@@ -169,14 +171,55 @@ class MfaIntegrationTest {
         Enrolment enrolment = enable(STAFF);
         String mfaToken = challenge();
         long step = currentStep();
-        for (int attempt = 0; attempt < 5; attempt++) {
-            verify(mfaToken, wrongCode(enrolment.secret(), step), null).andExpect(status().isUnauthorized());
+        for (int attempt = 0; attempt < 4; attempt++) {
+            verify(mfaToken, wrongCode(enrolment.secret(), step), null).andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.message", is(MfaService.INVALID_CODE)));
         }
+        // R6-B3: the failure that locks the account, and every later attempt, is a 429 MFA_LOCKED with Retry-After,
+        // distinguishable from a wrong code (401) or an expired step (401).
+        verify(mfaToken, wrongCode(enrolment.secret(), step), null).andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.message", startsWith(MfaService.LOCKED_CODE + ": ")))
+                .andExpect(header().exists("Retry-After"));
         assertNotNull(account(STAFF).getLockedUntil(), "five wrong codes lock the account like five wrong passwords");
         assertEquals(5, auditEvents.findAllByActionOrderByIdAsc(AuditActions.MFA_VERIFICATION_FAILED).size());
         assertEquals(1, auditEvents.findAllByActionOrderByIdAsc(AuditActions.LOGIN_LOCKED).size());
-        verify(mfaToken, code(enrolment.secret(), step + 1), null).andExpect(status().isUnauthorized());
+        String retryAfter = verify(mfaToken, code(enrolment.secret(), step + 1), null)
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.message", startsWith("MFA_LOCKED: Too many failed attempts. Try again in 15 minutes")))
+                .andReturn().getResponse().getHeader("Retry-After");
+        long seconds = Long.parseLong(retryAfter);
+        assertTrue(seconds > 14 * 60 && seconds <= 15 * 60, "Retry-After is the remaining lock time: " + seconds);
         login(STAFF, "staff").andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void regeneratingRecoveryCodesNeedsACodeOrThePassword() throws Exception {
+        // R1-U1: an access token alone no longer mints lasting recovery codes.
+        Enrolment enrolment = enable(STAFF);
+        mvc.perform(post("/api/v1/me/mfa/recovery-codes").with(staff()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is(MfaService.STEP_UP_REQUIRED)));
+        mvc.perform(post("/api/v1/me/mfa/recovery-codes").with(staff()).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        recoveryCodes("code", wrongCode(enrolment.secret(), currentStep())).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message", is(MfaService.INVALID_CODE)));
+        recoveryCodes("password", "WrongPassword123!").andExpect(status().isBadRequest());
+        assertEquals(2, account(STAFF).getFailedLoginCount(), "wrong codes and passwords count towards the lockout");
+        verify(challenge(), null, enrolment.recoveryCodes().get(0)).andExpect(status().isOk());
+
+        JsonNode byPassword = data(recoveryCodes("password", PASSWORD).andExpect(status().isOk()).andReturn());
+        assertEquals(10, byPassword.path("recoveryCodes").size());
+        JsonNode byCode = data(recoveryCodes("code", code(enrolment.secret(), currentStep())).andExpect(status().isOk()).andReturn());
+        assertEquals(10, byCode.path("recoveryCodes").size());
+        verify(challenge(), null, byPassword.path("recoveryCodes").get(0).asText()).andExpect(status().isUnauthorized());
+        assertEquals(2, auditEvents.findAllByActionOrderByIdAsc(AuditActions.MFA_RECOVERY_CODES_REGENERATED).size());
+
+        // While the account is locked the step-up is refused with 429 and Retry-After.
+        users.findByEmail(STAFF).ifPresent(user -> {
+            user.setLockedUntil(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(10));
+            users.save(user);
+        });
+        recoveryCodes("password", PASSWORD).andExpect(status().isTooManyRequests()).andExpect(header().exists("Retry-After"));
     }
 
     @Test
@@ -218,10 +261,34 @@ class MfaIntegrationTest {
     }
 
     @Test
+    void confirmingAnEnrolmentFromTheWrongPortalChangesNothing() throws Exception {
+        // R1-L2: the portal is checked before the enrolment token is consumed and MFA is switched on.
+        mvc.perform(patch("/api/v1/admin/organization").with(user(ADMIN).roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"requireStaffMfa\":true}"))
+                .andExpect(status().isOk());
+        String mfaToken = data(login(STAFF, "staff").andExpect(jsonPath("$.data.mfaEnrollmentRequired", is(true)))
+                .andReturn()).path("mfaToken").asText();
+        String secret = data(mvc.perform(post("/api/v1/me/mfa/enroll").contentType(MediaType.APPLICATION_JSON)
+                        .content(json("mfaToken", mfaToken)))
+                .andExpect(status().isOk()).andReturn()).path("secret").asText();
+        String code = code(secret, currentStep());
+        mvc.perform(confirm(code, mfaToken).header("X-RecruitPro-Portal", "candidate"))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/me/mfa").with(staff()))
+                .andExpect(jsonPath("$.data.enabled", is(false)))
+                .andExpect(jsonPath("$.data.pendingEnrollment", is(true)));
+        mvc.perform(confirm(code, mfaToken).header("X-RecruitPro-Portal", "staff"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.session.accessToken").isNotEmpty());
+    }
+
+    @Test
     void disablingNeedsThePasswordAndACode() throws Exception {
         Enrolment enrolment = enable(STAFF);
         disable("WrongPassword123!", enrolment.recoveryCodes().get(0)).andExpect(status().isBadRequest());
         disable(PASSWORD, wrongCode(enrolment.secret(), currentStep())).andExpect(status().isBadRequest());
+        // R1-H2: the wrong password counts towards the lockout just like the wrong code.
+        assertEquals(2, account(STAFF).getFailedLoginCount());
         disable(PASSWORD, enrolment.recoveryCodes().get(0)).andExpect(status().isOk());
         mvc.perform(get("/api/v1/me/mfa").with(staff())).andExpect(jsonPath("$.data.enabled", is(false)));
         assertEquals(1, auditEvents.findAllByActionOrderByIdAsc(AuditActions.MFA_DISABLED).size());
@@ -292,6 +359,11 @@ class MfaIntegrationTest {
         String body = mfaToken == null ? "{\"code\":\"" + code + "\"}"
                 : "{\"code\":\"" + code + "\",\"mfaToken\":\"" + mfaToken + "\"}";
         return post("/api/v1/me/mfa/confirm").contentType(MediaType.APPLICATION_JSON).content(body);
+    }
+
+    private ResultActions recoveryCodes(String field, String value) throws Exception {
+        return mvc.perform(post("/api/v1/me/mfa/recovery-codes").with(staff()).contentType(MediaType.APPLICATION_JSON)
+                .content(json(field, value)));
     }
 
     private ResultActions disable(String password, String code) throws Exception {

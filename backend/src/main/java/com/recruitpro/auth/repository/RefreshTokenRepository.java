@@ -32,4 +32,7 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, Long
     @Query("update RefreshToken t set t.revokedAt = :now, t.revokedReason = :reason, t.updatedAt = :now "
             + "where t.user.id = :userId and t.revokedAt is null")
     int revokeAllForUser(@Param("userId") Long userId, @Param("reason") String reason, @Param("now") LocalDateTime now);
+
+    /** The first token of a family (its sign-in time, R1-U2). */
+    Optional<RefreshToken> findFirstByFamilyIdOrderByIdAsc(String familyId);
 }

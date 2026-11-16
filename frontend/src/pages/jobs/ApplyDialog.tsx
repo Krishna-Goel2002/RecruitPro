@@ -87,9 +87,13 @@ export function ApplyDialog({ job, matches, open, onClose }: { job: JobPublic; m
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // Focus follows the step so keyboard and screen-reader users hear the new content.
+  // Focus follows the step so keyboard and screen-reader users hear the new content. Going Back removes the button
+  // that had focus, so step 1 (Resume) takes focus too, but not when the dialog first opens (initial focus is the
+  // dialog's own).
+  const previousStep = useRef<Step>(step)
   useEffect(() => {
-    if (open && step > 0) stepRef.current?.focus()
+    if (open && (step > 0 || previousStep.current > 0)) stepRef.current?.focus()
+    previousStep.current = step
   }, [open, step])
 
   function toReview() {
@@ -147,7 +151,7 @@ export function ApplyDialog({ job, matches, open, onClose }: { job: JobPublic; m
       <Stepper steps={['Resume', 'Review', 'Sent']} current={step} label="Application steps" className="ap-stepper" />
 
       {step === 0 && (
-        <div className="ap-step">
+        <div className="ap-step" ref={stepRef} tabIndex={-1} role="group" aria-label="Choose a resume">
           {resumes.isPending ? (
             <div aria-hidden="true">
               <Skeleton width="100%" height={56} />

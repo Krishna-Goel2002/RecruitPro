@@ -106,12 +106,7 @@ class ApiClient:
         except httpx.HTTPError as exc:
             raise SourceError("UPSTREAM_ERROR", type(exc).__name__) from exc
         status = response.status_code
-        if status == 401:
-            raise SourceError("TOKEN_INVALID", "the access token was rejected")
-        if status == 429 or (status == 403 and response.headers.get("x-ratelimit-remaining") == "0"):
-            raise SourceError("RATE_LIMITED", "the code host rate limit was reached")
-        if status >= 500:
-            raise SourceError("UPSTREAM_ERROR", f"code host answered {status}")
+        _raise_for_status(response)  # 401, rate limits (also GitHub's secondary 403 limits), 5xx
         if status in (202, 204, 403, 404, 409, 451) or status >= 300:
             return status, None
         try:
@@ -119,8 +114,56 @@ class ApiClient:
         except ValueError:
             return status, None
 
+    def get_raw(self, path: str, params: dict[str, Any] | None = None, *,
+                max_bytes: int = MAX_FILE_BYTES) -> str | None:
+        """A raw file body (decoded UTF-8), streamed and cut at ``max_bytes``; None when it is not there. Rate limits
+        and token errors map like ``request``."""
+        self.budget.charge()
+        try:
+            with self._client.stream("GET", path, params=params) as response:
+                _raise_for_status(response)
+                if response.status_code != 200:
+                    return None
+                body = bytearray()
+                for chunk in response.iter_bytes():
+                    body.extend(chunk)
+                    if len(body) >= max_bytes:
+                        break
+        except httpx.HTTPError:
+            return None
+        return bytes(body[:max_bytes]).decode("utf-8", errors="replace")
+
     def get(self, path: str, params: dict[str, Any] | None = None) -> tuple[int, Any]:
         return self.request("GET", path, params=params)
+
+
+def is_rate_limited(response: httpx.Response) -> bool:
+    """429, or 403 with a rate-limit signal: ``x-ratelimit-remaining: 0`` (GitHub primary limit), ``ratelimit-remaining:
+    0`` (GitLab), a ``retry-after`` header (GitHub secondary limits answer 403 with it while ``remaining`` is not 0), or
+    a body that says so."""
+    if response.status_code == 429:
+        return True
+    if response.status_code != 403:
+        return False
+    headers = response.headers
+    if headers.get("x-ratelimit-remaining") == "0" or headers.get("ratelimit-remaining") == "0" \
+            or headers.get("retry-after") is not None:
+        return True
+    try:
+        body = response.read()[:2000].decode("utf-8", errors="replace").lower()
+    except httpx.HTTPError:
+        return False
+    return "rate limit" in body
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    status = response.status_code
+    if status == 401:
+        raise SourceError("TOKEN_INVALID", "the access token was rejected")
+    if is_rate_limited(response):
+        raise SourceError("RATE_LIMITED", "the code host rate limit was reached")
+    if status >= 500:
+        raise SourceError("UPSTREAM_ERROR", f"code host answered {status}")
 
 
 def decode_content(payload: Any) -> str | None:

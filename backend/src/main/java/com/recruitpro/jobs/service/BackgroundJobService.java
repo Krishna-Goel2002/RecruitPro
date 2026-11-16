@@ -34,7 +34,8 @@ import java.util.Set;
 /**
  * D7 / M7: durable job queue. {@link #enqueue} joins the caller's transaction, so a job exists exactly when
  * the change that triggered it commits (outbox). Retries use exponential backoff:
- * {@code min(15 s x 2^attempts, 30 min)}; a job that reaches {@code max_attempts} becomes DEAD.
+ * {@code min(15 s x 2^attempts, 30 min)}; attempts are counted when a job is claimed, so the first retry waits 30 s.
+ * A job that reaches {@code max_attempts} becomes DEAD.
  */
 @Service
 public class BackgroundJobService {
@@ -183,9 +184,13 @@ public class BackgroundJobService {
         return claimed;
     }
 
+    /**
+     * Marks a RUNNING job DONE. A job that is no longer RUNNING (released as stale and re-queued, or dead-lettered,
+     * while this worker was still busy) is left as it is.
+     */
     @Transactional
     public void markDone(Long jobId) {
-        repository.findById(jobId).ifPresent(job -> {
+        repository.findById(jobId).filter(job -> job.getStatus() == BackgroundJobStatus.RUNNING).ifPresent(job -> {
             job.setStatus(BackgroundJobStatus.DONE);
             job.setLockedAt(null);
             job.setLastError(null);
@@ -216,10 +221,10 @@ public class BackgroundJobService {
         return job.getStatus();
     }
 
-    /** Permanent failure without retry. */
+    /** Permanent failure without retry (RUNNING jobs only, like {@link #markDone}). */
     @Transactional
     public void markFailed(Long jobId, String error) {
-        repository.findById(jobId).ifPresent(job -> {
+        repository.findById(jobId).filter(job -> job.getStatus() == BackgroundJobStatus.RUNNING).ifPresent(job -> {
             job.setStatus(BackgroundJobStatus.FAILED);
             job.setLockedAt(null);
             job.setLastError(truncate(error));
@@ -235,18 +240,22 @@ public class BackgroundJobService {
     @Transactional
     public List<BackgroundJob> releaseStaleJobs() {
         LocalDateTime now = UtcTime.now();
-        List<BackgroundJob> stale = repository.findAllByStatusAndLockedAtBefore(BackgroundJobStatus.RUNNING,
-                now.minusMinutes(staleAfterMinutes));
+        LocalDateTime cutoff = now.minusMinutes(staleAfterMinutes);
+        List<BackgroundJob> stale = repository.findAllByStatusAndLockedAtBefore(BackgroundJobStatus.RUNNING, cutoff);
         List<BackgroundJob> dead = new ArrayList<>();
+        String error = "Worker did not finish within " + staleAfterMinutes + " minutes";
         for (BackgroundJob job : stale) {
-            job.setLockedAt(null);
-            job.setLastError("Worker did not finish within " + staleAfterMinutes + " minutes");
-            if (job.getAttempts() >= job.getMaxAttempts()) {
+            BackgroundJobStatus next = job.getAttempts() >= job.getMaxAttempts()
+                    ? BackgroundJobStatus.DEAD : BackgroundJobStatus.PENDING;
+            // Conditional update: another instance may release (or a worker re-claim) the same job concurrently; only
+            // the instance whose update succeeds releases it and runs the dead-letter callback.
+            int released = repository.releaseStale(job.getId(), BackgroundJobStatus.RUNNING, cutoff, next, error,
+                    next == BackgroundJobStatus.PENDING ? now : job.getRunAfter(), now);
+            if (released == 1 && next == BackgroundJobStatus.DEAD) {
                 job.setStatus(BackgroundJobStatus.DEAD);
+                job.setLockedAt(null);
+                job.setLastError(error);
                 dead.add(job);
-            } else {
-                job.setStatus(BackgroundJobStatus.PENDING);
-                job.setRunAfter(now);
             }
         }
         return dead;

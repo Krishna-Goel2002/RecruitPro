@@ -133,8 +133,7 @@ public class VerifyReferenceJobHandler implements BackgroundJobHandler {
         String emailDomain = email == null || !email.contains("@") ? "invalid" : email.substring(email.lastIndexOf('@') + 1).toLowerCase(Locale.ROOT);
         CandidateProfile profile = profileRepository.findById(reference.getCandidateId()).orElse(null);
         User user = profile == null ? null : profile.getUser();
-        String holderName = user == null ? null
-                : ((user.getFirstName() == null ? "" : user.getFirstName()) + " " + (user.getLastName() == null ? "" : user.getLastName())).trim();
+        String holderName = user == null ? null : VerificationRunService.holderName(user.getFirstName(), user.getLastName());
         List<String> candidateDomains = CandidateDomains.proven(sourceRepository.findAllByCandidateIdAndKindAndRevokedAtIsNull(
                 reference.getCandidateId(), VerificationSourceKind.WEBSITE));
         String employerName = reference.getEmployerName() == null || reference.getEmployerName().isBlank() ? null

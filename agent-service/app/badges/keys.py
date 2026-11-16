@@ -88,7 +88,10 @@ def alg_for_jwk(jwk: dict[str, Any]) -> str:
     if kty == "EC" and crv == "P-256":
         return "ES256"
     if kty == "RSA":
-        modulus = b64url_decode(str(jwk.get("n", "")))
+        try:
+            modulus = b64url_decode(str(jwk.get("n", "")))
+        except ValueError as exc:  # binascii.Error: the issuer's key document is malformed
+            raise KeyResolutionError("the RSA key is not valid base64url") from exc
         if len(modulus.lstrip(b"\x00")) * 8 < 2048:
             raise KeyResolutionError("RSA keys shorter than 2048 bits are not accepted")
         return "RS256"
@@ -114,7 +117,7 @@ def _fetch_json(fetcher: Fetcher, url: str) -> tuple[Any, str]:
     text = result.text()
     try:
         return json.loads(text), text
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise KeyResolutionError("key document is not JSON") from exc
 
 

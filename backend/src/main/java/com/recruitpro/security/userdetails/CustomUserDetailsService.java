@@ -35,6 +35,15 @@ public class CustomUserDetailsService implements UserDetailsService {
      * issued before the last password change, resolve to empty (the request stays unauthenticated; L9).
      */
     public Optional<CustomUserDetails> loadForAccessToken(Long userId, String subject, Date issuedAt) {
+        return loadForAccessToken(userId, subject, issuedAt, null);
+    }
+
+    /**
+     * As {@link #loadForAccessToken(Long, String, Date)}; with the token's millisecond issue time (R1-U3) the password
+     * change is compared to the millisecond instead of the second.
+     */
+    public Optional<CustomUserDetails> loadForAccessToken(Long userId, String subject, Date issuedAt,
+                                                          Long issuedAtMillis) {
         Optional<User> found;
         if (userId != null) {
             found = userRepository.findById(userId);
@@ -46,14 +55,23 @@ public class CustomUserDetailsService implements UserDetailsService {
         return found
                 .filter(user -> subject == null || user.getEmail().equalsIgnoreCase(subject.trim()))
                 .filter(user -> user.isEnabled() && user.getDeletedAt() == null)
-                .filter(user -> issuedAfterPasswordChange(user, issuedAt))
+                .filter(user -> issuedAfterPasswordChange(user, issuedAt, issuedAtMillis))
                 .map(CustomUserDetails::new);
     }
 
-    private boolean issuedAfterPasswordChange(User user, Date issuedAt) {
-        if (issuedAt == null || user.getPasswordChangedAt() == null) {
+    static boolean issuedAfterPasswordChange(User user, Date issuedAt, Long issuedAtMillis) {
+        if (user.getPasswordChangedAt() == null) {
             return true;
         }
+        if (issuedAtMillis != null) {
+            // Millisecond precision: the session created right after the change (same millisecond) stays valid.
+            Instant changed = user.getPasswordChangedAt().truncatedTo(ChronoUnit.MILLIS).toInstant(ZoneOffset.UTC);
+            return issuedAtMillis >= changed.toEpochMilli();
+        }
+        if (issuedAt == null) {
+            return true;
+        }
+        // Tokens without the millisecond claim (issued before R1-U3): second precision, as before.
         Instant changed = user.getPasswordChangedAt().truncatedTo(ChronoUnit.SECONDS).toInstant(ZoneOffset.UTC);
         return !issuedAt.toInstant().isBefore(changed);
     }

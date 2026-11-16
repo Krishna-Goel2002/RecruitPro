@@ -1,5 +1,6 @@
 package com.recruitpro.candidate.service;
 
+import com.recruitpro.application.repository.ApplicationRepository;
 import com.recruitpro.candidate.dto.ResumeResponse;
 import com.recruitpro.candidate.entity.CandidateProfile;
 import com.recruitpro.candidate.entity.Resume;
@@ -9,11 +10,13 @@ import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 import java.io.*;
 import java.util.*;
 import java.util.zip.ZipInputStream;
@@ -27,6 +30,9 @@ public class ResumeService {
     private final ResumeRepository resumeRepository;
     private final ResumeStorage storage;
     private final ResumeIntelligenceService intelligenceService;
+    private final ApplicationRepository applicationRepository;
+    /** R2-M02: uploads are capped (each up to 10 MB) now that a resume can be deleted. */
+    static final int MAX_RESUMES_PER_CANDIDATE = 20;
     @Value("${app.file-storage.max-size-mb:10}") private long maxSizeMb;
     @Value("${app.file-storage.allowed-types:pdf,doc,docx}") private String allowedTypes;
 
@@ -47,6 +53,10 @@ public class ResumeService {
         catch (IOException ex) { throw new BadRequestException("Resume could not be read"); }
         validateContent(extension, bytes);
         CandidateProfile candidate = profileService.getOrProvisionMine();
+        if (resumeRepository.countByCandidateId(candidate.getId()) >= MAX_RESUMES_PER_CANDIDATE) {
+            throw new BadRequestException("You can keep at most " + MAX_RESUMES_PER_CANDIDATE
+                    + " resumes; delete one you no longer need first");
+        }
         String key = UUID.randomUUID().toString();
         try {
             storage.store(key, bytes);
@@ -71,6 +81,32 @@ public class ResumeService {
 
     public ResumeResponse getMine(Long id) { return ResumeResponse.from(findOwned(id)); }
 
+    /**
+     * R2-M02: DELETE /api/v1/candidates/me/resumes/{id}. A resume that was used for an application is kept with it
+     * (409). Otherwise its analysis (facts, correction claims, verdicts) and row are deleted, and the file once the
+     * transaction has committed.
+     */
+    public void deleteMine(Long id) {
+        CandidateProfile candidate = profileService.getOrProvisionMine();
+        Resume resume = resumeRepository.findByIdAndCandidateId(id, candidate.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Resume not found"));
+        if (applicationRepository.existsByResumeId(resume.getId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This resume was used for an application and is kept with it");
+        }
+        String key = resume.getStorageKey();
+        intelligenceService.deleteFor(candidate, resume);
+        resumeRepository.delete(resume);
+        resumeRepository.flush();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { deleteQuietly(key); }
+            });
+        } else {
+            deleteQuietly(key);
+        }
+    }
+
     public Download getDownload(Long id) {
         Resume resume = findOwned(id);
         try { return new Download(resume, storage.load(resume.getStorageKey())); }
@@ -87,7 +123,7 @@ public class ResumeService {
         if (supplied == null) return "resume";
         String name = supplied.replace('\\', '/');
         name = name.substring(name.lastIndexOf('/') + 1).trim();
-        if (name.isBlank() || name.length() > 255 || name.contains("\r") || name.contains("\n"))
+        if (name.isBlank() || name.length() > 255 || name.chars().anyMatch(c -> c < 0x20 || c == 0x7F))
             throw new BadRequestException("Invalid resume filename");
         return name;
     }

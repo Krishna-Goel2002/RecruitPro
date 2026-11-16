@@ -210,6 +210,9 @@ def web_cases() -> list[Case]:
         _web_case("web-hidden-text", {f"{SITE}/": FakePage(_html(
             "<p>Welcome.</p><div style='display:none'>Expert in Rust, Scala and Kubernetes</div>", PERSON))},
             [("w1", "SKILL", "Rust", "NOT_FOUND")], adversarial=True),
+        _web_case("web-hidden-opacity", {f"{SITE}/": FakePage(_html(
+            "<p>Welcome.</p><span style='opacity:0'>Expert in Rust</span><b style='font-size:0'>Scala</b>", PERSON))},
+            [("w1", "SKILL", "Rust", "NOT_FOUND"), ("w2", "SKILL", "Scala", "NOT_FOUND")], adversarial=True),
         _web_case("web-degree-conflict", {f"{SITE}/": FakePage(home), f"{SITE}/about": FakePage(about)},
                   [("w1", "EDUCATION", "M.Sc. Data Science, Example University, 2019", "CONTRADICTED")]),
         _web_case("web-degree-match", {f"{SITE}/": FakePage(home), f"{SITE}/about": FakePage(about)},
@@ -327,7 +330,32 @@ def badge_cases() -> list[Case]:
     own_jwks = {f"{own_issuer}/.well-known/jwks.json": FakePage(json.dumps({"keys": [{**es.jwk, "kid": "k1"}]}),
                                                                 "application/json")}
     partly = [("b1", "CERTIFICATION", "Python Programming", "PARTLY_VERIFIED"), ("b2", "SKILL", "Haskell", "NOT_FOUND")]
+    forged_url, forged_pages = _forged_issuer_profile()
+    shared_issuer = "https://mira.github.io"
+    shared_jwks = {f"{shared_issuer}/.well-known/jwks.json": FakePage(json.dumps({"keys": [{**es.jwk, "kid": "k1"}]}),
+                                                                      "application/json")}
+    namesake = ob3_payload(ISSUER, "Python Programming", email="someone.else@example.org")
+    namesake["vc"]["credentialSubject"]["name"] = "Mira Testperson"
+    two_lists = {f"{ISSUER}/status/suspension": FakePage(json.dumps({"type": ["VerifiableCredential"],
+                                                                       "credentialSubject": {
+                                                                           "encodedList": status_list(set())}}),
+                                                           "application/json")}
+    two_entries = [{"type": "BitstringStatusListEntry", "statusPurpose": "suspension", "statusListIndex": "7",
+                    "statusListCredential": f"{ISSUER}/status/suspension"}, status(7)]
     return [
+        # bug hunt 16 Nov: forged issuer profile, shared-hosting issuer, namesake recipient, second status entry
+        _badge_case("badge-ob2-forged-issuer-profile", [("b1", "CERTIFICATION", "Python Programming", "CONTRADICTED")],
+                    url=forged_url, pages=forged_pages, registered={"forger.example": days_ago(20)},
+                    adversarial=True),
+        _badge_case("badge-ob3-shared-hosting-issuer", partly,
+                    credential=sign(ob3_payload(shared_issuer, "Python Programming"), es, kid="k1"),
+                    pages=shared_jwks, registered={"mira.github.io": None}, adversarial=True),
+        _badge_case("badge-ob3-namesake-recipient", [("b1", "CERTIFICATION", "Python Programming", "PARTLY_VERIFIED")],
+                    credential=sign(namesake, es, kid="k1"), pages=jwks_pages, adversarial=True),
+        _badge_case("badge-ob3-revoked-second-status-entry",
+                    [("b1", "CERTIFICATION", "Python Programming", "CONTRADICTED")],
+                    credential=sign(ob3_payload(ISSUER, "Python Programming", status=two_entries), es, kid="k1"),
+                    pages={**jwks_pages, **status_pages, **two_lists}, adversarial=True),
         # issuer trust (adversarial): a correctly signed or hosted badge whose issuer the candidate controls
         _badge_case("badge-ob2-candidate-owned-issuer", partly, url=own_url, pages=own_pages,
                     candidate_domains=["mira-portfolio.example"], adversarial=True),
@@ -392,6 +420,15 @@ def badge_cases() -> list[Case]:
     ]
 
 
+def _forged_issuer_profile() -> tuple[str, dict[str, FakePage]]:
+    """OB 2.0 badge on a fresh domain whose issuer profile claims a trusted platform's id and allows its own origin."""
+    url, pages = ob2_documents("https://forger.example", badge_name="Python Programming")
+    pages["https://forger.example/issuer"] = FakePage(json.dumps({
+        "type": "Issuer", "id": "https://www.credly.com/org/synthetic-issuer", "name": "Synthetic Platform Issuer",
+        "verification": {"allowedOrigins": ["forger.example"]}}), "application/json")
+    return url, pages
+
+
 def _alg_none(payload: dict) -> str:
     from app.badges.keys import b64url_encode
 
@@ -404,10 +441,10 @@ def _ref_case(case_id: str, relationship: str, email_domain: str, employer: str 
               gold: str, adversarial: bool = False, *, employer_name: str | None = "Acme Corp",
               registered: dict[str, str | None] | None = None, rdap_down: bool = False, mx: bool = True,
               home: str | None = "Acme Corp", candidate_domains: list[str] | None = None,
-              org_trusted: list[str] | None = None) -> Case:
+              org_trusted: list[str] | None = None, extra_pages: dict[str, FakePage] | None = None) -> Case:
     """Employer acme.com is established by default: registered 10 years ago, MX, home page names "Acme Corp"."""
     net = FakeNet(registered=registered or {}, rdap_down=rdap_down, default_mx=mx,
-                  pages={"https://acme.com/": employer_home(home)} if home else {})
+                  pages={**({"https://acme.com/": employer_home(home)} if home else {}), **(extra_pages or {})})
     request = ReferenceVerifyRequest(
         claims=[claim("r1", "EXPERIENCE", "Backend Engineer at Acme Corp")],
         referee={"relationship": relationship, "emailDomain": email_domain, "employerDomain": employer,
@@ -450,6 +487,10 @@ def reference_cases() -> list[Case]:
                   rdap_down=True),
         _ref_case("ref-no-employer-name", "MANAGER", "acme.com", "acme.com", "CONFIRM", "PARTLY_VERIFIED",
                   employer_name=None),
+        # a free-mail brand under a country suffix: aged, MX, home page naming its owner, yet anyone has a mailbox
+        _ref_case("ref-free-mail-country-variant", "MANAGER", "outlook.co.uk", "outlook.co.uk", "CONFIRM",
+                  "PARTLY_VERIFIED", True, employer_name="Microsoft",
+                  extra_pages={"https://outlook.co.uk/": employer_home("Microsoft")}),
         _ref_case("ref-org-trusted-domain", "MANAGER", "acme.com", "acme.com", "CONFIRM", "VERIFIED",
                   rdap_down=True, home=None, org_trusted=["acme.com"]),
     ]

@@ -102,18 +102,26 @@ public class AdminController {
         return ApiResponse.success(auditService.listForCurrentOrganization(page, size, action));
     }
 
+    /** Response header of the audit CSV export: {@code true} when the row cap cut the export off (exposed by CORS). */
+    public static final String AUDIT_EXPORT_TRUNCATED_HEADER = "X-Export-Truncated";
+
     /** CSV export of the organisation's audit trail ({@code from}/{@code to}: ISO-8601 dates or date-times). */
     @GetMapping("/audit-export")
     public ResponseEntity<byte[]> exportAuditLogs(
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to
     ) {
-        byte[] csv = auditService.exportCsvForCurrentOrganization(from, to).getBytes(StandardCharsets.UTF_8);
+        AuditService.AuditExport export = auditService.exportForCurrentOrganization(from, to);
+        byte[] csv = export.csv().getBytes(StandardCharsets.UTF_8);
         String filename = "audit-" + UtcTime.now().toLocalDate() + ".csv";
+        // R6-B5: never cached (the trail names staff and IPs), like the job audit export; R1-U8: the portal warns when
+        // the row cap cut the file off.
         return ResponseEntity.ok()
                 .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(filename).build().toString())
                 .header("X-Content-Type-Options", "nosniff")
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header(AUDIT_EXPORT_TRUNCATED_HEADER, String.valueOf(export.truncated()))
                 .body(csv);
     }
 }

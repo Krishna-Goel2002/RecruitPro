@@ -35,7 +35,8 @@ export function draftFrom(requirement: Partial<Requirement> & RequirementInput):
     // Older backends omit knockout; the plan's default is knockout = mandatory.
     knockout: requirement.knockout ?? requirement.mandatory,
     minimumYears: requirement.minimumYears == null ? '' : String(requirement.minimumYears),
-    alternatives: requirement.alternatives ?? [],
+    // The server accepts at most 10 alternatives of up to 200 characters (RequirementInput); compiler output can exceed it.
+    alternatives: (requirement.alternatives ?? []).filter(alt => typeof alt === 'string' && alt.trim()).slice(0, 10),
     proficiency: requirement.proficiency ?? '',
   }
 }
@@ -53,9 +54,55 @@ export function toInput(draft: RequirementDraft): RequirementInput {
   }
 }
 
-/** Order-sensitive comparison of what would be sent, to skip no-op requirement saves (and needless re-matching). */
+/**
+ * Comparison of what would be sent, to skip no-op requirement saves. Order-sensitive (integration pass): the server
+ * stores the order (`displayOrder`), and a bulk replace that only reorders saves just the order (no new requirements
+ * version, no audit row, no re-match), so a reorder is a real but cheap change.
+ */
 export function sameRequirements(a: RequirementInput[], b: RequirementInput[]): boolean {
-  return JSON.stringify(a.map(normalize)) === JSON.stringify(b.map(normalize))
+  if (a.length !== b.length) return false
+  const key = (input: RequirementInput) => JSON.stringify(normalize(input))
+  return a.every((input, index) => key(input) === key(b[index]))
+}
+
+/** Same requirements, ignoring order: when true but sameRequirements is false, the change is a pure reorder. */
+export function sameRequirementSet(a: RequirementInput[], b: RequirementInput[]): boolean {
+  if (a.length !== b.length) return false
+  const key = (input: RequirementInput) => JSON.stringify(normalize(input))
+  return JSON.stringify(a.map(key).sort()) === JSON.stringify(b.map(key).sort())
+}
+
+/** Requirements in the order HR set (`displayOrder`, then id); servers without the field keep their order. */
+export function sortByDisplayOrder<T extends { id?: number; displayOrder?: number | null }>(requirements: readonly T[]): T[] {
+  return requirements
+    .map((requirement, index) => ({ requirement, index }))
+    .sort((x, y) => {
+      const a = x.requirement.displayOrder
+      const b = y.requirement.displayOrder
+      if (a != null && b != null && a !== b) return a - b
+      return x.index - y.index
+    })
+    .map(entry => entry.requirement)
+}
+
+/**
+ * After a bulk replace the server has created rows for drafts that had no id. Give those drafts their new ids (matched
+ * on type + text, each server row used once), so the next save updates them in place instead of deleting and
+ * re-creating them (which would cut links from work-sample rubrics and interview kits).
+ */
+export function adoptServerIds(drafts: RequirementDraft[], saved: Pick<Requirement, 'id' | 'type' | 'description'>[]): RequirementDraft[] {
+  const taken = new Set(drafts.filter(d => d.id != null).map(d => d.id as number))
+  const free = saved.filter(r => !taken.has(r.id))
+  let changed = false
+  const next = drafts.map(draft => {
+    if (draft.id != null) return draft
+    const index = free.findIndex(r => r.type === draft.type && r.description.trim() === draft.description.trim())
+    if (index < 0) return draft
+    const [match] = free.splice(index, 1)
+    changed = true
+    return { ...draft, id: match.id }
+  })
+  return changed ? next : drafts
 }
 
 function normalize(input: RequirementInput) {

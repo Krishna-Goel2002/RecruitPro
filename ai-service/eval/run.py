@@ -237,7 +237,8 @@ def evaluate(seed: int = DEFAULT_SEED, per_domain: int = DEFAULT_PER_DOMAIN, wor
                         [r.status for r in original.requirements] == [r.status for r in twin.requirements]
                     flips += not same
 
-    rates = {group: (sum(values) / len(values) if values else 0.0) for group, values in selected.items()}
+    # A group with no members has no selection rate (None), rather than a rate of 0 that would fail the AIR.
+    rates = {group: (sum(values) / len(values) if values else None) for group, values in selected.items()}
     case_accuracy, wrong_cases = _proficiency_cases()
     return {
         "resumes": len(resumes), "base_resumes": len(base), "jobs": sum(len(domain.jobs) for domain in DOMAINS),
@@ -248,7 +249,7 @@ def evaluate(seed: int = DEFAULT_SEED, per_domain: int = DEFAULT_PER_DOMAIN, wor
         "requirement_agreement": round(sum(gold == predicted for gold, predicted in pairs) / len(pairs), 4) if pairs else 1.0,
         "ndcg_at_10": round(sum(ndcgs) / len(ndcgs), 4) if ndcgs else 1.0,
         "name_swap_flip_rate": round(flips / twin_checks, 4) if twin_checks else 0.0, "counterfactual_checks": twin_checks,
-        "selection_rates": {group: round(rate, 4) for group, rate in rates.items()},
+        "selection_rates": {group: (round(rate, 4) if rate is not None else None) for group, rate in rates.items()},
         "adverse_impact_ratio": round(adverse_impact_ratio(rates), 4),
         "proficiency_case_accuracy": round(case_accuracy, 4), "proficiency_cases": len(PROFICIENCY_CASES),
         "proficiency_case_failures": wrong_cases,

@@ -1,10 +1,13 @@
 package com.recruitpro.common.exception;
 
 import com.recruitpro.common.dto.ApiResponse;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -13,21 +16,26 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.BindingResult;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -220,6 +228,47 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * A multipart request that cannot be parsed (no boundary, truncated body, not multipart at all) is a client error
+     * (HTTP 400), not a server error. {@link MaxUploadSizeExceededException} keeps its own, more specific 413 handler.
+     */
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMultipart(MultipartException ex) {
+        log.warn("Malformed multipart request");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error("Malformed multipart request"));
+    }
+
+    /**
+     * A required header, cookie or parameter condition of the endpoint is not met (HTTP 400). The more specific
+     * {@link MissingServletRequestParameterException} handler above still applies to missing query parameters.
+     */
+    @ExceptionHandler(ServletRequestBindingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleRequestBinding(ServletRequestBindingException ex) {
+        log.warn("Request binding failed: {}", ex.getClass().getSimpleName());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(INVALID_REQUEST));
+    }
+
+    /**
+     * The client accepts no representation the endpoint can produce (HTTP 406). No body: a JSON envelope would itself
+     * be unacceptable to the client and fail to be written.
+     */
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<Void> handleNotAcceptable(HttpMediaTypeNotAcceptableException ex) {
+        log.warn("Requested response media type is not available");
+        return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE).build();
+    }
+
+    /**
+     * The client went away while the response was being written (e.g. a cancelled download). Nothing can be sent any
+     * more; this is not a server error. The response parameter marks the request as handled, so no view is rendered.
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientGone(AsyncRequestNotUsableException ex, HttpServletResponse response) {
+        log.debug("Client disconnected before the response was complete");
+    }
+
+    /**
      * Handle bad request exceptions (HTTP 400).
      */
     @ExceptionHandler(BadRequestException.class)
@@ -249,6 +298,7 @@ public class GlobalExceptionHandler {
         log.warn("Rate limit exceeded");
         return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(ex.getRetryAfterSeconds()))
                 .body(ApiResponse.error(ex.getMessage()));
     }
 
@@ -309,8 +359,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
         log.warn("HTTP method not supported: {}", ex.getMethod());
-        return ResponseEntity
-                .status(HttpStatus.METHOD_NOT_ALLOWED)
+        Set<HttpMethod> supported = ex.getSupportedHttpMethods();
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED);
+        if (supported != null && !supported.isEmpty()) {
+            builder.allow(supported.toArray(new HttpMethod[0]));
+        }
+        return builder
                 .body(ApiResponse.error("HTTP method '" + ex.getMethod() + "' is not supported for this endpoint"));
     }
 

@@ -185,6 +185,50 @@ class BackgroundJobWorkerIntegrationTest {
     }
 
     @Test
+    void jobsAreClaimedOneAtATimeRightBeforeTheyRun() {
+        jobService.enqueue(TYPE, 21L);
+        jobService.enqueue(TYPE, 22L);
+        List<String> statusesSeen = new ArrayList<>();
+        BackgroundJobHandler handler = new BackgroundJobHandler() {
+            @Override
+            public BackgroundJobType type() {
+                return TYPE;
+            }
+
+            @Override
+            public void handle(long entityId) {
+                // While one job runs, the other is still PENDING (not claimed and locked with the batch start time).
+                long other = entityId == 21L ? 22L : 21L;
+                statusesSeen.add(jdbcTemplate.queryForObject(
+                        "SELECT status FROM background_jobs WHERE job_type = ? AND entity_id = ?", String.class,
+                        TYPE.name(), other));
+            }
+        };
+        assertEquals(2, worker(handler).runOnce());
+        assertEquals(List.of("PENDING", "DONE"), statusesSeen);
+        assertEquals(BackgroundJobStatus.DONE, only(TYPE, 21L).getStatus());
+        assertEquals(BackgroundJobStatus.DONE, only(TYPE, 22L).getStatus());
+    }
+
+    @Test
+    void aJobReleasedAsStaleIsNotMarkedDoneByTheSlowWorker() {
+        jobService.enqueue(TYPE, 23L);
+        BackgroundJob claimed = jobService.claimDue(1).get(0);
+        jdbcTemplate.update("UPDATE background_jobs SET locked_at = ? WHERE id = ?",
+                Timestamp.valueOf(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(11)), claimed.getId());
+        assertTrue(jobService.releaseStaleJobs().isEmpty(), "attempts left: back to PENDING, not dead");
+        assertEquals(BackgroundJobStatus.PENDING, only(TYPE, 23L).getStatus());
+
+        // The original worker finally finishes: the job stays queued for its re-run instead of being marked DONE.
+        jobService.markDone(claimed.getId());
+        jobService.markFailed(claimed.getId(), "late failure");
+        BackgroundJob job = only(TYPE, 23L);
+        assertEquals(BackgroundJobStatus.PENDING, job.getStatus());
+        assertTrue(job.getLastError().contains("did not finish"));
+        assertTrue(jobService.releaseStaleJobs().isEmpty(), "a released job is not released again");
+    }
+
+    @Test
     void duplicateHandlersForOneTypeAreRejected() {
         RecordingHandler first = new RecordingHandler(0, false);
         RecordingHandler second = new RecordingHandler(0, false);

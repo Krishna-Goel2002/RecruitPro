@@ -33,7 +33,8 @@ _SKILL_SECTION_PRIORITY = {"SKILLS": 0, "EXPERIENCE": 1, "PROJECTS": 2, "CERTIFI
 # details are about other people or protected data.
 _NO_SKILL_SECTIONS = frozenset({"REFERENCES", "PERSONAL", "INTERESTS"})
 _CERT_RE = re.compile(r"\bcertif|\blicen[cs]e|\bcertificate\b", re.I)
-_UNKNOWN_ITEM_STOP = frozenset({"etc", "others", "other", "and more", "basics", "familiar"})
+_UNKNOWN_ITEM_STOP = frozenset({"etc", "others", "other", "and more", "basics", "familiar", "other things", "many more",
+                                "more", "much more", "so on", "and so on", "others etc"})
 
 
 @dataclass(frozen=True)
@@ -97,14 +98,23 @@ def parse_resume(filename: str, content: bytes, *, settings: Settings | None = N
                  ocr_engine: OcrEngine | None = None) -> ParseResponse:
     """Parse one uploaded document. Never raises for bad input: failures come back as ``status=FAILED``."""
     settings = settings or load_settings()
+    extension = extension_of(filename)
     try:
         ingested = ingest(filename, content, settings, ocr_engine)
     except DocumentParseError as exc:
         return ParseResponse(status=exc.status, errorCode=exc.code, parserVersion=PARSER_VERSION)
+    except Exception:  # noqa: BLE001 - a damaged file must come back as FAILED, never as an HTTP 500
+        logger.warning("Unexpected error while reading a .%s document", extension, exc_info=True)
+        code = f"MALFORMED_{extension.upper()}" if extension in {"pdf", "docx", "doc"} else "UNSUPPORTED_FORMAT"
+        return ParseResponse(status="FAILED", errorCode=code, parserVersion=PARSER_VERSION)
     if ingested.needs_ocr:
-        return ParseResponse(status="NEEDS_OCR", errorCode=f"SCANNED_{extension_of(filename).upper()}",
+        return ParseResponse(status="NEEDS_OCR", errorCode=f"SCANNED_{extension.upper()}",
                              parserVersion=PARSER_VERSION, flags=_flags(ingested.flags))
-    analysis = analyse(ingested.lines, hidden_text=ingested.hidden_text, today=today)
+    try:
+        analysis = analyse(ingested.lines, hidden_text=ingested.hidden_text, today=today)
+    except Exception:  # noqa: BLE001 - a parser defect on one document must not fail the request
+        logger.exception("Resume analysis failed")
+        return ParseResponse(status="FAILED", errorCode="PARSER_CRASHED", parserVersion=PARSER_VERSION)
     facts, version = analysis.facts, PARSER_VERSION
     provider = get_provider(settings)
     if provider is not None:
@@ -113,6 +123,8 @@ def parse_resume(filename: str, content: bytes, *, settings: Settings | None = N
             version = f"{PARSER_VERSION}+llm"
         except LLMError as exc:
             logger.warning("LLM extraction failed, using rules only: %s", exc)
+        except Exception:  # noqa: BLE001 - unexpected model output must fall back to the rules result
+            logger.warning("LLM extraction produced unusable output, using rules only", exc_info=True)
     structured = any(fact.type in {"SKILL", "EXPERIENCE", "EDUCATION", "CERTIFICATION"} for fact in facts)
     return ParseResponse(
         status="COMPLETED" if structured else "PARTIAL",
@@ -351,6 +363,14 @@ _LLM_SYSTEM = (
 )
 
 
+def _mentions_phrase(text: str, phrase: str) -> bool:
+    words = phrase.split()
+    if not words:
+        return False
+    pattern = r"(?<![A-Za-z0-9])" + r"\s+".join(re.escape(word) for word in words) + r"(?![A-Za-z0-9])"
+    return re.search(pattern, text, re.I) is not None
+
+
 def _llm_skill_facts(analysis: Analysis, provider: LLMProvider) -> list[ParsedFact]:
     """Skills the rules missed, each backed by a verbatim quote from the de-identified text."""
     taxonomy = get_taxonomy()
@@ -370,16 +390,24 @@ def _llm_skill_facts(analysis: Analysis, provider: LLMProvider) -> list[ParsedFa
         if not name or span is None:
             continue  # unverifiable output is dropped
         skill = taxonomy.lookup(name)
-        if skill is None and name.lower() not in quote.lower():
+        # The quote must actually name the skill (its name or an alias), not merely exist in the resume.
+        if skill is None and not _mentions_phrase(quote, name):
             continue
+        if skill is not None and skill.id not in {m.skill.id for m in taxonomy.find_mentions(quote, list_context=True)} \
+                and not _mentions_phrase(quote, name):
+            continue
+        start = analysis.redacted.to_source(span[0])
+        source_section = analysis.section_at(start) if start is not None else None
+        if source_section is not None and source_section.kind in _NO_SKILL_SECTIONS:
+            continue  # hobbies, references and personal details never yield skills (same rule as the parser)
         key = skill.name.lower() if skill else name.lower()
         if (skill and skill.id in known_ids) or key in known_values:
             continue
         known_values.add(key)
         if skill:
             known_ids.add(skill.id)
-        start, end = analysis.redacted.to_source(span[0]), analysis.redacted.to_source(span[1])
-        section = analysis.section_at(start) if start is not None else None
+        end = analysis.redacted.to_source(span[1])
+        section = source_section
         facts.append(ParsedFact(
             type="SKILL", value=skill.name if skill else name[:200], normalizedValue=key[:200], evidence=quote[:MAX_SKILL_EVIDENCE],
             sourceSection=section.label if section else "other", spanStart=start, spanEnd=end,

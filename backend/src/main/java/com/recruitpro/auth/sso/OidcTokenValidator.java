@@ -67,11 +67,11 @@ public class OidcTokenValidator {
             throw new SsoException("invalid_token", "The id_token was issued by an unexpected issuer");
         }
         Set<String> audience = claims.getAudience();
-        if (audience != null && audience.size() > 1) {
-            String azp = claims.get("azp", String.class);
-            if (azp == null || !azp.equals(provider.clientId())) {
-                throw new SsoException("invalid_token", "The id_token was issued to another client");
-            }
+        Object azp = claims.get("azp");
+        // OIDC Core 3.1.3.7: with several audiences azp is required; when present it must be this client (R1-L6).
+        if ((audience != null && audience.size() > 1 && azp == null)
+                || (azp != null && !provider.clientId().equals(azp))) {
+            throw new SsoException("invalid_token", "The id_token was issued to another client");
         }
         Instant now = Instant.now();
         Date expiration = claims.getExpiration();

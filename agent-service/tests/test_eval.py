@@ -17,3 +17,8 @@ def test_metrics():
     assert false_corroboration_rate(pairs) == 1 / 3
     assert round(cohen_kappa(pairs), 3) == 0.636
     assert per_verdict(pairs)["VERIFIED"]["precision"] == 0.5
+
+
+def test_a_crashing_case_fails_the_gate():
+    metrics = {"false_corroboration_rate": 0.0, "kappa": 1.0, "cases": 100, "errors": ["x: ValueError: boom"]}
+    assert failures(metrics) == ["case crashed: x: ValueError: boom"]

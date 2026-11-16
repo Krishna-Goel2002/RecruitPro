@@ -1,5 +1,6 @@
 package com.recruitpro.security.headers;
 
+import com.recruitpro.security.RequestPaths;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -33,14 +34,8 @@ public class ApiSecurityHeadersFilter extends OncePerRequestFilter {
     }
 
     static boolean isApi(HttpServletRequest request) {
-        String uri = request.getRequestURI();
-        if (uri == null) {
-            return false;
-        }
-        String contextPath = request.getContextPath();
-        if (contextPath != null && !contextPath.isEmpty() && uri.startsWith(contextPath)) {
-            uri = uri.substring(contextPath.length());
-        }
+        // Decoded like MVC does, so that a percent-encoded path cannot get an API answer without the CSP (R1-M2).
+        String uri = RequestPaths.of(request);
         return uri.startsWith("/api/v1/") || uri.equals("/api/v1") || uri.startsWith("/actuator");
     }
 }

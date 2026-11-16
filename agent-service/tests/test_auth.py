@@ -79,3 +79,28 @@ def test_llm_provider_without_model_refuses_startup(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     with pytest.raises(ConfigError):
         validate_settings(load_settings())
+
+
+# ------------------------------------------------------------------------------------- bug-hunt regressions
+@pytest.mark.parametrize("env", [
+    {"AGENT_SERVICE_TOKEN": "short"},
+    {"AGENT_SERVICE_TOKEN": "replace-with-a-random-secret-of-at-least-32-bytes"},  # the .env.example placeholder
+    {"AGENT_FETCH_TIMEOUT_SECONDS": "0"},
+    {"AGENT_REQUEST_DEADLINE_SECONDS": "-5"},
+    {"AGENT_MAX_DOCUMENT_BYTES": "0"},
+    {"LLM_TIMEOUT_SECONDS": "nan"},
+])
+def test_unsafe_or_impossible_settings_refuse_startup(env):
+    with pytest.raises(ConfigError):
+        validate_settings(load_settings({"AGENT_SERVICE_TOKEN": TOKEN, **env}))
+
+
+def test_a_proper_token_and_defaults_are_accepted():
+    validate_settings(load_settings({"AGENT_SERVICE_TOKEN": TOKEN}))
+    validate_settings(load_settings({"AGENT_SERVICE_TOKEN": "", "AGENT_ALLOW_NO_TOKEN": "true"}))
+
+
+def test_api_paths_need_the_token_whatever_their_spelling(client: TestClient) -> None:
+    for path in ("/api/v1/verify/reference", "/api/v1/verify/reference/", "/api/v1/../v1/verify/reference"):
+        assert client.post(path, json=BODY).status_code in (401, 404), path
+    assert client.get("/health").status_code == 200

@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 
 /**
  * Per-client-IP limits of the public verification endpoints (referee page, OAuth callback) and a per-candidate
@@ -40,8 +41,22 @@ public class PublicEndpointRateLimiter {
         }
         long retryAfter = limiter.tryAcquire((clientIp == null ? "unknown" : clientIp) + "|" + rule.route(), rule.limit(), rule.window());
         if (retryAfter > 0) {
-            throw new TooManyRequestsException("Too many requests. Please try again later.");
+            // Integration pass (R5#3): the limiter knows when the oldest request leaves the window.
+            throw new TooManyRequestsException("Too many requests. Please try again later.", retryAfter);
         }
+    }
+
+    /**
+     * Whole seconds (at least 1) until a request made at {@code oldestInWindow} leaves a window of {@code window},
+     * measured from {@code now}: the Retry-After of a count-in-window limit. Without a known oldest request: the
+     * whole window.
+     */
+    public static long secondsUntilFree(LocalDateTime oldestInWindow, Duration window, LocalDateTime now) {
+        if (oldestInWindow == null || now == null) {
+            return Math.max(1, window.toSeconds());
+        }
+        long seconds = Duration.between(now, oldestInWindow.plus(window)).toSeconds();
+        return Math.max(1, Math.min(seconds + 1, window.toSeconds()));
     }
 
     /** Clears all counters (tests). */

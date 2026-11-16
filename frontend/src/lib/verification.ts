@@ -214,9 +214,12 @@ export function oauthErrorMessage(code: string): string {
 
 export const OAUTH_CONNECTED_TEXT = 'GitHub is connected and ownership is proven. You can now run a verification.'
 
-/** True when an API error is the 503 for an unconfigured GitHub OAuth app. */
-export function isOAuthNotConfigured(status: number, message: string): boolean {
-  return status === 503 || message.startsWith('OAUTH_NOT_CONFIGURED')
+/**
+ * True when an API error is the 503 `OAUTH_NOT_CONFIGURED: …` for an unconfigured GitHub OAuth app. Any other 503
+ * (gateway, backend restarting) is an ordinary outage and must not switch the candidate to the username route.
+ */
+export function isOAuthNotConfigured(error: { status: number; message: string; code?: string | null }): boolean {
+  return error.code === 'OAUTH_NOT_CONFIGURED' || error.message.trim().startsWith('OAUTH_NOT_CONFIGURED')
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -315,6 +318,9 @@ export const INTEGRITY_NOTE_INTRO =
 // ---------------------------------------------------------------------------------------------------------------------
 
 export const MAX_OPEN_REFERENCES = 5
+/** Server rules (ReferenceService.MAX_PER_DAY, VerificationSourceService.MAX_ACTIVE_SOURCES). */
+export const MAX_REFERENCES_PER_DAY = 10
+export const MAX_ACTIVE_SOURCES = 30
 
 export const RELATIONSHIP_OPTIONS: { value: ReferenceRelationship; label: string }[] = [
   { value: 'MANAGER', label: 'Manager' },

@@ -72,6 +72,21 @@ public class ResumeIntelligenceService {
         return saved;
     }
 
+    /**
+     * R2-M02: removes the analysis of a resume the candidate deletes: facts, the correction claims linked to them and
+     * the verdicts about them (withdrawn). A PARSE_RESUME job still queued for it finds nothing and ends.
+     */
+    public void deleteFor(CandidateProfile candidate, Resume resume) {
+        ResumeAnalysis analysis = analysisRepository.findByResumeId(resume.getId()).orElse(null);
+        if (analysis == null) {
+            return;
+        }
+        List<ResumeAnalysisFact> facts = factRepository.findAllByAnalysisIdOrderById(analysis.getId());
+        claimService.removeForDeletedFacts(candidate, facts.stream().map(ResumeAnalysisFact::getId).toList());
+        factRepository.deleteAll(facts);
+        analysisRepository.delete(analysis);
+    }
+
     /** Not read-only: {@code getOrProvisionMine()} may create a missing candidate profile. Reads only otherwise. */
     public ResumeAnalysisResponse getMine(Long resumeId) {
         CandidateProfile candidate = profileService.getOrProvisionMine();

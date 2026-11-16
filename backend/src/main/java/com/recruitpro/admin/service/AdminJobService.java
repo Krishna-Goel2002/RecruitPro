@@ -12,6 +12,9 @@ import com.recruitpro.hr.entity.Job;
 import com.recruitpro.hr.entity.JobStatus;
 import com.recruitpro.hr.repository.JobRepository;
 import com.recruitpro.security.SecurityUtils;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -49,6 +52,9 @@ public class AdminJobService {
     private final ApplicationRepository applicationRepository;
     private final AuditService auditService;
     private final SecurityUtils securityUtils;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public static boolean isOverrideAllowed(JobStatus from, JobStatus to) {
         return from != null && to != null && OVERRIDE_TRANSITIONS.getOrDefault(from, Set.of()).contains(to);
@@ -106,6 +112,9 @@ public class AdminJobService {
         Long organizationId = securityUtils.requireOrganizationId();
         Job job = jobRepository.findByIdAndOrganizationId(jobId, organizationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Job not found: " + jobId));
+        // Re-read the row under a lock before checking its status: the deadline closer and HR transitions change the
+        // same row, and a stale read would let this full-row update overwrite a terminal CLOSED/CANCELLED status.
+        entityManager.refresh(job, LockModeType.PESSIMISTIC_WRITE);
 
         JobStatus previousStatus = job.getStatus();
         if (previousStatus == targetStatus) {

@@ -109,9 +109,22 @@ export function initials(firstName?: string | null, lastName?: string | null): s
   return `${firstName?.trim()[0] ?? ''}${lastName?.trim()[0] ?? ''}`.toUpperCase() || 'C'
 }
 
-/** "Closes today" / "Closes in 3 days" / "Closes in 2 weeks" (long words, unlike the compact relative time). */
-export function closesIn(deadline: string | Date, now = Date.now()): string {
-  const days = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000)
+/** Whole local calendar days from `now` to `date` (0 = today, 1 = tomorrow, -1 = yesterday), DST-safe. */
+export function calendarDaysUntil(date: string | Date, now: number | Date = Date.now()): number {
+  const target = new Date(date)
+  const from = new Date(now)
+  const a = Date.UTC(target.getFullYear(), target.getMonth(), target.getDate())
+  const b = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())
+  return Math.round((a - b) / 86_400_000)
+}
+
+/**
+ * "Closes today" / "Closes in 3 days" / "Closes in 2 weeks" (long words, unlike the compact relative time). Counted in
+ * the viewer's calendar days: a deadline at 18:00 today says "today", not "tomorrow" (rounding up 6 hours did).
+ */
+export function closesIn(deadline: string | Date, now: number | Date = Date.now()): string {
+  if (new Date(deadline).getTime() <= new Date(now).getTime()) return 'Closed'
+  const days = calendarDaysUntil(deadline, now)
   if (days < 0) return 'Closed'
   if (days === 0) return 'Closes today'
   if (days === 1) return 'Closes tomorrow'

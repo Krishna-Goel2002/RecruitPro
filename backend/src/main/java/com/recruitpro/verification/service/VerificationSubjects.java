@@ -25,8 +25,8 @@ import java.util.Set;
 
 /**
  * The candidate's claim subjects (plan v2 section 5, GET /ledger): SKILL, CERTIFICATION, EDUCATION and EXPERIENCE
- * facts of the finished analysis of each resume (contact facts never), and the candidate's claims that no recruiter
- * rejected. Ids are {@code fact:<id>} / {@code claim:<id>}.
+ * facts of the finished analysis of each resume (contact facts never), and the candidate's claims (a recruiter's
+ * rejection is per organisation and does not remove a claim here). Ids are {@code fact:<id>} / {@code claim:<id>}.
  */
 @Component
 public class VerificationSubjects {
@@ -75,8 +75,11 @@ public class VerificationSubjects {
             }
         }
         for (CandidateClaim claim : claimRepository.findAllByCandidateIdOrderByIdAsc(candidateId)) {
-            if (claim.isRejected() || claim.getClaimType() == null || claim.getClaimValue() == null
-                    || claim.getClaimValue().isBlank()) {
+            // R3-B03: a recruiter's rejection applies to that recruiter's organisation only (R2-H02,
+            // candidate_claim_verifications); the claim's own columns are only a candidate-facing summary of all
+            // organisations' checks (CandidateClaim.summarize), so they must not remove the claim, and its verdicts,
+            // for any organisation or for the candidate. The subject's tier below is that summary (candidate ledger).
+            if (claim.getClaimType() == null || claim.getClaimValue() == null || claim.getClaimValue().isBlank()) {
                 continue;
             }
             EvidenceTier tier = claim.getTier() == null ? EvidenceTier.SELF_CLAIMED : claim.getTier();

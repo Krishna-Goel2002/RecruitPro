@@ -45,6 +45,7 @@ public final class TestDatabase {
             "application_decision_history",
             "job_match_runs",
             "applications",
+            "candidate_claim_verifications",
             "candidate_claims",
             "resume_analysis_facts",
             "resume_analyses",

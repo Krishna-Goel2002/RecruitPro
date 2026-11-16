@@ -33,9 +33,9 @@ def ndcg_at_k(ranked_gains: list[float], k: int = 10) -> float:
     return dcg(ranked_gains) / ideal if ideal else 1.0
 
 
-def adverse_impact_ratio(selection_rates: dict[str, float]) -> float:
+def adverse_impact_ratio(selection_rates: dict[str, float | None]) -> float:
     """Lowest group selection rate divided by the highest (the four-fifths rule compares it with 0.8)."""
-    rates = [rate for rate in selection_rates.values()]
+    rates = [rate for rate in selection_rates.values() if rate is not None]
     if not rates or max(rates) == 0:
         return 1.0
     return min(rates) / max(rates)

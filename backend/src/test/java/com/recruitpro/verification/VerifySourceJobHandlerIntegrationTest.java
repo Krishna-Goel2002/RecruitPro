@@ -221,7 +221,12 @@ class VerifySourceJobHandlerIntegrationTest extends VerificationIntegrationTestB
             runs.save(run);
         }
         mvc.perform(post(BASE + "/sources/{id}/runs", github.getId()).with(candidate("runner@cand.test")))
-                .andExpect(status().isTooManyRequests());
+                .andExpect(status().isTooManyRequests())
+                // Integration pass (R5#3): Retry-After = when the oldest run leaves the 24-hour window.
+                .andExpect(result -> {
+                    long seconds = Long.parseLong(result.getResponse().getHeader("Retry-After"));
+                    assertTrue(seconds > 23 * 3600 && seconds <= 24 * 3600, "Retry-After " + seconds);
+                });
         fixtures.candidate("someone@cand.test");
         mvc.perform(post(BASE + "/sources/{id}/runs", github.getId()).with(candidate("someone@cand.test")))
                 .andExpect(status().isNotFound());

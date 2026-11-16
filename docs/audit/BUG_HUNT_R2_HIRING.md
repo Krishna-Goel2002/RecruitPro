@@ -1,0 +1,83 @@
+# Bug hunt R2: backend hiring core
+
+Scope: `backend/src/main/java/com/recruitpro/{hr,application,candidate,evidence,ai,assessment,interview,fairness}/**`
+and their tests. Branch `Kshitij-redesign` (not committed). Every file of the scope was read line by line, plus the
+handbook chapter 2 known issues, STATUS.md and the WP-BE-B / WP-BE-C / WP-PLAT / WP-OPS notes.
+
+"Affects Kshitij?": `git diff Kshitij HEAD` is empty for every package in scope, so every finding below exists on the
+demo branch `Kshitij` too.
+
+Java cannot be compiled or run here (JDK 11, no Maven Central). Fixes and tests were checked with the repository's
+static tools only (results at the end). The new tests have not been executed.
+
+## Findings and fixes
+
+Paths are relative to `backend/src/main/java/com/recruitpro/` (main) and `backend/src/test/java/com/recruitpro/`
+(tests). Line numbers are those after the fix.
+
+| ID | Severity | File:line | Problem | Fix | Test | Affects Kshitij? |
+|---|---|---|---|---|---|---|
+| R2-H01 | High | `hr/service/JobService.java:292`, `hr/service/RequirementCompilerService.java:62`, `evidence/service/MatchRequestBuilder.java:80`, `V27__hiring_core_fixes.sql` | Known issue "mandatory OTHER never scored": `knockout` defaulted to `mandatory`, and the engine never scores OTHER, so one manually created mandatory OTHER requirement (or an AI suggestion with `knockout` omitted) put **every** applicant of the job in MUST_HAVES_UNVERIFIED: nobody could ever be RANKED. The existing `RequirementCompilerServiceTest` asserted this buggy default. | OTHER is never a knockout: forced to false on create/update/bulk replace and in compiler suggestions; never sent as knockout to the AI service (covers legacy rows); V27 clears `knockout` on existing OTHER rows. (Scoring OTHER with interview evidence would need an ai-service engine change: see U3.) | `hr/JobHiringCoreFixesIntegrationTest.otherRequirementsAreNeverKnockouts`, `evidence/MatchRequestBuilderTest.anOtherRequirementIsNeverSentAsAKnockout`, corrected `hr/service/RequirementCompilerServiceTest.mapsSuggestionsAndWarnings` | yes |
+| R2-H02 | High | `hr/service/ApplicationDecisionService.java:223`, `evidence/service/MatchingService.java:119`, `hr/service/ApplicantQueryService.java:373`, `evidence/service/ClaimEvidence.java`, `evidence/dto/CandidateClaimResponse.java`, `evidence/service/CandidateClaimService.java`, new `evidence/entity/CandidateClaimVerification.java`, `V27__hiring_core_fixes.sql` | Known issue: a claim verification lived in single columns of `candidate_claims`, so a second organisation's verification (or rejection) overwrote the first: organisation A silently lost its CORROBORATED evidence, or a claim A had rejected came back into A's matching. | New table `candidate_claim_verifications` (one row per claim and organisation, unique, cascades with the claim; backfilled from the old columns by the verifier's organisation). Verification upserts the row of the job's organisation; matching and the staff view read only the viewer's/job's organisation row; changing a correction claim clears every row. The claim columns keep "latest verification by anyone" for the candidate's own view and for the verification module (see U6). | `evidence/ClaimVerificationPerOrganizationIntegrationTest` (2 tests: B's rejection never removes A's corroboration in the staff view or in `MatchingService.prepare`; one row per organisation updated in place; unverified elsewhere), `evidence/MatchRequestBuilderTest.onlyTheJobOrganisationsOwnVerificationRowCounts`, `evidence/CandidateClaimsIntegrationTest` (rows cleared on value change) | yes |
+| R2-H03 | High | `ai/service/AiServiceClient.java:60` | The AI client used one 30 s read time-out for everything, but `/resume/parse` may legitimately take the AI service's whole 60 s parse budget (LibreOffice `.doc` conversion, OCR, LLM skills) plus queueing behind its 2-process pool. Slow parses were cut off, released to PENDING and re-sent up to 5 times while the abandoned parses kept occupying the pool (making the next parses slower), ending as FAILED `AI_SERVICE_UNAVAILABLE`. | Parsing uses its own client with read time-out `app.ai-service.parse-timeout-ms` (default 120 000 ms, never below the general one); the other calls keep `timeout-ms`. The 4-argument constructor used by tests keeps working. | `ai/AiServiceClientTimeoutTest` (real local HTTP server answering after 1.5 s: parse succeeds with general time-out 500 ms, compile times out) | yes |
+| R2-M01 | Medium | `application/service/ApplicationService.java:185`, `candidate/privacy/CandidateAccountDeletionService.java:197`, `interview/service/InterviewService.java` (`cancelScheduledForDeparture`), new `application/service/CandidateDeparture{Listener,s}.java`, `interview/service/InterviewDepartureListener.java`, `assessment/service/WorkSampleDepartureListener.java` | A candidate's withdrawal left SCHEDULED interviews scheduled (interviewer not told, both calendars kept the event, the interview stayed in "my interviews") and ASSIGNED/STARTED work samples open (later shown as EXPIRED as if the candidate ran out of time). Account deletion cancelled them silently: no interviewer notification, no ICS cancel, no `cancelledAt`/reason. | New extension point called on withdrawal and for every application on account deletion: scheduled interviews are cancelled with ICS SEQUENCE + 1 and INTERVIEW_CANCELLED + `cancel.ics` to the interviewer (and to the candidate unless the account is being deleted; a deleted candidate is not named in the interviewer's ICS); unfinished work samples become CANCELLED with time and reason. Finished work is untouched. | `application/CandidateDepartureIntegrationTest.withdrawingCancelsScheduledInterviewsAndUnfinishedWorkSamples`; existing `candidate/CandidatePrivacyIntegrationTest` still covers deletion | yes |
+| R2-M02 | Medium | `candidate/service/ResumeService.java:89`, `candidate/controller/ResumeController.java`, `candidate/service/ResumeIntelligenceService.java` (`deleteFor`), `evidence/service/CandidateClaimService.java` (`removeForDeletedFacts`) | Known issue: no way for a candidate to delete a single resume; and uploads were unbounded (10 MB each), an easy disk-filling path. | `DELETE /api/v1/candidates/me/resumes/{id}`: 404 for others' resumes, 409 when an application uses it (kept for review, match runs and audit); otherwise deletes facts, their correction claims (verdicts about the facts and claims withdrawn, re-match queued), the analysis, the row and, after commit, the file. Uploads capped at 20 resumes per candidate. (No portal button yet: U9.) | `candidate/ResumeDeletionIntegrationTest` (3 tests) | yes |
+| R2-M03 | Medium | `hr/service/JobService.java:161` | Known issue: HR job status changes (publish, hold, close, cancel) wrote no audit row; only the admin override and the deadline closer did. | Audited as `JOB_STATUS_CHANGED` (constant `JobService.AUDIT_JOB_STATUS_CHANGED`, "Job #id (title): FROM -> TO"); refused transitions are not audited. | `hr/JobHiringCoreFixesIntegrationTest.hrStatusChangesAreAudited` | yes |
+| R2-M04 | Medium | `hr/service/JobService.java:148`, `:161` | `PUT /jobs/{id}` and `PATCH /jobs/{id}/status` read the job without a lock while the deadline closer and the admin override lock it. Hibernate updates every column, so an HR edit racing a close wrote `status=PUBLISHED` back over CLOSED (a closed job re-opened for applications); a racing HR transition could also undo an override. | Both re-read the row with `PESSIMISTIC_WRITE` (like requirement edits) before checking editability or the transition. | `hr/JobHiringCoreFixesIntegrationTest.anEditRacingAConcurrentCloseNeverReopensTheJob` (closer holds the row lock while the edit arrives) | yes |
+| R2-M05 | Medium | `interview/service/InterviewService.java:236` | An interview of a REJECTED, SELECTED or WITHDRAWN application could still be rescheduled, which e-mailed a new invitation (ICS REQUEST) to a candidate who was rejected or had withdrawn. | A real change (time, duration, place) needs a SHORTLISTED or INTERVIEWING application; cancelling stays possible. | `application/CandidateDepartureIntegrationTest.anInterviewOfAnInactiveApplicationCanBeCancelledButNotRescheduled` | yes |
+| R2-L01 | Low | `hr/dto/JobCreateRequest.java:16`, `hr/dto/JobUpdateRequest.java` | Salaries are `NUMERIC(12,2)` but only `@DecimalMin` was validated: 11+ integer digits or 3 decimals reached the database and failed as a server error; the description had no size limit. | `@Digits(integer = 10, fraction = 2)` on both salaries; description at most 50 000 characters. | `hr/JobHiringCoreFixesIntegrationTest.salariesBeyondTheColumnPrecisionAre400NotAServerError` | yes |
+| R2-L02 | Low | `candidate/service/ResumeService.java:122` | The resume file name only rejected CR/LF; a NUL or other control character reached PostgreSQL (`invalid byte sequence`, 500) or the staff UI. | Any control character (< 0x20, 0x7F) is a 400. | `candidate/ResumeDeletionIntegrationTest.uploadsAreCappedAndFileNamesWithControlCharactersAreRefused` | yes |
+| R2-L03 | Low | `hr/service/ApplicationDecisionService.java:118` | Applications of a deleted (anonymised) candidate stay for audit, but a REJECTED one could be REOPENed and pushed on to shortlist and interviews with nobody to contact. | Decisions on an application whose candidate account is deleted are refused (400). | `application/CandidateDepartureIntegrationTest.aDeletedCandidatesApplicationCanNoLongerBeDecidedOn` | yes |
+| R2-L04 | Low | `candidate/privacy/CandidateDataExport.java`, `candidate/privacy/CandidateDataExportService.java:110` | The data export (access right) missed WP-PLAT tables and fields: the work-sample files the candidate submitted, the assignment cancellation (time, reason) and the parser attributes of facts (employer, dates, degree, ...). | `workSamples[].files` (name, type, size, SHA-256, time), `cancelledAt`, `cancelReason`; `facts[].attributes`. Staff-only material is still excluded. | `candidate/CandidatePrivacyIntegrationTest.theExportListsSubmittedWorkSampleFilesAndFactAttributes` | yes |
+| R2-L05 | Low | `assessment/service/CandidateWorkSampleService.java:119` | After the expiry sweep marked an assignment EXPIRED, a submission answered "Start the work sample before submitting it". | Clear 400 "This work sample has expired and can no longer be submitted". | `assessment/WorkSampleFilesIntegrationTest.submittingAnExpiredAssignmentSaysItExpired` | yes |
+| R2-L06 | Low | `candidate/controller/ResumeController.java:63` | The candidate's own resume download had no `Cache-Control` (the staff download has `no-store`). | `Cache-Control: no-store`. | `candidate/ResumeDeletionIntegrationTest.anUnusedResumeIsDeletedWithItsAnalysisCorrectionClaimsAndFile` | yes |
+| R2-L07 | Low | `hr/service/JobDeadlineCloser.java:71` | One job that could not be closed (lock time-out, failing audit insert) threw out of the loop, so every later expired job stayed open until it was fixed (poison job). | Per-job try/catch with a warning; the job is retried on the next run. | `hr/service/JobDeadlineCloserTest` | yes |
+| R2-L08 | Low (privacy) | `ai/service/AiServiceClient.java:82` | The resume's original file name (often the candidate's name) was sent to the AI service, whose output must be de-identified. | Sent as `resume.<extension>` (the parser only uses the extension). | `ai/AiServiceClientTimeoutTest` (both tests) | yes |
+
+Existing tests reviewed for mistakes: `hr/service/RequirementCompilerServiceTest` encoded the R2-H01 bug ("knockout
+defaults to mandatory" for an OTHER suggestion) and was corrected. The other tests in scope (incl. the never-compiled
+WP-PLAT ones: `InterviewPlatformIntegrationTest`, `WorkSampleFilesIntegrationTest`, `WorkSampleFileServiceTest`,
+`IcsCalendarTest`, `FairnessDateFilterIntegrationTest`) were read against the current code and agree with it; no
+other error was found. `support/TestDatabase` now also cleans `candidate_claim_verifications`.
+
+## Checked and found correct (no change)
+
+Tenancy and IDOR on every endpoint (job, applicant, decision, reveal, resume, claim, work sample incl. score/cancel/
+files, interview incl. scorecards and revisions, kit, fairness: another organisation is always 404); candidate-side
+ownership (applications, resumes, analyses, claims, work samples and files, interviews, survey); INTERVIEWER limits;
+blind review in lists, details, history, CSV export, interviewer e-mails and ICS, work-sample files; application state
+machine incl. undo/reopen/withdraw and the auto-move to INTERVIEWING; job state machine and ON_HOLD rules; work-sample
+lifecycle, timing, grace and sweep (conditional updates); scorecard rules; append-only match runs and the stale-run
+guard; trigger dedupe; fact ids and request limits; ranking groups and paging; upload magic bytes, sizes, storage keys
+and path checks; Content-Disposition (server-chosen names, sanitised originals); no DB transaction around AI calls;
+fairness arithmetic (suppression < 5, division by zero, inclusive UTC dates, `from > to`); time zones (UTC).
+
+## Not fixed (with reasons)
+
+| ID | Severity | Where | Issue | Why not fixed here |
+|---|---|---|---|---|
+| U1 | Medium | `fairness/service/FairnessReportService` | Differencing: with `from`/`to` an HR manager can query overlapping ranges (e.g. one day apart) and subtract the suppressed-or-not group counts to learn one known applicant's survey answer and stage. Suppression (< 5) does not stop this. | Needs a product decision (whole-month/quarter ranges only, minimum change between ranges, or noise). Documented. |
+| U2 | Low | `hr/service/ApplicationDecisionService.reveal` | A manager may reveal a REJECTED-from-SUBMITTED application (handbook: allowed for non-submitted) and then REOPEN it, so a SUBMITTED application is reviewed with the identity known. Both steps are audited. | Documented behaviour; changing it removes the only way to reveal rejected applicants. Product decision. |
+| U3 | Info | `ai-service/app/matching/engine.py` (not in scope) | OTHER requirements are still never scored, even with interview or work-sample evidence linked to them (`_match_one` returns before linked facts). | AI-service engine change; R2-H01 removes the ranking damage. |
+| U4 | Info | `evidence/service/CandidateClaimService.upsertForFact` | Fact corrections create claims without the 100-claim cap. | Bounded by the parser's 250 facts per resume and the new 20-resume cap. |
+| U5 | Info | `hr/service/ApplicationDecisionService.decide` | REJECT and SELECT leave SCHEDULED interviews scheduled. | HR's call (they can cancel; an interview may legitimately follow); withdrawal is handled (R2-M01). |
+| U6 | Info (for R3) | `verification/service/VerificationSubjects`, `StaffVerificationService` | The verification module still reads the claim's single "latest" verification columns, so a rejection by any organisation hides the claim from verification subjects for all. | Verification package belongs to R3. They can use `CandidateClaimVerificationRepository` / `ClaimEvidence.forOrganization(claim, row)`. |
+| U7 | Info | `interview/service/InterviewService.submitScorecard` | A scorecard can be submitted before the interview's scheduled time. | Could be legitimate (moved earlier informally); no rule in the plan. |
+| U8 | Info | `assessment/service/WorkSampleEvidenceContributor`, `InterviewEvidenceContributor` | `ws:`/`iv:` fact ids exceed 40 characters only for ids above about 10^17. | Unreachable in practice. |
+| U9 | Info | `frontend` | No resume-delete button in the candidate portal yet (the API exists, R2-M02). | Frontend owners. |
+| U10 | Info (for R1) | `application.yml` | `app.ai-service.parse-timeout-ms` (default 120000 in code) is not listed in `application.yml`. | Shared file owned by R1; the default works without it. |
+
+## Migration
+
+`V27__hiring_core_fixes.sql` (H2- and PostgreSQL-compatible): table `candidate_claim_verifications` with backfill
+(R2-H02) and `UPDATE job_requirements SET knockout = FALSE WHERE requirement_type = 'OTHER'` (R2-H01). Existing match
+runs keep their stored `knockoutsVerified` until the next match; `POST /api/v1/hr/jobs/{id}/rematch` refreshes a job.
+
+## Checker results
+
+| Check | Result |
+|---|---|
+| `python3 tools/java_static_check.py backend/src` | 603 files, 0 errors |
+| `python3 tools/check_entity_schema.py` | 488 columns of 42 entities vs 27 migrations, 0 errors, 0 warnings |
+| `python3 tools/check_migrations_pg.py` | V1-V27 applied (renumbered from V28 in the integration pass) to PostgreSQL 16 |
+| `./mvnw verify` | not run (no JDK 21 / Maven Central here) |

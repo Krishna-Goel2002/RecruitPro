@@ -79,6 +79,7 @@
   .hra-skel-tabs { display: flex; gap: var(--s-8); margin: var(--s-6) 0 var(--s-4); padding-bottom: var(--s-5); border-bottom: 1px solid var(--border-hairline); }
   .hra-tab-stack { display: grid; gap: 0; }
   .hra-list-skel { display: grid; gap: var(--s-4); }
+  .hra-disabled-reason { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s-3) var(--s-4); }
 
   /* ------------------------------------------------------------------------------------------- ranking */
   .hra-ranking { display: flex; flex-direction: column; min-width: 0; }

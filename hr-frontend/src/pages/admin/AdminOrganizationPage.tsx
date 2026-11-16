@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'
 import { qk } from '../../api/queryKeys'
 import type { Organization, OrganizationUpdate } from '../../api/types'
+import { useAuth } from '../../auth/AuthContext'
 import { ActionDialog } from '../../components/ActionDialog'
 import { DomainListInput } from '../../components/DomainListInput'
 import { InlineError, QueryError } from '../../components/QueryError'
@@ -29,6 +30,7 @@ export function AdminOrganizationPage() {
 function OrgForm({ org }: { org: Organization }) {
   const queryClient = useQueryClient()
   const { toast } = useToast()
+  const { updateUser } = useAuth()
   const saved = toForm(org)
   const [form, setForm] = useState<Form>(saved)
   const [nameError, setNameError] = useState<string | null>(null)
@@ -45,8 +47,15 @@ function OrgForm({ org }: { org: Organization }) {
 
   const save = useMutation({
     mutationFn: () => adminApi.updateOrganization(diff),
-    onSuccess: updated => {
+    onMutate: () => ({ ...diff }),
+    onSuccess: (updated, _v, sent) => {
       queryClient.setQueryData(qk.adminOrganization, updated)
+      // Blind review and sharing change what every applicant and interview view shows (names, evidence). Turning blind
+      // review ON drops the cached copies at once, so no revealed name lingers on screen while the refetch runs.
+      const views = [['applicants'], ['verification', 'application'], qk.interviews] as const
+      if (sent?.blindReview === true) views.forEach(queryKey => queryClient.removeQueries({ queryKey }))
+      else views.forEach(queryKey => void queryClient.invalidateQueries({ queryKey }))
+      if (sent?.name) updateUser({ organizationName: updated.name })
       toast({ tone: 'success', title: 'Organisation settings saved', body: 'Every change is recorded in the audit log.' })
     },
   })

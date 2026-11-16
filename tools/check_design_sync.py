@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Fail if frontend/src/design and hr-frontend/src/design (and public/theme-init.js) differ.
+"""Fail if frontend/src/design and hr-frontend/src/design (and the other shared portal files) differ.
+
+Shared byte for byte: src/design/, public/theme-init.js, and the serving setup (nginx.conf with the CSP and
+security headers, Dockerfile, .dockerignore), so a header or cache fix cannot land in one portal only.
 
 The design system is copied byte for byte between the two portals (DESIGN_SYSTEM.md §12). Workflow: change
 src/design in one portal, copy the folder to the other, run this check, then rebuild and snapshot both portals.
@@ -15,6 +18,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PAIRS = [
     ("frontend/src/design", "hr-frontend/src/design"),
     ("frontend/public/theme-init.js", "hr-frontend/public/theme-init.js"),
+    ("frontend/nginx.conf", "hr-frontend/nginx.conf"),
+    ("frontend/Dockerfile", "hr-frontend/Dockerfile"),
+    ("frontend/.dockerignore", "hr-frontend/.dockerignore"),
 ]
 PER_PORTAL: set[str] = set()
 IGNORED_PARTS = {"__pycache__", ".DS_Store"}
@@ -32,7 +38,7 @@ def main() -> int:
     problems: list[str] = []
     for a, b in PAIRS:
         pa, pb = ROOT / a, ROOT / b
-        if pa.suffix or pb.suffix:  # single file
+        if not (pa.is_dir() or pb.is_dir()):  # single file (a name without a suffix, e.g. Dockerfile, too)
             if not (pa.is_file() and pb.is_file()):
                 problems.append(f"missing: {a if not pa.is_file() else b}")
             elif not filecmp.cmp(pa, pb, shallow=False):

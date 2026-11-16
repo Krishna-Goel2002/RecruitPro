@@ -180,7 +180,9 @@ class ReferenceIntegrationTest extends VerificationIntegrationTestBase {
         }
         mvc.perform(post(BASE).with(candidate("refs@cand.test")).contentType(MediaType.APPLICATION_JSON)
                         .content(body("sixth@peer.example", true)))
-                .andExpect(status().isTooManyRequests());
+                // Integration pass (R5#3): a business limit is 409 with a code, not 429.
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.startsWith("REFERENCE_LIMIT: ")));
         Long openId = references.findAllByCandidateIdOrderByCreatedAtDescIdDesc(me.getId()).get(0).getId();
         mvc.perform(post(BASE + "/{id}/cancel", openId).with(candidate("refs@cand.test")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status", is("CANCELLED")));

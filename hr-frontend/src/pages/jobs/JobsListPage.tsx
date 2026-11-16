@@ -16,7 +16,7 @@ import { BriefcaseBusiness, Ellipsis, Icon, Plus, Search, X } from '../../design
 import { humanize } from '../../lib/format'
 import { useDebouncedValue } from '../../lib/hooks'
 import { newSince } from '../../lib/lastSeen'
-import { useSearchState } from '../../lib/useSearchState'
+import { oneOf, useClampPage, useSearchState } from '../../lib/useSearchState'
 import { useJobActions } from './jobActions'
 import './jobs.css'
 
@@ -50,7 +50,7 @@ export function JobsListPage() {
   const canExport = can('audit.jobExport')
   const navigate = useNavigate()
   const state = useSearchState()
-  const status = (state.get('status') || 'ALL') as StatusTab
+  const status = oneOf<StatusTab>(state.get('status'), TABS.map(t => t.value), 'ALL')
   const search = state.get('q')
   const page = state.getPage()
   const actions = useJobActions()
@@ -68,6 +68,7 @@ export function JobsListPage() {
 
   const params: JobListParams = { page, size: PAGE_SIZE, status: status === 'ALL' ? undefined : status, search: search || undefined, sort: 'createdAt', direction: 'DESC' }
   const list = useQuery({ queryKey: qk.jobList(params), queryFn: ({ signal }) => jobsApi.list(params, signal), placeholderData: keepPreviousData })
+  useClampPage(state, page, list.isPlaceholderData ? undefined : list.data)
 
   // API gap: no GET /jobs/stats. Six size=1 calls in parallel, cached for a minute.
   const stats = useQueries({

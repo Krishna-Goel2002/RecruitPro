@@ -37,6 +37,18 @@ public class UserTokenService {
         return raw;
     }
 
+    /** Marks every unused token of the given purposes as used (e.g. after a password change). */
+    @Transactional
+    public void invalidateOutstanding(Long userId, UserTokenPurpose... purposes) {
+        if (userId == null || purposes == null) {
+            return;
+        }
+        LocalDateTime now = UtcTime.now();
+        for (UserTokenPurpose purpose : purposes) {
+            repository.invalidateOutstanding(userId, purpose, now);
+        }
+    }
+
     /** Consumes a token and returns its (managed) user; 400 when unknown, used or expired. */
     @Transactional
     public User consume(String rawToken, UserTokenPurpose purpose) {

@@ -76,16 +76,28 @@ public class BackgroundJobWorker {
         }
     }
 
-    /** Releases stale jobs, then claims and runs one batch synchronously. Returns the number of jobs run. */
+    /**
+     * Releases stale jobs, then runs up to {@code batch-size} due jobs synchronously. Returns the number of jobs run.
+     *
+     * <p>Jobs are claimed one at a time, right before they run. Claiming the whole batch up front would leave the later
+     * jobs RUNNING (with the lock time of the batch start) while the earlier ones are still being handled: a slow batch
+     * could then be released as stale by another instance and run twice, and a shutdown or crash would strand every
+     * claimed job until the stale timeout.</p>
+     */
     public int runOnce() {
         for (BackgroundJob dead : jobService.releaseStaleJobs()) {
             notifyDeadLetter(dead.getJobType(), dead.getEntityId(), dead.getLastError());
         }
-        List<BackgroundJob> claimed = jobService.claimDue(batchSize);
-        for (BackgroundJob job : claimed) {
-            execute(job);
+        int run = 0;
+        while (run < batchSize) {
+            List<BackgroundJob> claimed = jobService.claimDue(1);
+            if (claimed.isEmpty()) {
+                break;
+            }
+            execute(claimed.get(0));
+            run++;
         }
-        return claimed.size();
+        return run;
     }
 
     public boolean hasHandler(BackgroundJobType type) {

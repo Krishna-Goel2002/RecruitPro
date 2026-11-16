@@ -1,6 +1,7 @@
 package com.recruitpro.organization.bootstrap;
 
 import com.recruitpro.auth.validation.PasswordPolicy;
+import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.organization.service.OrganizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -55,8 +57,19 @@ public class BootstrapRunner implements ApplicationRunner {
         if (!PasswordPolicy.isValid(adminPassword)) {
             throw new IllegalStateException("BOOTSTRAP_ADMIN_PASSWORD does not meet the password policy: " + PasswordPolicy.MESSAGE);
         }
-        boolean created = organizationService.bootstrapFirstOrganization(organizationName.trim(), adminEmail.trim(),
-                adminPassword, adminFirstName, adminLastName);
+        boolean created;
+        try {
+            created = organizationService.bootstrapFirstOrganization(organizationName.trim(), adminEmail.trim(),
+                    adminPassword, adminFirstName, adminLastName);
+        } catch (DataIntegrityViolationException | DuplicateResourceException ex) {
+            // R1-U7: several instances starting at once can all see "no organisation"; the losers hit a unique
+            // violation (slug or e-mail). That is not a failed start when the winner's organisation now exists.
+            if (!organizationService.anyOrganizationExists()) {
+                throw ex;
+            }
+            log.info("Bootstrap done by another instance: an organisation now exists ({})", ex.getClass().getSimpleName());
+            return;
+        }
         if (!created) {
             log.info("Bootstrap not needed: an organisation already exists");
         }

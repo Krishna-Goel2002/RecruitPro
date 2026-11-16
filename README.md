@@ -7,7 +7,17 @@ Evidence-based hiring for small and mid-sized teams. Organisations publish jobs 
 - Status, verification evidence and known limitations: [docs/plan/STATUS.md](docs/plan/STATUS.md)
 - Plans and API contracts: [IMPLEMENTATION_PLAN.md](docs/plan/IMPLEMENTATION_PLAN.md) (core), [IMPLEMENTATION_PLAN_V2.md](docs/plan/IMPLEMENTATION_PLAN_V2.md) (verification agents, MFA, SSO, platform hardening)
 
-> **Verification status (16 Nov 2026).** The core platform (commit `9ad341a`) passed `./mvnw verify` on JDK 21 (239 tests, 0 failures, 6 skipped) and started under Docker Compose on 15 Nov. The plan v2 work (commit `2fedafb`: Claim Ledger, agent-service, MFA, SSO, platform hardening) and the fixes made since **have not been compiled yet**: the Java static check, entity/schema check, migrations V1–V25 on PostgreSQL 16, the agent-service and AI-service tests and evaluations, and both portal builds pass, but `./mvnw verify` must be run on a JDK 21 machine first (guide section 4.1). Details: [STATUS.md](docs/plan/STATUS.md).
+## Branches
+
+| Branch | What it is | UI |
+|---|---|---|
+| `Kshitij` | The **demo** branch: plan v2 (Claim Ledger, agent-service, MFA, SSO, platform hardening) plus the demo patches and review fixes, migrations V1–V25 | original portals |
+| `Kshitij-redesign` | `Kshitij` plus the trust fixes (employer-domain and badge-issuer trust, V26), data-retention purge, the AI-service image with LibreOffice and OCR, compose network isolation, requirement proficiency in matching, and the **redesign of both portals** (design system, light/dark, keyboard triage, job wizard, MFA QR code) | redesigned portals |
+| `master` | the original scaffold; not used for the demo | — |
+
+The rest of this README describes `Kshitij-redesign`; where `Kshitij` differs it says so.
+
+> **Verification status (16 Nov 2026).** The core platform (commit `9ad341a`) passed `./mvnw verify` on JDK 21 (239 tests, 0 failures, 6 skipped) and started under Docker Compose on 15 Nov. **No `./mvnw verify` result has been recorded for any Java written after `9ad341a`** (plan v2 `2fedafb` and everything since, on both branches): the Java static check, the entity/schema check, the migrations on PostgreSQL 16, the agent-service and AI-service tests and evaluations, and both portal builds pass, but `./mvnw verify` must be run on a JDK 21 machine first (guide section 4.1; CI runs it on every push to both branches). The Docker images of the backend, agent-service, the new AI-service image and the redesigned portals have not been built in the authoring environment either; CI's `docker-stack` job builds and starts them. Details: [STATUS.md](docs/plan/STATUS.md).
 
 ## Quick start (Docker Compose)
 
@@ -22,12 +32,14 @@ docker compose up --build
 | Candidate portal | http://localhost:5173 |
 | HR, interviewer and admin portal | http://localhost:5174 |
 | Backend API | http://localhost:8080/api/v1 (Swagger UI: http://localhost:8080/swagger-ui.html, not in `prod`) |
-| AI service | not published (internal network, no egress): `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` |
+| AI service | not published (internal network, no egress): `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` (the same line works in PowerShell) |
 | Agent service (verification agents) | http://localhost:8100/health (127.0.0.1 only) |
 | Mailpit (every outgoing email) | http://localhost:8025 (SMTP on 1025; 127.0.0.1 only) |
 | PostgreSQL 16 (pgvector image) | not published: `docker compose exec postgres psql -U recruitpro -d recruitpro` |
 
-Networks: PostgreSQL, Mailpit, the AI service and the backend share an `internal` network without internet access; the agent service reaches the backend over its own internal network and the internet over a separate one; only the backend has general egress (SMTP, GitHub OAuth, OIDC). An LLM provider for the AI service needs `docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d`. To reach PostgreSQL from the host (e.g. a backend started with `mvnw`), add a `docker-compose.override.yml` that gives `postgres` `ports: ["127.0.0.1:5432:5432"]` and `networks: [internal, egress]`. Details: [WP-OPS-NOTES.md](docs/plan/WP-OPS-NOTES.md).
+On branch `Kshitij` the AI service (8000) and PostgreSQL (5432) are published on all interfaces and there are no network restrictions.
+
+Networks: PostgreSQL, Mailpit, the AI service and the backend share an `internal` network without internet access; the agent service reaches the backend over its own internal network and the internet over a separate one; only the backend has general egress (SMTP, GitHub OAuth, OIDC). An LLM provider for the AI service needs `docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d` (or `COMPOSE_FILE` in `.env`, see `.env.example`). The backend starts once PostgreSQL, the AI service and the agent service report healthy. To reach PostgreSQL from the host (e.g. a backend started with `mvnw`), add a `docker-compose.override.yml` that gives `postgres` `ports: ["127.0.0.1:5432:5432"]` and `networks: [internal, egress]`. Details: [WP-OPS-NOTES.md](docs/plan/WP-OPS-NOTES.md).
 
 The compose file uses development secrets. To change them, copy `.env.example` to `.env` next to `docker-compose.yml` and edit it. Data lives in the `postgres-data` and `resume-uploads` volumes; `docker compose down -v` removes them.
 
@@ -43,7 +55,20 @@ With `APP_SEED_DEMO=true` (the compose default) the backend creates the organisa
 | interviewer@acme.test | INTERVIEWER | HR portal, :5174 |
 | candidate@demo.test | CANDIDATE | Candidate portal, :5173 |
 
-Seeding is idempotent and never runs in the `prod` profile. It also creates, for "Backend Engineer (Java)", an interview kit, a work sample, Casey's application in INTERVIEWING with a scored work sample, a completed interview with a scorecard and a scheduled interview; and for verification, Acme Labs in VISIBLE mode with Casey's GitHub source `demo-asha` and shared verdicts (synthetic data; with `AGENT_DEMO_FIXTURES=true` the agent service answers `demo-*` identifiers offline). See guide section 5.
+Seeding is idempotent and never runs in the `prod` profile. It also creates, for "Backend Engineer (Java)", an interview kit, a work sample, Casey's application in INTERVIEWING with a scored work sample, a completed interview with a scorecard and a scheduled interview; and for verification, Acme Labs in VISIBLE mode with Casey's GitHub source `demo-asha` and shared verdicts (synthetic data). See guide section 5.
+
+**Offline demo identities** (agent service, `AGENT_DEMO_FIXTURES=true`; only identifiers starting with `demo-` are answered from synthetic fixtures, everything else goes to the real internet):
+
+| Kind | Identifier | Result |
+|---|---|---|
+| GitHub / GitLab user | `demo-asha` | React and TypeScript Verified, Python Partly verified |
+| GitHub user | `demo-ravi` | Java Partly verified (`FORK_ONLY`), nothing Verified |
+| Website | `https://demo-portfolio.example` | pages by "Asha Synthetica" (Verified only for a candidate of that name) |
+| Open Badges | `https://demo-badges.example/assertions/react-1`, `https://demo-badges.example/credentials/python.jwt` | issued to `asha.demo@example.com` (Contradicted for anyone else) |
+| Reference employer domain | `demo-analytics.example` ("Demo Analytics") | trusted employer domain: a confirming referee gives Verified (on `Kshitij` there is no domain-trust check, so any non-free-mail domain does) |
+| Reference employer domain | `demo-newco.example` ("Demo Newco") | registered 40 days ago: at most Partly verified (`EMPLOYER_DOMAIN_NEW`); `Kshitij-redesign` only |
+
+The guide uses a candidate account **Asha Synthetica, `asha.demo@example.com`** that you register yourself (section 5.3).
 
 **Separate sessions per portal.** Both portals can be signed in at the same time in one browser. Each sends `X-RecruitPro-Portal: candidate|staff` and gets its own refresh cookie (`rp_refresh_candidate` / `rp_refresh_staff`). A staff account cannot sign in on the candidate portal and a candidate cannot sign in on the HR portal (403 with an explanation).
 
@@ -99,66 +124,70 @@ Every variable has a development default; the full lists with comments are in [`
 | `BACKGROUND_JOBS_ENABLED`, `JOB_DEADLINE_CLOSER_ENABLED`, `WORK_SAMPLE_EXPIRY_SWEEP_ENABLED`, `NOTIFICATIONS_SENDER_ENABLED` | backend | `true` | queue worker and scheduled tasks |
 | `FILE_STORAGE_PATH` | backend | `./uploads` (compose `/data/uploads`) | resume files |
 | `LLM_PROVIDER`, `LLM_MODEL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` | AI service | `none` | optional LLM enhancement (only de-identified text is sent) |
-| `PARSE_WORKERS`, `PARSE_TIMEOUT_SECONDS`, `MAX_UPLOAD_BYTES`, `OCR_ENABLED` | AI service | `2`, `60`, 10 MiB, `false` | parsing limits; OCR needs `requirements-ocr.txt` |
+| `PARSE_WORKERS`, `PARSE_TIMEOUT_SECONDS`, `MAX_UPLOAD_BYTES`, `OCR_ENABLED` | AI service | `2`, `60`, 10 MiB, `false` | parsing limits; OCR needs `requirements-ocr.txt` (installed in the default Docker image) |
+| `RETENTION_ENABLED`, `RETENTION_CRON`, `RETENTION_AUDIT_DAYS` | backend | `true`, `0 30 3 * * *`, `730` | daily data-retention purge (`Kshitij-redesign`) |
 | `VITE_API_BASE_URL` | both portals (build time) | `http://localhost:8080/api/v1` | API base URL compiled into the bundle |
+| `API_ORIGIN` | both portal images (run time) | `http://localhost:8080` | origin of `VITE_API_BASE_URL`, written into the nginx CSP `connect-src`; change it together with `VITE_API_BASE_URL` |
 
 The refresh cookies are `SameSite=Strict` (the GitHub OAuth binding cookie is `SameSite=Lax`), so each portal and the API must be on the same site (`localhost:5173` → `localhost:8080` works; in production use e.g. `jobs.example.com`, `hr.example.com` and `api.example.com`).
 
 ## Manual setup (without Docker)
 
-Requirements: JDK 21, Node.js 22 with pnpm 10, Python 3.10–3.12, PostgreSQL 16 (Mailpit optional).
+Requirements: JDK 21, Node.js 22 with pnpm 10, Python 3.10–3.12 (CI and the images use 3.11 for the AI service and 3.12 for the agent service), PostgreSQL 16 (Mailpit optional). Windows PowerShell equivalents are given as comments; activate a venv there with `.venv\Scripts\Activate.ps1` and set variables with `$env:NAME = "value"`.
 
 1. **Database**
    ```bash
    createuser --pwprompt recruitpro      # password: recruitpro
    createdb --owner recruitpro recruitpro
    ```
-   Flyway creates the schema (V1–V25) on first start.
+   Flyway creates the schema on first start (all versioned migrations in `backend/src/main/resources/db/migration`).
 2. **AI service**
    ```bash
    cd ai-service
    python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
-   export AI_SERVICE_TOKEN=<same-secret-as-backend>
+   export AI_SERVICE_TOKEN=<same-secret-as-backend>     # PowerShell: $env:AI_SERVICE_TOKEN = "<same-secret>"
    uvicorn app.main:app --host 127.0.0.1 --port 8000
    ```
 3. **Agent service** (verification agents)
    ```bash
    cd agent-service
-   python -m venv .venv && source .venv/bin/activate
+   python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
-   export AGENT_SERVICE_TOKEN=<same-secret-as-backend> AGENT_DEMO_FIXTURES=true
+   export AGENT_SERVICE_TOKEN=<same-secret-as-backend> AGENT_DEMO_FIXTURES=true   # PowerShell: one $env:NAME = "..." per variable
    uvicorn app.main:app --host 127.0.0.1 --port 8100
    ```
 4. **Backend** (see `backend/.env.example` for every variable)
    ```bash
    cd backend
    export JWT_SECRET=<at-least-32-random-bytes> AI_SERVICE_TOKEN=<same-secret> AGENT_SERVICE_TOKEN=<same-secret> APP_ENCRYPTION_KEY=<32-bytes-base64> APP_SEED_DEMO=true
-   ./mvnw spring-boot:run          # Windows: mvnw.cmd spring-boot:run
+   ./mvnw spring-boot:run          # Windows: mvnw.cmd spring-boot:run; Linux/macOS: run `chmod +x mvnw` once (it is stored without the executable bit)
    ```
    With `MAIL_ENABLED=false` (default outside Docker) emails are not sent; verification, reset and invitation links are written to the backend log.
-5. **Portals**
+5. **Portals** (two terminals, each from the repository root; `pnpm dev` keeps running)
    ```bash
-   cd frontend && pnpm install && pnpm dev       # http://localhost:5173
-   cd hr-frontend && pnpm install && pnpm dev    # http://localhost:5174
+   cd frontend && pnpm install && pnpm dev       # terminal 1: http://localhost:5173
+   cd hr-frontend && pnpm install && pnpm dev    # terminal 2: http://localhost:5174
    ```
 
 ## Verification gates
 
-Run all of these before merging; CI (`.github/workflows/ci.yml`) runs the same set plus a smoke test that starts the backend jar on PostgreSQL 16 with the demo seed and signs in.
+Run all of these before merging. CI (`.github/workflows/ci.yml`, on every push to `master`, `main`, `Kshitij` and `Kshitij-redesign`, on pull requests, and on demand) runs the same set plus a smoke test that starts the backend jar on PostgreSQL 16 with the demo seed and signs in, a `docker compose config` check of both compose files, and a `docker-stack` job that builds every image, starts the stack and checks health, the AI service's missing egress and the portals' CSP.
 
 | Gate | Command | Status in the build environment |
 |---|---|---|
 | **G-JAVA-REAL** backend compile + unit and integration tests (H2 in PostgreSQL mode) | `cd backend && ./mvnw verify` | passed for `9ad341a` on 15 Nov 2026 (239 tests, 6 skipped); **not yet run for `2fedafb` and later** |
-| G-PY AI service tests | `cd ai-service && python -m pytest -q` | passed (178; 186 with WP-OPS on `redesign`) |
+| G-PY AI service tests | `cd ai-service && python -m pytest -q` | passed (178 on `Kshitij`, 186 on `Kshitij-redesign`) |
 | G-PY evaluation thresholds (synthetic data) | `cd ai-service && python -m eval.run --check` | passed |
-| G-AG agent service tests | `cd agent-service && python -m pytest -q` | passed (176) |
-| G-AG evaluation (false corroboration ≤ 0.02, kappa ≥ 0.70; synthetic) | `cd agent-service && python -m eval.run --check` | passed (83 cases, FCR 0.0, kappa 1.0) |
-| G-SQL migrations on a real PostgreSQL 16 | `pip install pgserver psycopg2-binary && python tools/check_migrations_pg.py` | passed (V1–V25) |
+| G-AG agent service tests | `cd agent-service && python -m pytest -q` | passed (176 on `Kshitij`, 205 on `Kshitij-redesign`) |
+| G-AG evaluation (false corroboration ≤ 0.02, kappa ≥ 0.70; synthetic) | `cd agent-service && python -m eval.run --check` | passed (83 cases on `Kshitij`, 93 on `Kshitij-redesign`; FCR 0.0, kappa 1.0) |
+| G-SQL migrations on a real PostgreSQL 16 (also refuses misnamed or duplicate migration files and Flyway placeholders; warns on version gaps) | `pip install pgserver psycopg2-binary && python tools/check_migrations_pg.py` | passed (V1–V25 on `Kshitij`, V1–V26 on `Kshitij-redesign`) |
 | Entity ↔ schema agreement | `pip install pgserver psycopg2-binary tree-sitter tree-sitter-java && python tools/check_entity_schema.py` | passed |
 | G-JAVA-STATIC syntax, imports, types | `pip install tree-sitter tree-sitter-java && python tools/java_static_check.py backend/src` | passed (0 errors) |
-| G-FE candidate portal | `cd frontend && pnpm install --frozen-lockfile && pnpm build` | passed |
-| G-FE HR portal | `cd hr-frontend && pnpm install --frozen-lockfile && pnpm build` | passed |
+| G-FE candidate portal | `cd frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | build passed |
+| G-FE HR portal | `cd hr-frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | build passed |
+| Shared portal files identical (`src/design`, `public/theme-init.js`, `nginx.conf`, `Dockerfile`, `.dockerignore`) | `python tools/check_design_sync.py` | passed (`Kshitij-redesign`) |
+| agent-service taxonomy = ai-service taxonomy | `python tools/sync_taxonomy.py --check` (without `--check` it copies) | passed |
 
 `AiLifecycleIntegrationTest` needs a running AI service and only runs with `RECRUITPRO_AI_IT=true`. The portals need pnpm 10 (`pnpm-workspace.yaml` uses pnpm 10 settings; `npx pnpm@10 …` works without a global install). Use `python -B` when running the Python tools inside the repository to avoid leaving `__pycache__` folders.
 
@@ -207,7 +236,8 @@ agent-service/  FastAPI verification agents (code, web, document, badge, referen
 frontend/       Candidate portal (Vite + React)
 hr-frontend/    HR, interviewer and administration portal (Vite + React)
 docs/           Handbook, guides (run and test), architecture, database, the implementation plans and STATUS.md
-tools/          Migration, entity/schema and Java static checks used locally and in CI
+tools/          Checks used locally and in CI (migrations, entity/schema, Java static, design sync, taxonomy sync),
+                totp.py (MFA codes for demos) and ui-snapshots/ (headless screenshot harness, Kshitij-redesign)
 audit/          Probe script for the matching defects found in the audit
 ```
 

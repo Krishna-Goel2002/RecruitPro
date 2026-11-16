@@ -89,6 +89,9 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
       setConfirmWithdraw(false)
       notify('success', 'Application withdrawn', { body: `The employer will stop considering you for ${detail.jobTitle}.` })
       void queryClient.invalidateQueries({ queryKey: queryKeys.applicationsAll })
+      // Withdrawing closes the application's open tasks too: the Overview, nav counts and task pages must not keep them.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workSamples })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.interviews })
       void queryClient.invalidateQueries({ queryKey: queryKeys.application(detail.id) }).then(focusPageHeading)
     },
   })

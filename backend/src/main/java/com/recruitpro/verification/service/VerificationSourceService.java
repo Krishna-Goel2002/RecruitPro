@@ -67,6 +67,9 @@ import java.util.zip.ZipInputStream;
 public class VerificationSourceService {
 
     public static final long MAX_DOCUMENT_BYTES = 15L * 1024 * 1024;
+    public static final int MAX_ACTIVE_SOURCES = 30;
+    /** Message code of the 409 above {@link #MAX_ACTIVE_SOURCES} (the portals parse {@code CODE: message}). */
+    public static final String SOURCE_LIMIT_CODE = "SOURCE_LIMIT";
     static final Pattern LOGIN = Pattern.compile("^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,98}[A-Za-z0-9_])?$");
     static final Set<String> DOCUMENT_EXTENSIONS = Set.of("pdf", "docx", "pptx");
     private static final int MAX_CREDENTIAL_CHARS = 100_000;
@@ -157,13 +160,14 @@ public class VerificationSourceService {
             case WEBSITE -> {
                 URI url = parseUrl(request.identifier(), "identifier must be an http(s) URL of your website");
                 source.setIdentifier(url.toString());
-                source.setDisplayLabel("Website: " + url.getHost());
+                source.setDisplayLabel(label("Website: " + url.getHost()));
             }
             case OPEN_BADGE -> badge(source, request.identifier(), request.credential());
             default -> throw new BadRequestException("Unsupported source kind");
         }
         lock(me.getId());
         requireNoDuplicate(me.getId(), kind, source.getIdentifier());
+        requireSourceCapacity(me.getId());
         LocalDateTime now = UtcTime.now();
         source.setCandidateId(me.getId());
         source.setOwnershipStatus(OwnershipStatus.UNPROVEN);
@@ -206,6 +210,7 @@ public class VerificationSourceService {
         }
         lock(me.getId());
         requireNoDuplicate(me.getId(), VerificationSourceKind.DOCUMENT, name);
+        requireSourceCapacity(me.getId());
         String key;
         try {
             key = storage.store(bytes);
@@ -301,6 +306,8 @@ public class VerificationSourceService {
     }
 
     private SourceResponse applyOwnershipResult(OwnershipTarget target, AgentModels.OwnershipCheckResponse result) {
+        // R3-B01: serialised with revoke, so a proof is never stored on a source revoked during the check.
+        lock(target.candidateId());
         VerificationSource source = activeSource(target.candidateId(), target.sourceId());
         LocalDateTime now = UtcTime.now();
         source.setOwnershipCheckedAt(now);
@@ -329,6 +336,9 @@ public class VerificationSourceService {
     @Transactional
     public void revoke(Long sourceId) {
         CandidateProfile me = profileService.getOrProvisionMine();
+        // R3-B01: the same lock as VerificationResultWriter.storeRunResult, so a run result being stored either
+        // commits first (and is then withdrawn here) or sees the source revoked.
+        lock(me.getId());
         VerificationSource source = activeSource(me.getId(), sourceId);
         List<String> files = new ArrayList<>();
         if (source.getFilePath() != null) {
@@ -388,6 +398,23 @@ public class VerificationSourceService {
 
     void lock(Long candidateId) {
         lockRepository.lockById(candidateId).orElseThrow(() -> new ResourceNotFoundException("Candidate profile not found"));
+    }
+
+    /**
+     * R3-B06: at most {@value #MAX_ACTIVE_SOURCES} connected sources per candidate (each document is stored on disk,
+     * each source can be re-run); 409 {@value #SOURCE_LIMIT_CODE} above (a business limit, integration pass R5#3:
+     * waiting does not lift it). Revoked sources do not count. Call with the candidate locked.
+     */
+    void requireSourceCapacity(Long candidateId) {
+        if (sourceRepository.countByCandidateIdAndRevokedAtIsNull(candidateId) >= MAX_ACTIVE_SOURCES) {
+            throw new DuplicateResourceException(SOURCE_LIMIT_CODE + ": You can connect at most " + MAX_ACTIVE_SOURCES
+                    + " sources. Remove one you no longer need first.");
+        }
+    }
+
+    /** A display label within the column (300 characters; R3-B08). */
+    static String label(String value) {
+        return VerificationResultWriter.limit(value, 300);
     }
 
     void requireNoDuplicate(Long candidateId, VerificationSourceKind kind, String identifier) {
@@ -487,7 +514,11 @@ public class VerificationSourceService {
         return value.toLowerCase(Locale.ROOT);
     }
 
-    /** An absolute http(s) URL without user info, at most 500 characters; scheme and host lower-cased. */
+    /**
+     * An absolute http(s) URL without user info, at most 500 characters; scheme and host lower-cased, fragment dropped.
+     * Path and query are kept exactly as given (raw, still percent-encoded: R3-B09; decoding them turned
+     * {@code %2F} into {@code /} and {@code %26} into {@code &}, i.e. a different URL).
+     */
     static URI parseUrl(String value, String message) {
         if (value == null || value.isBlank() || value.trim().length() > 500) {
             throw new BadRequestException(message);
@@ -499,8 +530,21 @@ public class VerificationSourceService {
                     || uri.getRawUserInfo() != null) {
                 throw new BadRequestException(message);
             }
-            return new URI(scheme, null, uri.getHost().toLowerCase(Locale.ROOT), uri.getPort(), uri.getPath(),
-                    uri.getQuery(), null);
+            StringBuilder normalised = new StringBuilder(scheme).append("://").append(uri.getHost().toLowerCase(Locale.ROOT));
+            if (uri.getPort() != -1) {
+                normalised.append(':').append(uri.getPort());
+            }
+            if (uri.getRawPath() != null) {
+                normalised.append(uri.getRawPath());
+            }
+            if (uri.getRawQuery() != null) {
+                normalised.append('?').append(uri.getRawQuery());
+            }
+            URI result = new URI(normalised.toString());
+            if (result.toString().length() > 500) {
+                throw new BadRequestException(message);
+            }
+            return result;
         } catch (URISyntaxException ex) {
             throw new BadRequestException(message);
         }
@@ -526,7 +570,7 @@ public class VerificationSourceService {
         } else {
             URI url = parseUrl(identifier, "identifier must be the http(s) URL of the badge assertion, or paste the credential");
             source.setIdentifier(url.toString());
-            source.setDisplayLabel("Open Badge (" + url.getHost() + ")");
+            source.setDisplayLabel(label("Open Badge (" + url.getHost() + ")"));
         }
         source.setOwnershipMethod(OwnershipMethod.ISSUER_SIGNATURE);
     }

@@ -1,7 +1,8 @@
 """HTML to text with the standard-library parser (no network, no scripts, no entity expansion beyond HTML's).
 
 Extracts: title, visible text (block elements become line breaks; script/style/template/svg/iframe skipped), hidden
-text (``hidden``, ``display:none``, ``visibility:hidden``; kept apart and only screened for injection), links,
+text (``hidden``, ``display:none``, ``visibility:hidden``, ``opacity:0``, ``font-size:0`` in an inline style; kept
+apart and only screened for injection), links,
 ``<meta>`` values, JSON-LD (``Person``, ``Organization`` names, ``CreativeWork`` family, ``author``), meta author, bylines
 (``rel=author``, ``itemprop=author``, ``class`` containing ``byline``/``author``, and "By Name" lines) and dates.
 """
@@ -22,7 +23,9 @@ _BLOCK = {"p", "div", "section", "article", "header", "footer", "main", "aside",
           "th", "table", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "dd", "dt", "dl", "figure",
           "figcaption", "address", "br", "hr", "title", "form", "fieldset", "details", "summary"}
 _BYLINE_CLASS = re.compile(r"(?:^|[\s_-])(?:byline|author|author-name|post-author|entry-author)(?:$|[\s_-])", re.I)
-_HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)
+_HIDDEN_STYLE = re.compile(r"display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)"
+                           r"|opacity\s*:\s*(?:0+(?:\.0*)?|\.0+)\s*(?:;|!|$)"
+                           r"|font-size\s*:\s*0+(?:\.0+)?(?:px|pt|em|rem|%)?\s*(?:;|!|$)", re.I)
 _BY_LINE = re.compile(r"^\s*(?:by|written by|posted by|author\s*:)\s+([A-Z][\w.'À-ɏ-]+"
                       r"(?:\s+[A-Z][\w.'À-ɏ-]+){0,3})\s*(?:[,|·•-].*)?$")
 ORGANIZATION_TYPES = {"organization", "corporation", "localbusiness", "educationalorganization", "collegeoruniversity",

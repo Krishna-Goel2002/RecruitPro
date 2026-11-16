@@ -9,8 +9,19 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏  ﻿]")
-_BULLET_RE = re.compile(r"^(?:[•▪●◦‣∙·○■□➢➤►▶✓✔❖♦◆*\-–—>]+|\d{1,2}[.)])\s+")
+_CONTROL_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f\u2028\u2029]")
+# Invisible format characters are removed outright (not turned into spaces), so "Py\u00adthon" or
+# "Py\u200bthon" still reads as "Python": soft hyphen, zero-width space/joiners, LRM/RLM, bidi
+# embeddings/overrides/isolates, word joiner and invisible operators, BOM.
+_INVISIBLE_RE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+# Bullets: common symbols (with or without a following space), Word's private-use bullet glyphs
+# (U+F0A7, U+F0B7, ... as extracted from PDFs), ASCII markers and "1." / "2)" numbering; a lone "o"
+# (Word's second-level bullet) only before a capitalised word.
+_BULLET_RE = re.compile(
+    "^(?:[\u2022\u25aa\u25cf\u25e6\u2023\u2219\u00b7\u25cb\u25a0\u25a1\u27a2\u27a4\u25ba\u25b6\u2713\u2714"
+    "\u2756\u2666\u25c6\u2043\u25b8\u25b9\u2794\u2192\ue000-\uf8ff]+\\s*"
+    "|(?:[*\\-\u2013\u2014>]+|\\d{1,2}[.)])\\s+|o\\s+(?=[A-Z]))"
+)
 
 
 @dataclass(frozen=True)
@@ -45,7 +56,7 @@ class Line:
 
 
 def normalize_text(value: str) -> str:
-    value = unicodedata.normalize("NFKC", value)
+    value = unicodedata.normalize("NFKC", _INVISIBLE_RE.sub("", value))
     value = _CONTROL_RE.sub(" ", value.replace(" ", " ").replace("\t", " "))
     return " ".join(value.split())
 
@@ -97,12 +108,14 @@ def stem(word: str) -> str:
     for prefix in _PREFIX_STEMS:
         if word.startswith(prefix):
             return prefix
-    for _ in range(2):
-        if word.endswith("ies") and len(word) > 4:
+    for iteration in range(2):
+        # Plural endings are only stripped once, before suffixes: a second pass would turn the
+        # "nurs" of "nursing" into "nur" while "nurse" stays "nurs".
+        if iteration == 0 and word.endswith("ies") and len(word) > 4:
             word = word[:-3] + "y"
-        elif _SIBILANT_PLURAL_RE.search(word):
+        elif iteration == 0 and _SIBILANT_PLURAL_RE.search(word):
             word = word[:-2]
-        elif word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+        elif iteration == 0 and word.endswith("s") and not word.endswith("ss") and len(word) > 3:
             word = word[:-1]
         for suffix in _SUFFIXES:
             if word.endswith(suffix) and len(word) - len(suffix) >= 3:

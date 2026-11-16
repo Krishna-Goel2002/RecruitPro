@@ -16,6 +16,9 @@ public interface VerificationSourceRepository extends JpaRepository<Verification
 
     List<VerificationSource> findAllByCandidateIdAndKindAndRevokedAtIsNull(Long candidateId, VerificationSourceKind kind);
 
+    /** Active (non-revoked) sources of a candidate (R3-B06 cap). */
+    long countByCandidateIdAndRevokedAtIsNull(Long candidateId);
+
     Optional<VerificationSource> findByIdAndCandidateId(Long id, Long candidateId);
 
     List<VerificationSource> findAllByCandidateIdOrderByIdAsc(Long candidateId);

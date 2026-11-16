@@ -44,7 +44,7 @@ public class WebConfig {
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         // X-RecruitPro-Portal selects the per-portal refresh cookie (auth.web.Portal).
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "Accept", "X-Requested-With", Portal.HEADER));
-        config.setExposedHeaders(List.of("Content-Disposition", "Retry-After"));
+        config.setExposedHeaders(List.of("Content-Disposition", "Retry-After", "X-Export-Truncated"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

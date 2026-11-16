@@ -5,6 +5,7 @@ import com.recruitpro.candidate.entity.CandidateProfile;
 import com.recruitpro.candidate.repository.CandidateProfileRepository;
 import com.recruitpro.candidate.service.CandidateProfileService;
 import com.recruitpro.common.crypto.SecretCipher;
+import com.recruitpro.common.exception.TooManyRequestsException;
 import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.verification.client.GitHubOAuthClient;
@@ -89,6 +90,25 @@ public class GitHubOAuthService {
         this.candidateUrl = candidateUrl.endsWith("/") ? candidateUrl.substring(0, candidateUrl.length() - 1) : candidateUrl;
     }
 
+    /**
+     * R3-B18 (integration pass): every {@code start} stores a state row, so a candidate may start at most
+     * {@value #MAX_STARTS_PER_HOUR} connections an hour (429 with Retry-After). Counted in the database (rows live a
+     * day past their expiry), under the candidate lock, so it holds across instances and is testable.
+     */
+    public static final int MAX_STARTS_PER_HOUR = 20;
+
+    private void requireStartCapacity(Long candidateId) {
+        sourceService.lock(candidateId);
+        LocalDateTime now = UtcTime.now();
+        LocalDateTime windowStart = now.minusHours(1);
+        if (stateRepository.countByCandidateIdAndCreatedAtAfter(candidateId, windowStart) >= MAX_STARTS_PER_HOUR) {
+            LocalDateTime oldest = stateRepository.findFirstByCandidateIdAndCreatedAtAfterOrderByCreatedAtAsc(candidateId,
+                    windowStart).map(VerificationOAuthState::getCreatedAt).orElse(null);
+            throw new TooManyRequestsException("You started connecting GitHub too often. Please try again later.",
+                    PublicEndpointRateLimiter.secondsUntilFree(oldest, java.time.Duration.ofHours(1), now));
+        }
+    }
+
     /** Result of {@link #start()}: the response body and the browser-binding nonce for the httpOnly cookie. */
     public record StartResult(OAuthStartResponse response, String browserNonce) {
     }
@@ -105,6 +125,7 @@ public class GitHubOAuthService {
                     NOT_CONFIGURED + ": connecting GitHub is not configured on this server");
         }
         CandidateProfile me = profileService.getOrProvisionMine();
+        requireStartCapacity(me.getId());
         String state = randomToken();
         String browserNonce = randomToken();
         String verifier = randomToken() + randomToken();
@@ -168,6 +189,10 @@ public class GitHubOAuthService {
             user = client.fetchUser(accessToken);
         } catch (RestClientException ex) {
             log.warn("GitHub OAuth exchange failed: {}", ex.getClass().getSimpleName());
+            return errorRedirect("GITHUB_UNAVAILABLE");
+        } catch (RuntimeException ex) {
+            // R3-B21: anything else (an unexpected answer, a client bug) still ends in a redirect, not a 500 page.
+            log.warn("GitHub OAuth exchange failed unexpectedly: {}", ex.getClass().getSimpleName());
             return errorRedirect("GITHUB_UNAVAILABLE");
         }
         if (user == null || user.login() == null || !VerificationSourceService.LOGIN.matcher(user.login()).matches()) {
@@ -301,6 +326,11 @@ public class GitHubOAuthService {
     /** Redirect used when the callback is rate-limited. */
     public String rateLimitedRedirect() {
         return errorRedirect("RATE_LIMITED");
+    }
+
+    /** Redirect used when the callback failed unexpectedly (e.g. the database was unavailable). */
+    public String failedRedirect() {
+        return errorRedirect("CONNECT_FAILED");
     }
 
     private String errorRedirect(String code) {

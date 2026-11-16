@@ -6,6 +6,7 @@ import com.recruitpro.application.entity.ApplicationDecisionHistory;
 import com.recruitpro.application.entity.ApplicationStatus;
 import com.recruitpro.application.repository.ApplicationDecisionHistoryRepository;
 import com.recruitpro.application.repository.ApplicationRepository;
+import com.recruitpro.application.service.CandidateDepartures;
 import com.recruitpro.assessment.entity.WorkSampleAssignment;
 import com.recruitpro.assessment.entity.WorkSampleAssignmentStatus;
 import com.recruitpro.assessment.repository.WorkSampleAssignmentRepository;
@@ -116,6 +117,14 @@ public class CandidateAccountDeletionService {
         this.workSampleFileService = workSampleFileService;
     }
 
+    /** R2-M01: cancels what is still open for each application (interviewer told; setter-injected like above). */
+    private CandidateDepartures departures;
+
+    @Autowired
+    public void setDepartures(CandidateDepartures departures) {
+        this.departures = departures;
+    }
+
     public CandidateAccountDeletionService(SecurityUtils securityUtils, UserRepository userRepository,
                                            CandidateProfileRepository profileRepository, PasswordEncoder passwordEncoder,
                                            ResumeRepository resumeRepository, ResumeAnalysisRepository analysisRepository,
@@ -182,6 +191,11 @@ public class CandidateAccountDeletionService {
                     counts.withdrawn++;
                 }
                 application.setCoverLetter(null);
+                if (departures != null) {
+                    // Scheduled interviews are cancelled (the interviewer gets an ICS cancellation; the candidate is
+                    // not contacted) and unfinished work samples cancelled with a reason, for every application.
+                    departures.candidateLeft(application, true);
+                }
             }
             for (WorkSampleAssignment assignment : assignmentRepository.findAllForCandidate(candidateId)) {
                 assignment.setResponseText(null);
@@ -192,7 +206,11 @@ public class CandidateAccountDeletionService {
                 }
                 if (assignment.getStatus() == WorkSampleAssignmentStatus.ASSIGNED
                         || assignment.getStatus() == WorkSampleAssignmentStatus.STARTED) {
+                    // Normally already cancelled by the departure listener; kept as a safety net.
                     assignment.setStatus(WorkSampleAssignmentStatus.CANCELLED);
+                    if (assignment.getCancelledAt() == null) {
+                        assignment.setCancelledAt(now);
+                    }
                 }
             }
             for (Interview interview : interviewRepository.findAllForCandidate(candidateId)) {

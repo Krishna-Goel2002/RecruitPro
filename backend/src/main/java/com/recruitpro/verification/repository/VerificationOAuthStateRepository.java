@@ -14,6 +14,13 @@ public interface VerificationOAuthStateRepository extends JpaRepository<Verifica
 
     Optional<VerificationOAuthState> findByStateHash(String stateHash);
 
+    /** States the candidate started since {@code after} (R3-B18: per-candidate limit of {@code start}). */
+    long countByCandidateIdAndCreatedAtAfter(Long candidateId, LocalDateTime after);
+
+    /** The oldest of those (its age gives the Retry-After). */
+    Optional<VerificationOAuthState> findFirstByCandidateIdAndCreatedAtAfterOrderByCreatedAtAsc(Long candidateId,
+                                                                                              LocalDateTime after);
+
     /** Single use: only the first caller marks the state used (returns 1). */
     @Transactional
     @Modifying(flushAutomatically = true, clearAutomatically = true)

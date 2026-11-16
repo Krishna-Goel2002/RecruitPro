@@ -2,6 +2,8 @@ package com.recruitpro.organization.service;
 
 import com.recruitpro.audit.service.AuditActions;
 import com.recruitpro.audit.service.AuditService;
+import com.recruitpro.auth.mfa.MfaService;
+import com.recruitpro.auth.mfa.dto.MfaChallengeResponse;
 import com.recruitpro.auth.service.AuthService;
 import com.recruitpro.auth.service.AuthSession;
 import com.recruitpro.auth.service.TokenHashing;
@@ -36,6 +38,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -54,6 +57,7 @@ public class InvitationService {
     private final UserRepository userRepository;
     private final UserAccountService userAccountService;
     private final AuthService authService;
+    private final MfaService mfaService;
     private final NotificationService notificationService;
     private final AuditService auditService;
     private final SecurityUtils securityUtils;
@@ -63,7 +67,7 @@ public class InvitationService {
 
     public InvitationService(InvitationRepository invitationRepository, OrganizationRepository organizationRepository,
                              UserRepository userRepository, UserAccountService userAccountService,
-                             AuthService authService, NotificationService notificationService,
+                             AuthService authService, MfaService mfaService, NotificationService notificationService,
                              AuditService auditService, SecurityUtils securityUtils,
                              @Value("${app.invitations.ttl-days:7}") long ttlDays,
                              @Value("${app.invitations.expose-link:false}") boolean exposeLink,
@@ -73,6 +77,7 @@ public class InvitationService {
         this.userRepository = userRepository;
         this.userAccountService = userAccountService;
         this.authService = authService;
+        this.mfaService = mfaService;
         this.notificationService = notificationService;
         this.auditService = auditService;
         this.securityUtils = securityUtils;
@@ -162,7 +167,11 @@ public class InvitationService {
                 invitation.getExpiresAt());
     }
 
-    /** POST /api/v1/auth/accept-invite: creates the staff account and signs it in. */
+    /**
+     * POST /api/v1/auth/accept-invite: creates the staff account and signs it in. When the organisation requires staff
+     * MFA, the sign-in stops at the enrolment challenge exactly like {@code /auth/login} (no session, no cookie); the
+     * client enrols with the returned {@code mfaToken}.
+     */
     @Transactional
     public AuthSession accept(AcceptInvitationRequest request) {
         Invitation invitation = findPending(request.token(), true);
@@ -176,6 +185,10 @@ public class InvitationService {
         auditService.recordFor(invitation.getOrganizationId(), user.getId(), user.getEmail(),
                 AuditActions.INVITATION_ACCEPTED, "INVITATION", String.valueOf(invitation.getId()),
                 "Joined as " + invitation.getRole());
+        Optional<MfaChallengeResponse> challenge = mfaService.challengeFor(user);
+        if (challenge.isPresent()) {
+            return AuthSession.challenge(challenge.get());
+        }
         return authService.createSession(user);
     }
 

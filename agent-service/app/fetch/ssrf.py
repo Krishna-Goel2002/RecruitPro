@@ -28,9 +28,10 @@ _BLOCKED_SUFFIXES = (".localhost", ".local", ".internal", ".localdomain", ".home
 _EXTRA_BLOCKED = tuple(ipaddress.ip_network(net) for net in (
     "0.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15",
     "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
-    "::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8", "fd00:ec2::254/128", "64:ff9b::/96", "64:ff9b:1::/48",
-    "2001:db8::/32", "100::/64",
+    "::/128", "::1/128", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8", "fd00:ec2::254/128", "64:ff9b::/96",
+    "64:ff9b:1::/48", "2001:db8::/32", "100::/64",
 ))
+_CONTROL_CHARS = frozenset(chr(code) for code in range(0x20)) | {"\x7f"}
 
 
 class FetchError(Exception):
@@ -86,6 +87,8 @@ def system_resolver(host: str) -> list[str]:
 
 def parse_url(url: str) -> tuple[SplitResult, str, int]:
     """Validate scheme, port, user-info and host name; return (parts, host, port)."""
+    if any(char in _CONTROL_CHARS for char in url.strip()):
+        raise BlockedUrlError("malformed URL")
     try:
         parts = urlsplit(url.strip())
         port = parts.port
@@ -103,15 +106,16 @@ def parse_url(url: str) -> tuple[SplitResult, str, int]:
         port = 443 if scheme == "https" else 80
     if port not in ALLOWED_PORTS:
         raise BlockedUrlError("only ports 80 and 443 are allowed")
-    if host in _BLOCKED_NAMES or host.endswith(_BLOCKED_SUFFIXES):
-        raise BlockedUrlError("internal host names are not allowed")
     try:
         host.encode("ascii")
     except UnicodeEncodeError:
         try:
-            host = host.encode("idna").decode("ascii")
+            host = host.encode("idna").decode("ascii").lower().rstrip(".")
         except UnicodeError as exc:
             raise BlockedUrlError("invalid host name") from exc
+    # Checked after IDNA normalisation: "ｌｏｃａｌｈｏｓｔ" or "x.ｉｎｔｅｒｎａｌ" become the blocked ASCII names.
+    if host in _BLOCKED_NAMES or host.endswith(_BLOCKED_SUFFIXES):
+        raise BlockedUrlError("internal host names are not allowed")
     return parts, host, port
 
 

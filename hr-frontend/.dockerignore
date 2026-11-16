@@ -1,5 +1,10 @@
 node_modules/
 dist/
+.pnpm-store/
+coverage/
+*.tsbuildinfo
 .env
 .env.*
 *.log
+Dockerfile
+.dockerignore

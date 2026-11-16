@@ -19,7 +19,11 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
                 r"hiring\s+(?:manager|assistant)|screening\s+(?:tool|system|bot))\b", re.I), "role reassignment"),
     (re.compile(r"\b(?:rank|rate|score|mark|place|list|put)\s+(?:this|me|this\s+(?:candidate|applicant|resume|cv))\s+(?:as\s+|at\s+(?:the\s+)?)?"
                 r"(?:first|highest|top|#?\s?1|number\s+one|best|10\s*/\s*10|100\s*%?)", re.I), "ranking manipulation"),
-    (re.compile(r"\bsystem\s+prompt\b|\bprompt\s+injection\b|<\s*/?\s*(?:system|assistant|instructions?)\s*>|\[\s*/?\s*(?:system|inst)\s*\]", re.I),
+    # Visible text: only a command about the prompt or a chat-template tag. AI and security professionals
+    # legitimately write "designed system prompts" or "tested apps for prompt injection" (bug hunt R4).
+    (re.compile(r"\b(?:reveal|print|show|output|repeat|disclose|leak|ignore|override|forget|change)\s+(?:your|the|this)\s+"
+                r"(?:system\s+)?(?:prompt|instructions)\b|<\s*/?\s*(?:system|assistant|instructions?)\s*>|"
+                r"\[\s*/?\s*(?:system|inst)\s*\]|<\|im_(?:start|end)\|>", re.I),
      "system prompt reference"),
     (re.compile(r"\b(?:this|the)\s+(?:candidate|applicant)\s+(?:is|should\s+be\s+(?:considered|treated\s+as))\s+(?:a\s+|an\s+)?"
                 r"(?:perfect|ideal|excellent|exceptional)\s+(?:match|fit|hire)", re.I), "instruction to the screener"),
@@ -29,13 +33,15 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
                 r"(?:you\s+(?:must|should|will)|ignore|rank|rate|score|recommend|shortlist)\b", re.I), "instruction to an AI model"),
 )
 _STUFFING_THRESHOLD = 3
+# Hidden text has no legitimate reason to talk about prompts at all.
+_HIDDEN_ONLY = ((re.compile(r"\bsystem\s+prompts?\b|\bprompt\s+injection\b", re.I), "system prompt reference"),)
 
 
 def screen(visible_text: str, hidden_text: str) -> list[Flag]:
     """Return a PROMPT_INJECTION_SUSPECTED flag when instruction-like or stuffed text is present."""
     reasons: list[str] = []
-    for label, text in (("visible text", visible_text), ("hidden text", hidden_text)):
-        kinds = sorted({kind for pattern, kind in _PATTERNS if pattern.search(text)})
+    for label, text, patterns in (("visible text", visible_text, _PATTERNS), ("hidden text", hidden_text, _PATTERNS + _HIDDEN_ONLY)):
+        kinds = sorted({kind for pattern, kind in patterns if pattern.search(text)})
         if kinds:
             reasons.append(f"{', '.join(kinds)} in {label}")
     if hidden_text:

@@ -30,6 +30,7 @@ import com.recruitpro.verification.entity.VerificationSource;
 import com.recruitpro.verification.entity.VerificationSourceKind;
 import com.recruitpro.verification.repository.ClaimVerdictRepository;
 import com.recruitpro.verification.repository.EvidenceItemRepository;
+import com.recruitpro.verification.repository.VerificationCandidateLockRepository;
 import com.recruitpro.verification.repository.VerificationReferenceRequestRepository;
 import com.recruitpro.verification.repository.VerificationRunRepository;
 import com.recruitpro.verification.repository.VerificationSourceRepository;
@@ -93,6 +94,7 @@ public class VerificationResultWriter {
     private final VerificationViews views;
     private final NotificationService notificationService;
     private final MatchTriggerService matchTriggerService;
+    private final VerificationCandidateLockRepository lockRepository;
     private final String candidateUrl;
 
     public VerificationResultWriter(VerificationRunRepository runRepository, VerificationSourceRepository sourceRepository,
@@ -101,6 +103,7 @@ public class VerificationResultWriter {
                                     CandidateProfileRepository profileRepository, VerificationSubjects subjects,
                                     VerificationStorage storage, VerificationViews views,
                                     NotificationService notificationService, MatchTriggerService matchTriggerService,
+                                    VerificationCandidateLockRepository lockRepository,
                                     @Value("${app.frontend.candidate-url:http://localhost:5173}") String candidateUrl) {
         this.runRepository = runRepository;
         this.sourceRepository = sourceRepository;
@@ -113,6 +116,7 @@ public class VerificationResultWriter {
         this.views = views;
         this.notificationService = notificationService;
         this.matchTriggerService = matchTriggerService;
+        this.lockRepository = lockRepository;
         this.candidateUrl = trimSlash(candidateUrl);
     }
 
@@ -124,6 +128,13 @@ public class VerificationResultWriter {
 
     @Transactional
     public Outcome storeRunResult(long runId, AgentModels.VerifyResponse response) {
+        Long candidateId = runRepository.findCandidateIdById(runId).orElse(null);
+        if (candidateId == null) {
+            return new Outcome(false, 0, "RUN_NOT_ACTIVE");
+        }
+        // R3-B01: serialised with revoke (which takes the same lock), so a source revoked while the agent was working
+        // is seen as revoked here and nothing is stored for it; read the run and source only after the lock.
+        lockRepository.lockById(candidateId);
         VerificationRun run = runRepository.findById(runId).orElse(null);
         if (run == null || !run.isActive()) {
             return new Outcome(false, 0, "RUN_NOT_ACTIVE");
@@ -149,13 +160,19 @@ public class VerificationResultWriter {
         boolean rematch = false;
         int stored = 0;
         Set<String> seen = new HashSet<>();
+        boolean codeHost = source.getKind() == VerificationSourceKind.GITHUB || source.getKind() == VerificationSourceKind.GITLAB;
         for (AgentModels.Verdict draft : response.verdicts() == null ? List.<AgentModels.Verdict>of() : response.verdicts()) {
-            if (draft == null || draft.claimId() == null || !seen.add(draft.claimId())) {
+            // R3-B15: one verdict per subject (ids compared trimmed, as they are looked up).
+            if (draft == null || draft.claimId() == null || !seen.add(draft.claimId().trim())) {
                 continue;
             }
             VerificationSubjects.Subject subject = current.get(draft.claimId().trim());
             VerdictValue value = VerdictValue.parse(draft.verdict());
             if (subject == null || value == null) {
+                continue;
+            }
+            // Code hosts are only sent SKILL subjects (VerificationRunService.claim): anything else was never asked.
+            if (codeHost && subject.claimType() != ClaimType.SKILL) {
                 continue;
             }
             boolean ownershipProven = switch (source.getKind()) {
@@ -373,6 +390,11 @@ public class VerificationResultWriter {
         } catch (IOException ex) {
             storage.deleteQuietly(written);
             throw new UncheckedIOException("Evidence snapshot could not be stored", ex);
+        } catch (RuntimeException ex) {
+            // R3-B10: a failing insert must not leave the snapshots already written behind (the rollback hook below
+            // is only registered once every item is stored).
+            storage.deleteQuietly(written);
+            throw ex;
         }
         storage.deleteOnRollback(written);
         return ids;

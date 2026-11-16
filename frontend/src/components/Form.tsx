@@ -66,7 +66,17 @@ export function fieldErrorMap(errors: { field: string; message: string }[]): Rec
   return map
 }
 
-/** After a failed submit, move focus to the first invalid control of `form` (WCAG 3.3.1). */
+const FOCUSABLE = 'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]'
+
+/**
+ * After a failed submit, move focus to the first invalid control of `form` (WCAG 3.3.1). A group marked invalid
+ * (a `<fieldset aria-invalid>` of checkboxes) is not focusable itself, so focus goes to its first control.
+ */
 export function focusFirstInvalid(form: HTMLElement | null) {
-  window.setTimeout(() => form?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0)
+  window.setTimeout(() => {
+    const invalid = form?.querySelector<HTMLElement>('[aria-invalid="true"]')
+    if (!invalid) return
+    const target = invalid.matches(FOCUSABLE) ? invalid : invalid.querySelector<HTMLElement>(FOCUSABLE)
+    ;(target ?? invalid).focus()
+  }, 0)
 }

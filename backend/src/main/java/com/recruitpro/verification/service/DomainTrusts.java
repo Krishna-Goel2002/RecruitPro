@@ -82,14 +82,16 @@ public final class DomainTrusts {
     }
 
     /**
-     * The verdict as it counts for an organisation: the stored verdict, except that a PARTLY_VERIFIED verdict capped
-     * only by domain trust ({@code cappedFrom = VERIFIED}) is VERIFIED when the organisation lists the domain.
+     * The verdict as it counts for an organisation: the stored verdict, except that a PARTLY_VERIFIED verdict with
+     * proven ownership, capped only by domain trust ({@code cappedFrom = VERIFIED}), is VERIFIED when the organisation
+     * lists the domain.
      */
     public static VerdictValue effectiveVerdict(ClaimVerdict verdict, VerificationSettingsService.Effective settings) {
         if (verdict == null) {
             return null;
         }
-        if (verdict.getVerdict() != VerdictValue.PARTLY_VERIFIED) {
+        // R3-B16: an organisation's trusted domain lifts only the domain cap, never the ownership cap (principle 2).
+        if (verdict.getVerdict() != VerdictValue.PARTLY_VERIFIED || !verdict.isOwnershipProven()) {
             return verdict.getVerdict();
         }
         JsonNode trust = read(verdict);

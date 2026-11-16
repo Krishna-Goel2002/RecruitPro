@@ -77,11 +77,11 @@ function Overview({ data }: { data: AdminDashboard }) {
       <section className="adm-section" aria-labelledby="cnt-h">
         <h2 id="cnt-h" className="t-h2">In your organisation</h2>
         <StatRow className="adm-stats">
-          <Stat label="Staff" value={data.totalHrUsers} format={formatNumber} />
+          <Stat label="Staff accounts" value={data.totalUsers} format={formatNumber} />
           <Stat label="Jobs" value={data.totalJobs} format={formatNumber} />
           <Stat label="Applications" value={data.totalApplications} format={formatNumber} />
           <Stat label="Applications, last 7 days" value={data.recentApplicationsCount} format={formatNumber} />
-          <Stat label="Candidates on the platform" value={data.totalCandidates} format={formatNumber} />
+          <Stat label="Candidates who applied" value={data.totalCandidates} format={formatNumber} />
         </StatRow>
       </section>
 

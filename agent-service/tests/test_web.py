@@ -126,3 +126,20 @@ def test_start_page_errors_are_reported(client, fake_net):
     fake_net.pages[f"{SITE}/robots.txt"] = FakePage("User-agent: *\nDisallow: /\n", "text/plain")
     response = client.post("/api/v1/verify/web", headers=HEADERS, json={"url": f"{SITE}/", "claims": []})
     assert response.status_code == 422 and response.json()["detail"]["code"] == "ROBOTS_DISALLOWED"
+
+
+def test_text_hidden_with_opacity_or_zero_font_size_never_counts():
+    page = extract_html("<p>Hi</p><span style='opacity:0'>Haskell expert</span><b style='font-size: 0px;'>OCaml</b>"
+                        "<i style='opacity: 0.5'>Elm</i><u style='font-size:0.9em'>Zig</u>")
+    assert "Haskell expert" in page.hidden_text and "OCaml" in page.hidden_text
+    assert "Haskell" not in page.text and "OCaml" not in page.text
+    assert "Elm" in page.text and "Zig" in page.text
+
+
+def test_a_broken_pdf_on_the_site_is_skipped_not_a_server_error(client, fake_net):
+    from tests.test_document import _looping_pdf
+
+    pages = {f"{SITE}/": _page("<p>Rust</p><a href='/cv.pdf'>cv</a>", PERSON),
+             f"{SITE}/cv.pdf": FakePage(_looping_pdf(), "application/pdf")}
+    data = _post(client, fake_net, pages, [("SKILL", "Rust")])
+    assert data["verdicts"][0]["verdict"] == "VERIFIED" and len(data["evidence"]) == 2

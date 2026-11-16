@@ -8,8 +8,8 @@ and reports the highest tier at which the requirement is still MATCHED. Coverage
 * ``verifiedCoverage`` - weighted share of requirements MATCHED at tier >= RESUME_STATED (the score);
 * ``claimedCoverage``  - weighted share MATCHED at any tier, candidate claims included.
 
-Weights: must-have 2, nice-to-have 1. OTHER requirements need human review: always NOT_OBSERVED
-and excluded from the denominator. Candidate edits arrive as separate ``claim:*`` facts at
+Weights: must-have 2, nice-to-have 1. OTHER requirements need human review: NOT_OBSERVED unless a linked
+work-sample / interview rating exists (then MATCHED for display), always excluded from the denominator. Candidate edits arrive as separate ``claim:*`` facts at
 SELF_CLAIMED, so they raise claimed coverage only (finding C1). Work-sample (``ws:N:rM``) and
 interview (``iv:N:rM``) facts are linked to requirement M and satisfy it directly.
 
@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 
-from app.matching.certifications import certification_tokens, split_certification_options
+from app.matching.certifications import certification_tokens, partial_stages, split_certification_options
 from app.models.common import TIER_ORDER, tier_rank
 from app.models.matching import (
     BatchMatchRequest, BatchMatchResponse, CandidateMatch, MatchFact, MatchRequest, MatchRequirement, MatchResponse,
@@ -44,7 +44,9 @@ SCORE_LABEL = "Verified requirement evidence coverage (not a probability of succ
 RESUME_RANK = tier_rank("RESUME_STATED")
 _STATUS_RANK = {"NOT_OBSERVED": 0, "UNCLEAR": 1, "MATCHED": 2}
 _LINKED_RE = re.compile(r"^(?:ws|iv):\d+:r(\d+)$")
-_YEARS_PHRASE_RE = re.compile(r"\b(?:minimum|min\.?|at\s+least|over)?\s*\d{1,2}(?:\.\d)?\s*\+?\s*(?:-|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)\b(?:\s+of)?", re.I)
+_YEARS_PHRASE_RE = re.compile(r"\b(?:minimum|min\.?|at\s+least|over)?\s*(?:\d{1,2}(?:\.\d)?|one|two|three|four|five|six|seven|"
+                              r"eight|nine|ten|twelve|fifteen)\s*\+?\s*(?:-|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)\b(?:\s+of)?",
+                              re.I)
 _GENERIC_TOPIC = frozenset(content_tokens(
     "background track record proven demonstrated role roles position domain area total overall combined post "
     "qualification hands-on practical prior previous similar capacity environment setting"
@@ -91,7 +93,7 @@ class _Role:
     skills: frozenset[str]
     tokens: frozenset[str]
     label: str
-    head: str | None  # stemmed last word of the title: "Mathematics Teacher" -> "teach"
+    heads: frozenset[str]  # stemmed title words (+ implied field): "PGT Mathematics" -> {pgt, mathemat, teach}
 
 
 @dataclass(frozen=True)
@@ -147,7 +149,14 @@ def _ordinal(value: object, *, is_end: bool) -> int | None:
     if not match:
         return None
     month = int(match.group(2)) if match.group(2) else (6 if is_end else 7)
+    if not 1 <= month <= 12:
+        return None  # "2019-13" or "2021-00" is not a month
     return int(match.group(1)) * 12 + month - 1
+
+
+def _positive_months(value: object) -> int | None:
+    """A month count from fact attributes or the timeline: a positive int (never a bool or a negative)."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= 1200 else None
 
 
 def _interval(start: object, end: object, current: bool, months: int | None, today: date) -> tuple[int, int] | None:
@@ -169,31 +178,44 @@ def _build_roles(facts: list[_Fact], timeline: Timeline | None, today: date) -> 
         attributes = fact.raw.attributes or {}
         if fact.raw.type != "EXPERIENCE" or fact.origin != "fact" or not ("months" in attributes or "startDate" in attributes):
             continue
-        months = attributes.get("months") if isinstance(attributes.get("months"), int) else None
-        interval = _interval(attributes.get("startDate"), attributes.get("endDate"), bool(attributes.get("current")), months, today)
+        months = _positive_months(attributes.get("months"))
+        interval = _interval(attributes.get("startDate"), attributes.get("endDate"), attributes.get("current") is True, months, today)
         skills = set(fact.skills)
         for index, role in enumerate(timeline_roles):
-            if index not in used_timeline and role.startDate == attributes.get("startDate") and role.months == months \
+            if index not in used_timeline and role.startDate == attributes.get("startDate") and _positive_months(role.months) == months \
                     and (role.title or None) == (attributes.get("title") or None):
                 used_timeline.add(index)
                 skills.update(skill.id for name in role.skills if (skill := taxonomy.lookup(name)))
                 break
         roles.append(_Role(fact, fact.rank, interval, months if months else (interval[1] - interval[0] + 1 if interval else None),
-                           frozenset(skills), fact.text_tokens, fact.raw.value, _head(attributes.get("title"))))
+                           frozenset(skills), fact.text_tokens, fact.raw.value, _heads(attributes.get("title"))))
     for index, role in enumerate(timeline_roles):
         if index in used_timeline:
             continue
         skills = frozenset(skill.id for name in role.skills if (skill := taxonomy.lookup(name)))
         label = ", ".join(part for part in (role.title, role.employer) if part) or "role"
         tokens = frozenset(content_tokens(" ".join([role.title or "", role.employer or "", *role.skills])))
-        roles.append(_Role(None, RESUME_RANK, _interval(role.startDate, role.endDate, role.current, role.months, today),
-                           role.months, skills, tokens, label, _head(role.title)))
+        months = _positive_months(role.months)
+        roles.append(_Role(None, RESUME_RANK, _interval(role.startDate, role.endDate, role.current, months, today),
+                           months, skills, tokens, label, _heads(role.title)))
     return roles
 
 
-def _head(title: object) -> str | None:
+# Titles that name a practitioner without the field's own word ("PGT Mathematics" is a teacher).
+_PRACTITIONER_SYNONYMS = {stem(title): stem(field) for title, field in (
+    ("pgt", "teaching"), ("tgt", "teaching"), ("prt", "teaching"), ("lecturer", "teaching"), ("professor", "teaching"),
+    ("tutor", "teaching"), ("faculty", "teaching"), ("educator", "teaching"), ("instructor", "teaching"),
+    ("headmaster", "teaching"), ("headmistress", "teaching"), ("midwife", "nursing"), ("salesperson", "sales"),
+    ("salesman", "sales"), ("saleswoman", "sales"), ("bde", "sales"), ("bdm", "sales"), ("bookkeeper", "accounting"),
+)}
+
+
+def _heads(title: object) -> frozenset[str]:
+    """Stemmed words of a role title plus the field a practitioner title implies:
+    "Mathematics Teacher" -> {mathemat, teach}, "PGT Mathematics" -> {pgt, mathemat, teach}."""
     words = re.findall(r"[a-z0-9]+", title.lower()) if isinstance(title, str) else []
-    return stem(words[-1]) if words else None
+    stems = {stem(word) for word in words}
+    return frozenset(stems | {_PRACTITIONER_SYNONYMS[item] for item in stems if item in _PRACTITIONER_SYNONYMS})
 
 
 def _role_months(roles: list[_Role]) -> int:
@@ -346,17 +368,18 @@ def _lexical(text: str, facts: list[_Fact], noun: str) -> _Outcome:
 
 
 # ----------------------------------------------------------------------------------- EXPERIENCE
-def _relevant(group: tuple[Skill, ...], skills: frozenset[str], tokens: frozenset[str], head: str | None = None) -> bool:
+def _relevant(group: tuple[Skill, ...], skills: frozenset[str], tokens: frozenset[str],
+              heads: frozenset[str] = frozenset()) -> bool:
     """Evidence is relevant to an OR-group when it names a member (or a specialisation), contains every
     word of a multi-word member ("B2B SaaS sales" for B2B Sales), or its title names the practitioner
-    of a one-word member ("Recruiter" for Recruitment, "Mathematics Teacher" for Teaching)."""
+    of a one-word member ("Recruiter" for Recruitment, "Mathematics Teacher" or "PGT Maths" for Teaching)."""
     if _covers(group, skills):
         return True
     for skill in group:
         name_tokens = content_tokens(skill.name)
         if len(name_tokens) >= 2 and name_tokens <= tokens:
             return True
-        if len(name_tokens) == 1 and head is not None and name_tokens == {head}:
+        if len(name_tokens) == 1 and name_tokens <= heads:
             return True
     return False
 
@@ -382,7 +405,7 @@ def _eval_experience(text: str, minimum_years: int | None, ctx: _Context) -> _Ou
         return skills_ok, topic_share(tokens) >= 0.5
 
     # A) timeline roles
-    per_group = [[role for role in ctx.roles if _relevant(group, role.skills, role.tokens, role.head)] for group in groups]
+    per_group = [[role for role in ctx.roles if _relevant(group, role.skills, role.tokens, role.heads)] for group in groups]
     if groups:
         skills_months = min(_role_months(roles) for roles in per_group)
         skills_roles = [role for roles in per_group for role in roles]
@@ -517,6 +540,10 @@ def _eval_certification(text: str, ctx: _Context) -> _Outcome:
                 best = (ratio, fact, option)
     hint = f"Ask for the certificate ID or a verification link for {text}."
     if best and best[0] >= 0.8:
+        stages = partial_stages(f"{best[1].raw.value} {best[1].raw.evidence or ''}") - partial_stages(best[2])
+        if stages:
+            return _Outcome("UNCLEAR", [best[1]], f"{_source([best[1]])} lists '{best[2]}' at a partial or in-progress "
+                                                  f"stage ({', '.join(sorted(stages))}).", hint=hint)
         return _Outcome("MATCHED", [best[1]], f"{_source([best[1]])} lists a certification matching '{best[2]}'.")
     if best and best[0] >= 0.34:
         return _Outcome("UNCLEAR", [best[1]], f"{_source([best[1]])} lists a related certification; it only partly matches "
@@ -647,7 +674,7 @@ def _apply_proficiency(requirement: MatchRequirement, outcome: _Outcome, tier: s
     missing: list[str] = []
     for group in groups:
         names = " or ".join(skill.name for skill in group)
-        relevant = [role for role in roles if _relevant(group, role.skills, role.tokens, role.head)]
+        relevant = [role for role in roles if _relevant(group, role.skills, role.tokens, role.heads)]
         months = _role_months(relevant) if relevant else 0
         role_texts = [text for role in relevant for text in (_fact_texts(role.fact) if role.fact else [role.label])]
         word = _level_word(cited_texts + role_texts, depth.words)
@@ -683,6 +710,14 @@ def _finish(requirement: MatchRequirement, outcome: _Outcome, tier: str, roles: 
 
 def _match_one(requirement: MatchRequirement, facts: list[_Fact], roles: list[_Role], total: int | None) -> RequirementResult:
     if requirement.type == "OTHER":
+        # Integration pass (R2-U3): an OTHER requirement is still never scored from resume text, but a work-sample or
+        # interview rating linked to it is human evidence and is shown. OTHER stays outside coverage and knockouts.
+        linked_other = [fact for fact in facts if fact.linked_requirement == requirement.id]
+        if linked_other:
+            best = max(linked_other, key=lambda fact: fact.rank)
+            outcome = _Outcome("MATCHED", [best], f"{_SOURCE_LABEL[best.provenance]} was rated as meeting this requirement "
+                                                   "(shown for review; this category is not part of the coverage score).")
+            return _result(requirement, outcome, best.raw.tier)
         return RequirementResult(
             requirementId=requirement.id, status="NOT_OBSERVED",
             explanation="This requirement category is not scored automatically and needs human review.",
@@ -730,8 +765,9 @@ def match_requirements(request: MatchRequest, today: date | None = None) -> Matc
     verified_weight = sum(weights[requirement.id] for requirement, result in scored if verified(result))
     claimed_weight = sum(weights[requirement.id] for requirement, result in scored if result.status == "MATCHED")
     verified_coverage = round(100 * verified_weight / denominator, 1) if denominator else None
+    # OTHER requirements are never scored, so they can never gate ranking (mirrors the backend's R2-H01 rule).
     unverified_knockouts = [requirement.id for requirement, result in zip(request.requirements, results)
-                            if requirement.knockout and not verified(result)]
+                            if requirement.knockout and requirement.type != "OTHER" and not verified(result)]
     return MatchResponse(
         scoreLabel=SCORE_LABEL,
         verifiedCoverage=verified_coverage,

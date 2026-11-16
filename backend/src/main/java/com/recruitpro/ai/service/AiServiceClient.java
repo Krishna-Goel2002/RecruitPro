@@ -35,24 +35,43 @@ public class AiServiceClient {
     /** Message of the IllegalStateException thrown when no service token is configured. */
     public static final String NOT_CONFIGURED_MESSAGE = "AI service authentication is not configured";
 
+    /**
+     * R2-H03: read time-out of resume parsing. The AI service gives one parse up to {@code PARSE_TIMEOUT_SECONDS}
+     * (60 s, LibreOffice and OCR included) plus queueing behind its worker pool, so the general 30 s time-out cut
+     * slow parses off, retried them and piled abandoned parses onto the pool.
+     */
+    static final int DEFAULT_PARSE_TIMEOUT_MS = 120_000;
+
     private final RestClient restClient;
+    private final RestClient parseClient;
     private final String serviceToken;
     /** Set by Spring when Micrometer is present (timer recruitpro.ai.call); null in plain unit tests. */
     private volatile MeterRegistry meterRegistry;
 
+    public AiServiceClient(RestClient.Builder builder, String baseUrl, String serviceToken, int timeoutMs) {
+        this(builder, baseUrl, serviceToken, timeoutMs, DEFAULT_PARSE_TIMEOUT_MS);
+    }
+
+    @Autowired
     public AiServiceClient(RestClient.Builder builder,
                            @Value("${app.ai-service.base-url}") String baseUrl,
                            @Value("${app.ai-service.service-token:}") String serviceToken,
-                           @Value("${app.ai-service.timeout-ms:30000}") int timeoutMs) {
+                           @Value("${app.ai-service.timeout-ms:30000}") int timeoutMs,
+                           @Value("${app.ai-service.parse-timeout-ms:120000}") int parseTimeoutMs) {
+        this.restClient = build(builder.clone(), baseUrl, timeoutMs, timeoutMs);
+        this.parseClient = build(builder.clone(), baseUrl, timeoutMs, Math.max(timeoutMs, parseTimeoutMs));
+        this.serviceToken = serviceToken;
+    }
+
+    private RestClient build(RestClient.Builder builder, String baseUrl, int connectTimeoutMs, int readTimeoutMs) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofMillis(timeoutMs));
-        factory.setReadTimeout(Duration.ofMillis(timeoutMs));
+        factory.setConnectTimeout(Duration.ofMillis(connectTimeoutMs));
+        factory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
         // WP-PLAT: X-Request-Id propagation (MDC "requestId") and the recruitpro.ai.call timer.
-        this.restClient = builder.baseUrl(baseUrl).requestFactory(factory)
+        return builder.baseUrl(baseUrl).requestFactory(factory)
                 .requestInterceptor(new RequestIdClientInterceptor())
                 .requestInterceptor(new TimedClientInterceptor(ObservabilityConfig.AI_TIMER, () -> this.meterRegistry))
                 .build();
-        this.serviceToken = serviceToken;
     }
 
     @Autowired(required = false)
@@ -62,12 +81,14 @@ public class AiServiceClient {
 
     public AiResumeParseResponse parse(String filename, String contentType, byte[] bytes) {
         requireToken();
+        // R2-L08: only the extension matters to the parser; the original name often is the candidate's name.
+        String neutralName = neutralFilename(filename);
         ByteArrayResource resource = new ByteArrayResource(bytes) {
-            @Override public String getFilename() { return filename; }
+            @Override public String getFilename() { return neutralName; }
         };
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", resource);
-        return restClient.post().uri("/api/v1/resume/parse")
+        return parseClient.post().uri("/api/v1/resume/parse")
                 .header("X-Internal-Service-Token", serviceToken)
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .body(body)
@@ -112,6 +133,14 @@ public class AiServiceClient {
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(request)
                 .retrieve().body(AiInterviewKitResponse.class);
+    }
+
+    /** "resume.&lt;extension&gt;" (lower case letters and digits only, at most 10), or "resume" without one. */
+    static String neutralFilename(String filename) {
+        String name = filename == null ? "" : filename.trim();
+        int dot = name.lastIndexOf('.');
+        String extension = dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        return extension.matches("[a-z0-9]{1,10}") ? "resume." + extension : "resume";
     }
 
     private void requireToken() {

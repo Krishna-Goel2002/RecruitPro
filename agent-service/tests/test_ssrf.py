@@ -194,3 +194,98 @@ def test_web_endpoint_rejects_a_private_start_url(client, fake_net) -> None:
     for url in ("http://169.254.169.254/latest/meta-data/", "https://intranet.example/", "http://localhost:80/"):
         response = client.post("/api/v1/verify/web", headers=HEADERS, json={"url": url, "claims": []})
         assert response.status_code == 422 and response.json()["detail"]["code"] == "URL_BLOCKED"
+
+
+# ------------------------------------------------------------------------------------- bug-hunt regressions
+def test_blocked_host_names_are_checked_after_idna_normalisation() -> None:
+    for url in ("http://ｌｏｃａｌｈｏｓｔ/", "http://printer.ｉｎｔｅｒｎａｌ/", "http://METADATA.google.internal./"):
+        with pytest.raises(BlockedUrlError) as error:
+            parse_url(url)
+        assert "internal host names" in str(error.value), url
+
+
+def test_site_local_and_mapped_ipv6_and_short_ipv4_forms_are_blocked() -> None:
+    import ipaddress
+    import socket
+
+    assert is_blocked_address("fec0::1") and is_blocked_address("::ffff:7f00:1")
+    for literal in ("http://[::ffff:127.0.0.1]/", "http://[::ffff:a9fe:a9fe]/", "http://[fec0::1]/"):
+        with pytest.raises(BlockedUrlError):
+            check_url(literal, lambda host: [PUBLIC])
+
+    def inet_aton_resolver(host: str) -> list[str]:  # what glibc does with decimal / octal / hex / short forms
+        return [str(ipaddress.IPv4Address(socket.inet_aton(host)))]
+
+    for url in ("http://2130706433/", "http://0177.0.0.1/", "http://127.1/", "http://0x7f.1/", "http://0/"):
+        with pytest.raises(BlockedUrlError):
+            check_url(url, inet_aton_resolver)
+
+
+def test_control_characters_in_urls_are_blocked_not_a_crash() -> None:
+    for url in ("https://x.example/a\x00b", "https://x.example/?q=\x01", "https://x.example/a\x7f"):
+        with pytest.raises(BlockedUrlError):
+            parse_url(url)
+
+
+def test_a_link_with_a_control_character_is_skipped_by_the_crawl(client, fake_net) -> None:
+    from app.demo.fakes import FakePage
+    from tests.conftest import HEADERS
+
+    fake_net.pages["https://site.example/robots.txt"] = FakePage("User-agent: *\nAllow: /\n", "text/plain")
+    fake_net.pages["https://site.example/"] = FakePage("<p>Rust</p><a href='/cv\x01x'>cv</a>")  # a raw control character
+    response = client.post("/api/v1/verify/web", headers=HEADERS, json={
+        "url": "https://site.example/", "claims": [{"id": "c", "type": "SKILL", "value": "Rust"}]})
+    assert response.status_code == 200, response.text
+    assert "PAGE_SKIPPED:URL_BLOCKED" in response.json()["warnings"]
+
+
+def test_a_trickling_body_hits_the_total_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"t": 1000.0}
+
+    def fake_now() -> float:
+        clock["t"] += 4.0  # every check sees four more seconds
+        return clock["t"]
+
+    monkeypatch.setattr("app.fetch.client._now", fake_now)
+    served = {"chunks": 0}
+
+    def body():
+        for _ in range(1000):
+            served["chunks"] += 1
+            yield b"x" * 10
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=body())
+
+    with pytest.raises(FetchError) as error:
+        _fetcher(handler, lambda host: [PUBLIC]).fetch("https://slow.example/", respect_robots=False)
+    assert error.value.code == "TIMEOUT" and served["chunks"] < 10
+
+
+def test_https_to_http_redirects_are_refused() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://plain.example/did.json"})
+
+    with pytest.raises(FetchError) as error:
+        _fetcher(handler, lambda host: [PUBLIC]).fetch("https://secure.example/", respect_robots=False)
+    assert error.value.code == "URL_BLOCKED"
+
+
+def test_ipv6_literal_host_header_keeps_its_brackets() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["host"])
+        return httpx.Response(200, text="ok", headers={"content-type": "text/plain"})
+
+    _fetcher(handler, lambda host: [PUBLIC]).fetch("https://[2606:4700:4700::1111]/", respect_robots=False)
+    assert seen == ["[2606:4700:4700::1111]"]
+
+
+def test_html_charset_is_sniffed_from_meta_when_the_header_has_none() -> None:
+    from app.fetch.client import FetchResult
+
+    body = '<html><head><meta charset="windows-1252"></head><body>Café Ltd</body></html>'.encode("cp1252")
+    assert "Café Ltd" in FetchResult(url="https://x.example/", status=200, content_type="text/html", body=body).text()
+    assert "Café" in FetchResult(url="https://x.example/", status=200, content_type="text/html",
+                                 body=b"\xef\xbb\xbf" + "Café".encode()).text()

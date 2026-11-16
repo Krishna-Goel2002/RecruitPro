@@ -89,7 +89,7 @@ public class InterviewKitService {
         if (job.getStatus() == JobStatus.CANCELLED) {
             throw new BadRequestException("Cancelled jobs cannot get an interview kit");
         }
-        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderById(job.getId());
+        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId());
         Set<Long> requirementIds = new HashSet<>();
         List<AiMatchRequest.Requirement> aiRequirements = new ArrayList<>();
         for (JobRequirement requirement : requirements) {
@@ -124,7 +124,7 @@ public class InterviewKitService {
             throw new BadRequestException("Cancelled jobs cannot get an interview kit");
         }
         Set<Long> requirementIds = new HashSet<>();
-        for (JobRequirement requirement : requirementRepository.findByJobIdOrderById(job.getId())) {
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId())) {
             requirementIds.add(requirement.getId());
         }
         return save(job.getId(), validate(request.questions(), requirementIds), GENERATED_BY_MANUAL);

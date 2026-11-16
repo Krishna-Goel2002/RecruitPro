@@ -27,7 +27,7 @@ export function FairnessReportView({ report }: { report: FairnessReport }) {
     <div className="hra-fair">
       <StatRow className="hra-fair-stats">
         <Stat label="Scope" value={0} animate={false} format={() => (report.scope === 'JOB' ? 'This job' : 'Organisation')} />
-        <Stat label="Survey response rate" value={Math.round((report.surveyResponseRate ?? 0) * 100)} format={n => `${Math.round(n)}%`} />
+        <Stat label="Survey response rate" value={Math.round((report.surveyResponseRate ?? 0) * 100)} animate={report.surveyResponseRate != null} format={n => (report.surveyResponseRate == null ? '—' : `${Math.round(n)}%`)} />
         <Stat label="Smallest group shown" value={minimum} format={n => `${Math.round(n)} people`} />
         <Stat label="Stages flagged" value={flaggedCount} />
       </StatRow>
@@ -52,16 +52,17 @@ export function FairnessReportView({ report }: { report: FairnessReport }) {
         <EmptyState icon={Scale} title="No survey responses in this period" description="Selection rates appear once applicants answer the voluntary equal-opportunity survey." />
       ) : report.dimensions.map(dimension => {
         const groups = Array.from(new Set(dimension.stages.flatMap(stage => stage.groups.map(group => group.group))))
+        const dimensionLabel = DIMENSION_LABELS[dimension.dimension] ?? humanize(dimension.dimension)
         const flagged = dimension.stages.filter(stage => stage.flagged).length
         return (
           <section className="hra-fair-dim" key={dimension.dimension} aria-labelledby={`fair-${dimension.dimension}`}>
             <header className="hra-fair-dim-head">
-              <h2 id={`fair-${dimension.dimension}`} className="t-h2">{DIMENSION_LABELS[dimension.dimension] ?? humanize(dimension.dimension)}</h2>
+              <h2 id={`fair-${dimension.dimension}`} className="t-h2">{dimensionLabel}</h2>
               {flagged > 0 ? <Badge tone="warning">{flagged} flagged</Badge> : <span className="subtle">No stage below 0.80</span>}
             </header>
-            <div className="hra-scroll" tabIndex={0} role="region" aria-label={`${DIMENSION_LABELS[dimension.dimension]} table`}>
+            <div className="hra-scroll" tabIndex={0} role="region" aria-label={`${dimensionLabel} table`}>
               <table className="hra-fair-table">
-                <caption className="sr-only">{DIMENSION_LABELS[dimension.dimension]}: selection rate and number reached per stage and group, with the impact ratio</caption>
+                <caption className="sr-only">{dimensionLabel}: selection rate and number reached per stage and group, with the impact ratio</caption>
                 <thead>
                   <tr>
                     <th scope="col">Stage</th>

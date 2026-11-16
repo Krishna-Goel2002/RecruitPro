@@ -5,6 +5,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 /**
@@ -15,8 +16,10 @@ public class SlidingWindowRateLimiter {
 
     private static final int HOUSEKEEPING_THRESHOLD = 10_000;
     private static final long MAX_WINDOW_MILLIS = Duration.ofHours(1).toMillis();
+    static final long PURGE_INTERVAL_MILLIS = Duration.ofSeconds(30).toMillis();
 
     private final Map<String, Deque<Long>> hits = new ConcurrentHashMap<>();
+    private final AtomicLong lastPurge = new AtomicLong(Long.MIN_VALUE / 2);
     private final LongSupplier clock;
 
     public SlidingWindowRateLimiter() {
@@ -35,7 +38,11 @@ public class SlidingWindowRateLimiter {
         long now = clock.getAsLong();
         long windowMillis = window.toMillis();
         long cutoff = now - windowMillis;
-        if (hits.size() > HOUSEKEEPING_THRESHOLD) {
+        // R1-L4: above the threshold the full scan runs at most once per PURGE_INTERVAL_MILLIS, not on every request
+        // (many distinct client addresses would otherwise make every request O(number of keys)).
+        long last = lastPurge.get();
+        if (hits.size() > HOUSEKEEPING_THRESHOLD && now - last >= PURGE_INTERVAL_MILLIS
+                && lastPurge.compareAndSet(last, now)) {
             purge(now);
         }
         Deque<Long> timestamps = hits.computeIfAbsent(key, ignored -> new ArrayDeque<>());
@@ -55,6 +62,11 @@ public class SlidingWindowRateLimiter {
 
     public void reset() {
         hits.clear();
+    }
+
+    /** Number of tracked keys (tests). */
+    int size() {
+        return hits.size();
     }
 
     private void purge(long now) {

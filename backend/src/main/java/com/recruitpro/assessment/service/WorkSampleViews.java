@@ -100,7 +100,8 @@ public class WorkSampleViews {
         return new CandidateWorkSampleResponse(assignment.getId(), sample.getJob().getTitle(), sample.getTitle(),
                 started ? sample.getInstructions() : null, sample.getTimeLimitMinutes(), assignment.getStatus(),
                 assignment.getDueAt(), assignment.getStartedAt(), assignment.getSubmittedAt(), deadline,
-                fileService.list(assignment.getId()), assignment.getCancelledAt(), assignment.getCancelReason());
+                fileService.list(assignment.getId()), assignment.getCancelledAt(), assignment.getCancelReason(),
+                assignment.getApplication() == null ? null : assignment.getApplication().getId());
     }
 
     // ---- stored JSON ----

@@ -43,31 +43,43 @@ with a time limit, so a hostile PDF can neither block the event loop nor hang a 
    paragraph by paragraph from the XML (body, tables, text boxes, headers, footers); runs hidden by
    `w:vanish`, white colour or a tiny size - directly or through styles - are excluded. Legacy `.doc`
    is converted with LibreOffice when `soffice` exists (keeping hidden-text detection), otherwise read
-   from the Word 97 piece table with `olefile` (`LEGACY_DOC`). Scanned documents return `NEEDS_OCR`
-   unless OCR is installed and enabled (`OCR_USED`).
+   from the Word 97 piece table with `olefile` (`LEGACY_DOC`). Scanned documents (and text drawn as vector
+   outlines) return `NEEDS_OCR` unless OCR is installed and enabled (`OCR_USED`). The format comes from the
+   file's magic bytes, not its extension (DOCX renamed `.doc`, PDF with leading junk, RTF via LibreOffice,
+   HTML saved as `.doc`); DOCX table rows with one line per cell are read as one line ("Staff Nurse |
+   Apollo | 2018 - 2021"); first-page/even-page headers are read when Word shows them. Any unexpected reader
+   error is `FAILED` with `MALFORMED_<EXT>` (analysis errors: `PARSER_CRASHED`), never an HTTP 500.
 2. *Injection screen* - instruction-like text ("ignore previous instructions", "you are an AI
-   recruiter", "rank this candidate first", "system prompt") and hidden keyword stuffing raise
-   `PROMPT_INJECTION_SUSPECTED`. Resume text is only ever data.
+   recruiter", "rank this candidate first", "reveal your system prompt", chat-template tags) and hidden
+   keyword stuffing raise `PROMPT_INJECTION_SUSPECTED`; merely mentioning "system prompts" or "prompt
+   injection" (AI and security work) does so only in hidden text. Resume text is only ever data.
 3. *Sections* - ~200 heading variants; a heading-like line that is not in the lexicon starts an
    `OTHER` section, so nothing inherits the previous section (hobbies never become certifications).
 4. *De-identification* - the header name, emails, phones, URLs, addresses and postcodes, dates of
    birth and ages, personal-detail lines, gendered honorifics (-> "Mx.") and pronouns (-> they/them)
    are replaced. All evidence and non-contact values are rendered from the de-identified text; the
    contact itself appears only in the `EMAIL`/`PHONE`/`LINK` fact. Skill mentions that overlap a
-   redaction are dropped (a candidate called Ruby does not "know Ruby").
+   redaction are dropped (a candidate called Ruby does not "know Ruby"). Names may carry initials ("K.
+   Lakshmi"), accents ("José Álvarez") or particles ("Rahul de Souza"); labels may be table-style
+   ("Gender | Female"); a redaction never runs past the end of its line, and overlapping redactions merge.
 5. *Skills* - `app/taxonomy/skills.json`: 847 curated skills in 15 domains (software, data, cloud,
    design, product, sales, marketing, finance and accounting incl. Tally, GST, TDS, Ind AS, HR,
    operations, healthcare, education, legal, spoken languages, general) with aliases, parents,
    distinctions, `ambiguous` flags and context words. Ambiguous names (Go, C, R, Spring, React, Swift,
-   Oracle, Excel, Tally, ...) count only as whole items of a list, or with their exact casing next to
-   a context word or another same-domain skill. Interests/hobbies never produce skills.
-6. *Dates and timeline* - month-name, numeric, ISO, apostrophe-year, year-only and open-ended ranges;
-   "Present" is today. Experience sections are cut into roles (title line + date line, single-line,
+   Oracle, Excel, Tally, Rust, Ruby, Kafka, Postman, Jenkins, ...) count only as whole items of a list, or
+   with their exact casing next to a context word or another same-domain skill. Interests/hobbies never
+   produce skills. Heading words that are also list items ("Training", "Research", "Software") do not
+   start a new section inside a skills list unless styled as a heading; role sub-headings
+   ("Responsibilities:", "Achievements:") do not end a work history that continues with another role.
+6. *Dates and timeline* - month-name, numeric, ISO, apostrophe-year ("Jan '19", "Apr-21"), day-month-year
+   ("01/06/2018", "15 Jan 2019", "June 15, 2019"), season ("Summer 2023"), abbreviated end year ("2016 - 18"),
+   year-only and open-ended ranges; "Present" is today. Experience sections are cut into roles (title line + date line, single-line,
    parenthesised and date-first layouts, wrapped date lines rejoined). Intervals are merged so
    overlapping roles count once; undated roles with a stated duration add on top. Skills mentioned in
    a role accrue its months (`skillMonths`).
 7. *Education* - degree levels (DIPLOMA < BACHELOR < MASTER < DOCTORATE) and field families
-   (computer science ~ CSE ~ IT ~ software engineering, commerce ~ accounting ~ finance, ...).
+   (computer science ~ CSE ~ IT ~ software engineering, commerce ~ accounting ~ finance, ...). A bare
+   "Master"/"Bachelor" is not a degree ("Scrum Master"); "B.E", "M.S", "D.El.Ed", "ITI" are.
 
 **Matching v4 - `evidence-ladder-4`** (`app/matching/engine.py`). Facts carry an origin-tagged id
 (`fact:12` resume, `claim:3` candidate, `ws:4:r9` work sample, `iv:7:r9` interview) and a tier
@@ -94,12 +106,24 @@ tier, level words) and the hint asks the interviewer to probe depth. Proficiency
 NOT_OBSERVED and never changes EXPERIENCE, EDUCATION, CERTIFICATION or OTHER requirements. This is a
 conservative heuristic: years of use and a job title are proxies for depth, not proof of it.
 
+*Where proficiency comes from (calibrated in bug hunt R4).* The rules compiler only proposes ADVANCED for an
+explicit depth word (`advanced`, `in-depth`, `deep`, `extensive`, `expertise`) and EXPERT for `expert` /
+`mastery`; job-ad filler (`strong`, `solid`, `good`, `excellent`, `hands-on`, `proficient`) is INTERMEDIATE,
+which changes nothing in matching. A level word only qualifies the skills written next to it ("Strong
+communication skills and Tally" gives Tally no level; "Excel (advanced), PowerPoint (basic)" gives each its
+own). Before this, "strong" meant ADVANCED and about half of compiled skill requirements asked for depth that
+most resumes cannot show, turning most matches UNCLEAR (`proficiency_downgrade_share` ~0.74 on the synthetic
+set, which re-matches *every* skill as ADVANCED). OTHER requirements never count as knockouts.
+
 **Compiler and generators** (`app/compile/`, `app/generate/`). Rules baseline: must/nice from headings
 and cue words, `minimumYears`, alternatives, types, knockouts on must/required wording, and warnings for
 age-coded, gender-coded, exclusionary and vague wording, hard degree requirements and excessive
 experience. Work samples: one task per two or three must-haves, 15-45 minutes, four behavioural anchors
 per rubric criterion. Interview kits: behavioural plus technical questions, follow-ups and anchors, focus
-requirements first.
+requirements first. Requirement wording about protected characteristics (age limits, gender or marital
+preferences, religion, appearance, "no career gaps", "freshers only") is reported as a warning and never
+becomes a requirement; a cap on experience ("less than 10 years") is not turned into a minimum.
+Work-sample scenarios are self-contained (they never refer to material nobody attaches).
 
 ## Configuration
 
@@ -115,7 +139,7 @@ requirements first.
 | `PARSE_TIMEOUT_SECONDS` | `60` | Per document; returns `FAILED/PARSE_TIMEOUT` and recycles the pool |
 | `MAX_UPLOAD_BYTES` | `10485760` | Largest accepted file |
 | `OCR_ENABLED` | `false` | Use RapidOCR when `requirements-ocr.txt` is installed (the Docker image installs it) |
-| `SOFFICE_PATH` | auto-detect (`/usr/bin/soffice` in the Docker image) | LibreOffice for `.doc`; empty disables conversion |
+| `SOFFICE_PATH` | auto-detect on `PATH` (`/usr/bin/soffice` in the default Docker image) | LibreOffice for `.doc`; empty disables conversion |
 | `TAXONOMY_EXTRA_PATH` | - | Extra skills file (e.g. an ESCO import) |
 
 ### Offline vs LLM mode
@@ -149,7 +173,7 @@ default, two optional document tools:
 
 | Build arg | Default | Installs | Used for |
 |---|---|---|---|
-| `WITH_LIBREOFFICE` | `true` | `libreoffice-writer-nogui` (headless Writer, no recommends) | `.doc` -> `.docx` conversion, which keeps hidden-text detection; `SOFFICE_PATH=/usr/bin/soffice` |
+| `WITH_LIBREOFFICE` | `true` | `libreoffice-writer-nogui` (headless Writer, no recommends) | `.doc` -> `.docx` conversion, which keeps hidden-text detection; `soffice` is found on `PATH` (`/usr/bin/soffice`) |
 | `WITH_OCR` | `true` | `requirements-ocr.txt` (RapidOCR on onnxruntime, OpenCV) plus `libgl1`, `libglib2.0-0` | Scanned PDFs and image-only DOCX, **only when `OCR_ENABLED=true`** (compose default `false`) |
 
 The OCR engine is RapidOCR, not Tesseract: it is what `app/pipeline/ocr.py` calls, and it ships its models
@@ -216,3 +240,7 @@ then set `TAXONOMY_EXTRA_PATH=esco.json`; curated entries always win collisions.
   assumed to be mid-year.
 - Matching is lexical and taxonomy-based (no embeddings); synonyms outside the taxonomy are missed and
   surface as UNCLEAR/NOT_OBSERVED with a verification hint rather than as false matches.
+- Dates: day-first numeric dates (01/06/2018) are assumed unless impossible (06/25/2019 is month-first);
+  "FY 2019-20" is a reporting period, not employment dates. Seasons map to Jan/Apr/Jul/Oct.
+- RTF files need LibreOffice (otherwise `UNSUPPORTED_FORMAT`); LibreOffice may try to fetch resources
+  linked from a document, so run it only where the container has no network route (as in compose).

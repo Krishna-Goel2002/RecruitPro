@@ -6,7 +6,7 @@ A summary entry is kept only when all hold:
 * every key names an evidence item of this response;
 * it has a ``quote`` that is found verbatim (whitespace-insensitive) in the ``snapshotText`` of at least one of the
   cited items (the original snapshot, not a de-identified copy);
-* its text carries no prompt-injection markers;
+* neither its text nor its quote carries prompt-injection markers;
 * its quote names no identity (login, name, URL, e-mail, repository), because it cannot be de-identified and stay
   verbatim.
 
@@ -60,7 +60,7 @@ def _validate_entry(entry: Any, by_key: dict[str, EvidenceItem], identities: Ide
         return None
     if not isinstance(quote, str) or not any(find_quote(quote, by_key[key].snapshot_text) for key in keys):
         return None
-    if find_markers(text):
+    if find_markers(text) or find_markers(quote):  # the quote is shown to staff as part of the entry too
         return None
     if deidentify(quote, identities) != quote:  # a verbatim quote that names the candidate cannot be shown blind
         return None

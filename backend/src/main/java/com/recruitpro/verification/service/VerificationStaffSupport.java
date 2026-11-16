@@ -52,7 +52,8 @@ public class VerificationStaffSupport {
 
     /**
      * The verdicts whose claim subject is still current (a fact of the resume's current analysis, or a claim that
-     * exists and was not rejected by a recruiter), in their order. Orphaned verdicts, e.g. of facts of a replaced
+     * still exists), in their order. A recruiter's rejection is per organisation and is applied by the caller where it
+     * matters (matching: {@link VerificationEvidenceContributor}; staff view: the claim's tier for the organisation). Orphaned verdicts, e.g. of facts of a replaced
      * analysis, are left out of the staff view, the shadow queue and matching (review fix 16 Nov 2026).
      */
     public List<ClaimVerdict> withCurrentSubjects(Collection<ClaimVerdict> verdicts) {

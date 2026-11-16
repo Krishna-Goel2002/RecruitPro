@@ -349,6 +349,8 @@ class WorkSampleIntegrationTest {
         String mine = mvc.perform(get(MINE).with(candidate))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].status", is("SCORED")))
+                // Integration pass (R5#8): the candidate's work sample names its application.
+                .andExpect(jsonPath("$.data[0].applicationId", is(shortlisted.getId().intValue())))
                 .andReturn().getResponse().getContentAsString();
         String detail = mvc.perform(get("/api/v1/candidates/me/applications/{id}", shortlisted.getId()).with(candidate))
                 .andExpect(status().isOk())

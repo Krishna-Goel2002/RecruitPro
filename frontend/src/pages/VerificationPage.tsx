@@ -23,7 +23,8 @@ import {
   runErrorText, sourceKindLabel,
 } from '../lib/verification'
 import { AddSourceDrawer, type AddSourceState, type AddStep } from './verification/AddSourceDrawer'
-import { awaitingVerdicts, kindIcon, ledgerStats, runningSources, subjectKey, willCheck } from './verification/model'
+import { parseId } from '../lib/url'
+import { KIND_ORDER, awaitingVerdicts, kindIcon, ledgerStats, runningSources, subjectKey, willCheck } from './verification/model'
 import { ReferenceDrawer, ReferencesSection } from './verification/References'
 import { verificationErrorMessage } from './verification/shared'
 import { useSources, type SourcesState } from './verification/useSources'
@@ -85,12 +86,15 @@ export function VerificationPage() {
   // ----- URL state
   const addOpen = params.get('add') === 'source'
   const stepParam = params.get('step') as AddStep | null
+  const kindParam = params.get('kind')
   const addState: AddSourceState = {
     step: stepParam && STEPS.includes(stepParam) ? stepParam : 'choose',
-    kind: (params.get('kind') as SourceKind | null) ?? null,
-    sourceId: params.get('source') ? Number(params.get('source')) : null,
+    // Values come from the URL: anything that is not a known kind or a numeric id is ignored.
+    kind: kindParam && (KIND_ORDER as string[]).includes(kindParam) ? (kindParam as SourceKind) : null,
+    sourceId: parseId(params.get('source')),
   }
-  const reviewParam = params.get('review')
+  const rawReview = params.get('review')
+  const reviewParam = rawReview === 'first' || parseId(rawReview) !== null ? rawReview : null
   const askOpen = params.get('ask') === 'reference'
 
   // OAuth return: show the outcome once, clean the URL, and resume the add-source drawer on "Check".
@@ -191,6 +195,9 @@ export function VerificationPage() {
         </LoadingRegion>
       ) : ledger.isError ? (
         <ErrorState error={ledger.error} onRetry={() => void ledger.refetch()} title="Your results could not be loaded" />
+      ) : sources.query.isError && !sources.query.data ? (
+        // Without the sources we cannot tell a first visit from a failed load: never show "How it works" by mistake.
+        <ErrorState error={sources.query.error} onRetry={() => void sources.query.refetch()} title="Your sources could not be loaded" />
       ) : !hasAnything ? (
         <HowItWorks onStart={() => patchParams({ add: 'source', step: 'choose' })} />
       ) : (

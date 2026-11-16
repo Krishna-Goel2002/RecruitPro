@@ -28,7 +28,7 @@ backend/.mvn/wrapper/maven-wrapper.jar
 backend/logs/
 backend/uploads/
 
-# === Node / React Frontend ===
+# === Node / React portals (hr-frontend/.gitignore covers the HR portal too) ===
 frontend/node_modules/
 frontend/build/
 frontend/dist/
@@ -68,6 +68,21 @@ logs/
 /test-data/scripts/Start-RecruitProMigrationTest.ps1
 test-data/resume-storage-*/
 
-# === Docker (future) ===
+# === Docker ===
 docker-compose.override.yml
+
+# === Any package (generic: agent-service, tools/ui-snapshots, future folders) ===
+node_modules/
 .pnpm-store/
+coverage/
+*.tsbuildinfo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+# Screenshot harness output
+tools/ui-snapshots/out/
+# Files the run-and-test guide asks you to create in the repository root when reporting a problem
+/services.txt

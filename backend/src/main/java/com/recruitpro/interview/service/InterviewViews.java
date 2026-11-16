@@ -100,7 +100,9 @@ public class InterviewViews {
                     names.getOrDefault(interview.getInterviewerUserId(), "Former staff member"),
                     interview.getScheduledAt(), interview.getDurationMinutes(), interview.getLocation(),
                     interview.getStatus(), scorecard == null ? null
-                    : scorecard(scorecard, revisionCounts.getOrDefault(scorecard.getId(), 0L))));
+                    : scorecard(scorecard, revisionCounts.getOrDefault(scorecard.getId(), 0L)),
+                    application.getStatus(),
+                    InterviewService.scorecardEditable(interview.getStatus(), application.getStatus(), scorecard != null)));
         }
         return responses;
     }
@@ -108,7 +110,8 @@ public class InterviewViews {
     /** Candidate view: time, place and status only. */
     public CandidateInterviewResponse candidateView(Interview interview) {
         return new CandidateInterviewResponse(interview.getId(), interview.getApplication().getJob().getTitle(),
-                interview.getScheduledAt(), interview.getDurationMinutes(), interview.getLocation(), interview.getStatus());
+                interview.getScheduledAt(), interview.getDurationMinutes(), interview.getLocation(), interview.getStatus(),
+                interview.getApplication().getId());
     }
 
     public ScorecardResponse scorecard(InterviewScorecard scorecard) {

@@ -15,7 +15,9 @@ import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.evidence.entity.CandidateClaim;
 import com.recruitpro.evidence.entity.ClaimType;
 import com.recruitpro.evidence.entity.EvidenceTier;
+import com.recruitpro.evidence.entity.CandidateClaimVerification;
 import com.recruitpro.evidence.repository.CandidateClaimRepository;
+import com.recruitpro.evidence.repository.CandidateClaimVerificationRepository;
 import com.recruitpro.hr.entity.Job;
 import com.recruitpro.hr.entity.JobStatus;
 import com.recruitpro.jobs.entity.BackgroundJobStatus;
@@ -59,6 +61,7 @@ class CandidateClaimsIntegrationTest {
     @Autowired ResumeAnalysisFactRepository facts;
     @Autowired ResumeAnalysisRepository analyses;
     @Autowired BackgroundJobRepository backgroundJobs;
+    @Autowired CandidateClaimVerificationRepository claimVerifications;
 
     CandidateProfile candidate;
     Resume resume;
@@ -123,6 +126,27 @@ class CandidateClaimsIntegrationTest {
     }
 
     @Test
+    void aNewFactCorrectionRespectsTheClaimCap() throws Exception {
+        // Integration pass (R2-U4): corrections created claims without the 100-claim cap of free-standing claims.
+        for (int i = 0; i < com.recruitpro.evidence.service.CandidateClaimService.MAX_CLAIMS_PER_CANDIDATE; i++) {
+            com.recruitpro.evidence.entity.CandidateClaim filler = new com.recruitpro.evidence.entity.CandidateClaim();
+            filler.setCandidate(candidate);
+            filler.setClaimType(com.recruitpro.evidence.entity.ClaimType.SKILL);
+            filler.setClaimValue("Skill " + i);
+            claims.save(filler);
+        }
+        var me = candidateAuth("claimant@cand.test");
+        String path = "/api/v1/candidates/me/resumes/{resumeId}/analysis/facts/{factId}";
+        mvc.perform(patch(path, resume.getId(), javaFact.getId()).with(me).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"value\":\"Java 21\"}"))
+                .andExpect(status().isBadRequest());
+        assertTrue(claims.findAllByCandidateIdAndSourceFactId(candidate.getId(), javaFact.getId()).isEmpty(),
+                "no correction claim is created");
+        assertEquals(com.recruitpro.evidence.service.CandidateClaimService.MAX_CLAIMS_PER_CANDIDATE,
+                claims.countByCandidateId(candidate.getId()));
+    }
+
+    @Test
     void aFactCorrectionBecomesALinkedSelfClaimedClaimAndNeverOverwritesTheExtractedValue() throws Exception {
         var me = candidateAuth("claimant@cand.test");
         String path = "/api/v1/candidates/me/resumes/{resumeId}/analysis/facts/{factId}";
@@ -149,8 +173,15 @@ class CandidateClaimsIntegrationTest {
         verified.setTier(EvidenceTier.CORROBORATED);
         verified.setVerifiedAt(UtcTime.now());
         claims.save(verified);
+        CandidateClaimVerification orgVerification = new CandidateClaimVerification();
+        orgVerification.setClaimId(verified.getId());
+        orgVerification.setOrganizationId(application.getJob().getOrganizationId());
+        orgVerification.setTier(EvidenceTier.CORROBORATED);
+        orgVerification.setVerifiedAt(UtcTime.now());
+        claimVerifications.save(orgVerification);
         mvc.perform(patch(path, resume.getId(), javaFact.getId()).with(me).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"value\":\"Java 21 and Kotlin\"}")).andExpect(status().isOk());
+        assertEquals(0, claimVerifications.count(), "R2-H02: every organisation's verification of the old value is cleared");
         linked = claims.findAllByCandidateIdAndSourceFactId(candidate.getId(), javaFact.getId());
         assertEquals(1, linked.size(), "the linked claim is updated, not duplicated");
         assertEquals("Java 21 and Kotlin", linked.get(0).getClaimValue());

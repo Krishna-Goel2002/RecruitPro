@@ -14,9 +14,13 @@ RUN pnpm build
 
 FROM nginx:1.27-alpine
 # nginx.conf is a template: ${API_ORIGIN} (backend origin for the CSP connect-src) is filled in by envsubst at start-up.
-# Override at run time with -e API_ORIGIN=https://api.example.com (or "environment:" in docker compose).
+# It must be the origin of VITE_API_BASE_URL above. Override at run time with -e API_ORIGIN=https://api.example.com
+# (or "environment:" in docker compose).
 ARG API_ORIGIN=http://localhost:8080
 ENV API_ORIGIN=${API_ORIGIN}
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
+# busybox wget ships with the alpine image; the SPA answers / with index.html.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1

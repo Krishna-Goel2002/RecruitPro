@@ -24,7 +24,8 @@ export function ClaimsTab({ jobId, detail }: { jobId: number; detail: ApplicantD
       </p>
       <ul className="ap-claim-list">
         {detail.claims.map(claim => {
-          const url = safeHttpUrl(claim.evidenceUrl)
+          // Blind-first: links can identify the candidate, so they are shown only after reveal (the server also withholds them).
+          const url = detail.identityRevealed ? safeHttpUrl(claim.evidenceUrl) : null
           const status = claimStatus(claim)
           return (
             <li key={claim.id} className="ap-claim" data-status={status}>
@@ -36,7 +37,7 @@ export function ClaimsTab({ jobId, detail }: { jobId: number; detail: ApplicantD
                     <a href={url} target="_blank" rel="noopener noreferrer nofollow">
                       Evidence link <Icon icon={ArrowUpRight} size={12} /><span className="sr-only"> (opens in a new tab)</span>
                     </a>
-                  ) : claim.hasEvidenceUrl ? (
+                  ) : claim.hasEvidenceUrl || (!detail.identityRevealed && claim.evidenceUrl) ? (
                     <span className="ap-muted"><Icon icon={EyeOff} size={12} /> Link hidden until identity is revealed</span>
                   ) : (
                     <span className="ap-muted">No evidence link</span>

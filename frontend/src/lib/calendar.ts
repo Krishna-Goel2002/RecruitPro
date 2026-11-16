@@ -22,10 +22,32 @@ export function timeRange(startIso: string, minutes: number): { day: string; tim
 }
 
 const stamp = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
-const escape = (s: string) => s.replace(/\\/g, '\\\\').replace(/[,;]/g, m => `\\${m}`).replace(/\n/g, '\\n')
+/** RFC 5545 TEXT escaping; CR/LF pairs become one escaped newline (a bare CR used to end up inside the value). */
+export const escapeIcsText = (s: string) => s.replace(/\\/g, '\\\\').replace(/[,;]/g, m => `\\${m}`).replace(/\r\n|\r|\n/g, '\\n')
 
-/** Downloads an RFC 5545 event for one interview. */
-export function downloadInterviewIcs(interview: { id: number; scheduledAt: string; durationMinutes: number; location: string | null }, title: string) {
+/** Folds a content line at 75 octets (RFC 5545 §3.1), continuing with CRLF + one space. */
+export function foldIcsLine(line: string): string {
+  const encoder = new TextEncoder()
+  if (encoder.encode(line).length <= 75) return line
+  const parts: string[] = []
+  let current = ''
+  let size = 0
+  for (const char of line) {
+    const bytes = encoder.encode(char).length
+    if (size + bytes > (parts.length === 0 ? 75 : 74)) {
+      parts.push(current)
+      current = ''
+      size = 0
+    }
+    current += char
+    size += bytes
+  }
+  parts.push(current)
+  return parts.join('\r\n ')
+}
+
+/** The .ics text for one interview (exported for tests). */
+export function interviewIcs(interview: { id: number; scheduledAt: string; durationMinutes: number; location: string | null }, title: string, now = new Date()): string {
   const start = new Date(interview.scheduledAt)
   const end = new Date(start.getTime() + interview.durationMinutes * 60_000)
   const lines = [
@@ -35,13 +57,19 @@ export function downloadInterviewIcs(interview: { id: number; scheduledAt: strin
     'CALSCALE:GREGORIAN',
     'BEGIN:VEVENT',
     `UID:interview-${interview.id}@candidate-portal`,
-    `DTSTAMP:${stamp(new Date())}`,
+    `DTSTAMP:${stamp(now)}`,
     `DTSTART:${stamp(start)}`,
     `DTEND:${stamp(end)}`,
-    `SUMMARY:${escape(`Interview: ${title}`)}`,
-    interview.location ? `LOCATION:${escape(interview.location)}` : '',
+    `SUMMARY:${escapeIcsText(`Interview: ${title}`)}`,
+    interview.location ? `LOCATION:${escapeIcsText(interview.location)}` : '',
     'END:VEVENT',
     'END:VCALENDAR',
   ].filter(Boolean)
-  saveBlob(new Blob([lines.join('\r\n')], { type: 'text/calendar' }), `interview-${interview.id}.ics`)
+  return `${lines.map(foldIcsLine).join('\r\n')}\r\n`
 }
+
+/** Downloads an RFC 5545 event for one interview. */
+export function downloadInterviewIcs(interview: { id: number; scheduledAt: string; durationMinutes: number; location: string | null }, title: string) {
+  saveBlob(new Blob([interviewIcs(interview, title)], { type: 'text/calendar' }), `interview-${interview.id}.ics`)
+}
+

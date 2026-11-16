@@ -17,6 +17,8 @@ import java.util.Optional;
 
 public interface ApplicationRepository extends JpaRepository<Application, Long> {
     boolean existsByCandidateIdAndJobId(Long candidateId, Long jobId);
+    /** R2-M02: a resume used by an application is kept with it (staff review, match runs, audit). */
+    boolean existsByResumeId(Long resumeId);
     long countByJobId(Long jobId);
     long countByStatus(ApplicationStatus status);
     long countByAppliedAtAfter(LocalDateTime cutoff);

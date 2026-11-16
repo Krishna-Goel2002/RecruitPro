@@ -3,6 +3,7 @@ package com.recruitpro.config;
 import com.recruitpro.security.config.CustomAuthenticationEntryPoint;
 import com.recruitpro.security.filter.JwtAuthenticationFilter;
 import com.recruitpro.security.filter.RateLimitFilter;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -88,6 +89,10 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> (metricsPublic ? auth.requestMatchers("/actuator/prometheus").permitAll() : auth)
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // R1-L7: the container's error dispatch (an exception that escaped a filter, e.g. the database
+                        // being down while the JWT filter loads the user) must show its real status, not a 401 that
+                        // makes the portals sign the user out. Direct requests to /error stay protected.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()

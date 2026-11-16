@@ -12,12 +12,19 @@ import { ActionDialog } from '../../components/ActionDialog'
 import { QueryError } from '../../components/QueryError'
 import { WorkSampleStatusBadge } from '../../components/StatusBadges'
 import {
-  Button, DataTable, Drawer, EmptyState, Field, IconButton, Input, LoadingRegion, ReqMarker, Section, SegmentedControl, Select, Skeleton,
-  Textarea, Tooltip, useToast, type Column,
+  Button, DataTable, Drawer, EmptyState, Field, IconButton, Input, LoadingRegion, Menu, ReqMarker, Section, SegmentedControl, Select, Skeleton,
+  Textarea, Tooltip, useToast, type Column, type MenuItem,
 } from '../../design/components'
-import { plural, relativeTime } from '../../design/lib/format'
-import { ChevronDown, FileText, Icon, ListChecks, Pencil, Plus, Trash2 } from '../../design/icons'
+import { formatFileSize, formatNumber, plural, relativeTime } from '../../design/lib/format'
+import { ArrowRight, ChevronDown, Download, Ellipsis, FileText, Icon, ListChecks, Pencil, Plus, Trash2, X } from '../../design/icons'
 import { formatDateTime, humanize } from '../../lib/format'
+import { canCancelAssignment, useCancelAssignment, useSubmissionDownload } from '../workSamples/assignmentActions'
+
+/** Server limits (WorkSampleUpdateRequest / WorkSampleService): 1–30 criteria, criterion ≤ 500, anchors ≤ 1000, instructions ≤ 20 000. */
+const MAX_CRITERIA = 30
+const MAX_CRITERION = 500
+const MAX_ANCHOR = 1000
+const MAX_INSTRUCTIONS = 20_000
 
 /** Work samples for a job: generate (DRAFT), edit in a drawer, activate (freezes it), archive; plus the assignments. */
 export function WorkSamplesTab({ job }: { job: JobStaff }) {
@@ -50,13 +57,19 @@ export function WorkSamplesTab({ job }: { job: JobStaff }) {
   })
 
   const noRequirements = job.requirements.length === 0
-  const generateButton = canManage && (
-    <Tooltip content={noRequirements ? 'Add requirements to the job first.' : 'Drafts a timed task and a four-level rubric from the must-haves.'} labelOnly>
-      <Button icon={Plus} variant={samples.data?.length ? 'secondary' : 'primary'} loading={generate.isPending} disabled={noRequirements} onClick={() => generate.mutate()}>
+  // A disabled button cannot show a tooltip (no hover or focus), so the reason is visible text instead.
+  const generateButton = canManage && (noRequirements ? (
+    <span className="hra-disabled-reason">
+      <Button icon={Plus} variant={samples.data?.length ? 'secondary' : 'primary'} disabled>Generate from requirements</Button>
+      <span className="subtle">Add requirements to the job first.</span>
+    </span>
+  ) : (
+    <Tooltip content="Drafts a timed task and a four-level rubric from the must-haves." labelOnly>
+      <Button icon={Plus} variant={samples.data?.length ? 'secondary' : 'primary'} loading={generate.isPending} onClick={() => generate.mutate()}>
         {generate.isPending ? 'Generating…' : 'Generate from requirements'}
       </Button>
     </Tooltip>
-  )
+  ))
 
   return (
     <div className="hra-tab-stack">
@@ -226,8 +239,15 @@ function WorkSampleForm({ jobId, sample, requirements, onDone }: { jobId: number
     if (rubric.length === 0) next.rubric = 'Add at least one rubric criterion.'
     rubric.forEach((criterion, index) => {
       if (!criterion.criterion.trim()) next[`c${index}`] = 'Name the criterion.'
-      ANCHOR_LEVELS.forEach(level => { if (!criterion.anchors[level].trim()) next[`c${index}-${level}`] = `Describe level ${level}.` })
+      else if (criterion.criterion.trim().length > MAX_CRITERION) next[`c${index}`] = `Use ${MAX_CRITERION} characters or fewer.`
+      ANCHOR_LEVELS.forEach(level => {
+        const text = (criterion.anchors[level] ?? '').trim()
+        if (!text) next[`c${index}-${level}`] = `Describe level ${level}.`
+        else if (text.length > MAX_ANCHOR) next[`c${index}-${level}`] = `Use ${MAX_ANCHOR} characters or fewer.`
+      })
     })
+    if (rubric.length > MAX_CRITERIA) next.rubric = `Use at most ${MAX_CRITERIA} criteria.`
+    if (instructions.trim().length > MAX_INSTRUCTIONS) next.instructions = `Keep the instructions under ${formatNumber(MAX_INSTRUCTIONS)} characters.`
     setErrors(next)
     if (Object.keys(next).length) {
       window.setTimeout(() => document.querySelector<HTMLElement>('.ui-drawer [aria-invalid="true"]')?.focus(), 0)
@@ -240,7 +260,7 @@ function WorkSampleForm({ jobId, sample, requirements, onDone }: { jobId: number
       rubric: rubric.map(criterion => ({
         requirementId: criterion.requirementId,
         criterion: criterion.criterion.trim(),
-        anchors: { '1': criterion.anchors['1'].trim(), '2': criterion.anchors['2'].trim(), '3': criterion.anchors['3'].trim(), '4': criterion.anchors['4'].trim() },
+        anchors: { '1': (criterion.anchors['1'] ?? '').trim(), '2': (criterion.anchors['2'] ?? '').trim(), '3': (criterion.anchors['3'] ?? '').trim(), '4': (criterion.anchors['4'] ?? '').trim() },
       })),
     })
   }
@@ -256,7 +276,7 @@ function WorkSampleForm({ jobId, sample, requirements, onDone }: { jobId: number
         <Input type="number" min={5} max={480} step={5} inputMode="numeric" value={timeLimit} onChange={event => setTimeLimit(event.target.value)} trailing="min" className="hra-num-input" />
       </Field>
       <Field label="Instructions" error={errors.instructions} hint="Hidden from the candidate until they press Start.">
-        <Textarea rows={6} maxRows={16} value={instructions} onChange={event => setInstructions(event.target.value)} />
+        <Textarea rows={6} maxRows={16} maxLength={MAX_INSTRUCTIONS} value={instructions} onChange={event => setInstructions(event.target.value)} />
       </Field>
 
       <fieldset className="hra-rubric-edit">
@@ -267,7 +287,7 @@ function WorkSampleForm({ jobId, sample, requirements, onDone }: { jobId: number
           <div key={index} className="hra-criterion">
             <div className="hra-criterion-head">
               <Field label={`Criterion ${index + 1}`} error={errors[`c${index}`]} className="grow">
-                <Input value={criterion.criterion} maxLength={255} onChange={event => update(index, { criterion: event.target.value })} />
+                <Input value={criterion.criterion} maxLength={MAX_CRITERION} onChange={event => update(index, { criterion: event.target.value })} />
               </Field>
               <IconButton label={`Remove criterion ${index + 1}`} icon={Trash2} size="sm" onClick={() => setRubric(current => current.filter((_, i) => i !== index))} />
             </div>
@@ -280,13 +300,15 @@ function WorkSampleForm({ jobId, sample, requirements, onDone }: { jobId: number
             <div className="hra-anchor-edit">
               {ANCHOR_LEVELS.map(level => (
                 <Field key={level} label={`Level ${level}`} error={errors[`c${index}-${level}`]}>
-                  <Textarea rows={2} maxRows={6} value={criterion.anchors[level]} onChange={event => update(index, { anchors: { ...criterion.anchors, [level]: event.target.value } })} />
+                  <Textarea rows={2} maxRows={6} maxLength={MAX_ANCHOR} value={criterion.anchors[level] ?? ''} onChange={event => update(index, { anchors: { ...criterion.anchors, [level]: event.target.value } })} />
                 </Field>
               ))}
             </div>
           </div>
         ))}
-        <Button size="sm" icon={Plus} onClick={() => setRubric(current => [...current, emptyCriterion()])}>Add criterion</Button>
+        {rubric.length < MAX_CRITERIA
+          ? <Button size="sm" icon={Plus} onClick={() => setRubric(current => [...current, emptyCriterion()])}>Add criterion</Button>
+          : <p className="subtle">{MAX_CRITERIA} criteria is the maximum.</p>}
       </fieldset>
       {save.isError && <p className="ui-field-error" role="alert">{errorMessage(save.error)}</p>}
       <div className="hra-drawer-actions">
@@ -318,20 +340,58 @@ export function RubricEditor({ rubric, onChange, requirements }: { rubric: Rubri
 
 type AssignmentView = 'SUBMITTED' | 'STARTED' | 'ASSIGNED' | 'SCORED' | 'ALL'
 
-/** Assignments across the job (default: submitted, i.e. waiting for a score). Scoring happens on the applicant page. */
+/**
+ * Assignments across the job (default: submitted, i.e. waiting for a score). Scoring happens on the applicant page;
+ * submitted files can be downloaded (audited) and assignments cancelled (with a reason) right here.
+ */
 function AssignmentsOverview({ jobId }: { jobId: number }) {
+  const { can } = useAuth()
   const [status, setStatus] = useState<AssignmentView>('SUBMITTED')
   const assignments = useQuery({
     queryKey: qk.assignments(jobId, status),
     queryFn: ({ signal }) => workSamplesApi.assignments(jobId, status === 'ALL' ? undefined : (status as AssignmentStatus), signal),
   })
+  const cancel = useCancelAssignment(jobId)
+  const download = useSubmissionDownload()
+  const canDownload = can('workSamples.downloadFiles')
+  const canCancel = can('workSamples.cancel')
+  const rowActions = (a: WorkSampleAssignment): MenuItem[] => {
+    const items: MenuItem[] = [{ label: 'Open application', icon: ArrowRight, to: `/jobs/${jobId}/applicants/${a.applicationId}?tab=work-samples` }]
+    if (canDownload) {
+      for (const file of a.files ?? []) {
+        items.push({
+          label: `Download ${file.originalName} (${formatFileSize(file.sizeBytes)})`,
+          icon: Download,
+          disabled: download.busyFileId === file.id,
+          onSelect: () => download.start(a.id, file),
+          separated: items.length === 1,
+        })
+      }
+    }
+    if (canCancel && canCancelAssignment(a)) items.push({ label: 'Cancel assignment…', icon: X, danger: true, separated: true, onSelect: () => cancel.request(a) })
+    return items
+  }
   const columns: Column<WorkSampleAssignment>[] = [
     { key: 'app', header: 'Application', primary: true, cell: a => <Link className="hra-row-link" to={`/jobs/${jobId}/applicants/${a.applicationId}?tab=work-samples`}>Application #A-{a.applicationId}</Link> },
     { key: 'ws', header: 'Work sample', cell: a => a.workSampleTitle },
     { key: 'status', header: 'Status', width: '128px', cell: a => <WorkSampleStatusBadge status={a.status} /> },
     { key: 'due', header: 'Start by', width: '160px', hideWhenStacked: true, cell: a => (a.dueAt ? formatDateTime(a.dueAt) : <span className="subtle">No limit</span>) },
     { key: 'submitted', header: 'Submitted', width: '120px', hideWhenStacked: true, cell: a => (a.submittedAt ? <time dateTime={a.submittedAt} title={formatDateTime(a.submittedAt)}>{relativeTime(a.submittedAt)}</time> : <span className="subtle">—</span>) },
+    { key: 'files', header: 'Files', width: '72px', numeric: true, hideWhenStacked: true, cell: a => ((a.files?.length ?? 0) > 0 ? <span title={(a.files ?? []).map(f => f.originalName).join(', ')}>{a.files!.length}</span> : <span className="subtle">—</span>) },
     { key: 'score', header: 'Score', width: '88px', numeric: true, cell: a => (a.totalScore != null ? `${a.totalScore.toFixed(2)} / 4` : '—') },
+    {
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      width: '52px',
+      align: 'end',
+      cell: a => (
+        <Menu
+          label={`Actions for application #A-${a.applicationId}: ${a.workSampleTitle}`}
+          items={rowActions(a)}
+          trigger={props => <IconButton {...props} label={`Actions for application #A-${a.applicationId}`} icon={Ellipsis} size="sm" noTooltip />}
+        />
+      ),
+    },
   ]
   const views: { value: AssignmentView; label: string }[] = [
     { value: 'SUBMITTED', label: 'To score' },
@@ -341,7 +401,7 @@ function AssignmentsOverview({ jobId }: { jobId: number }) {
     { value: 'ALL', label: 'All' },
   ]
   return (
-    <Section title="Assignments" description="Open an application to read the submission and score it against the rubric.">
+    <Section title="Assignments" description={`Open an application to read the submission and score it against the rubric. Each row’s “⋯” menu downloads submitted files (audited)${canCancel ? ' or cancels the assignment' : ''}.`}>
       {assignments.isError ? (
         <QueryError error={assignments.error} title="Assignments could not be loaded" onRetry={() => void assignments.refetch()} compact />
       ) : (
@@ -357,6 +417,7 @@ function AssignmentsOverview({ jobId }: { jobId: number }) {
           empty={<EmptyState compact icon={ListChecks} title={status === 'SUBMITTED' ? 'Nothing waiting for a score' : `No ${views.find(v => v.value === status)?.label.toLowerCase()} assignments`} description={status === 'SUBMITTED' ? 'Submitted work samples appear here until someone scores them.' : undefined} />}
         />
       )}
+      {cancel.dialog}
     </Section>
   )
 }

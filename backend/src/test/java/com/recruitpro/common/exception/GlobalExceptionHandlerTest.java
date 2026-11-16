@@ -9,12 +9,20 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+
+import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -184,5 +192,49 @@ class GlobalExceptionHandlerTest {
                 new IllegalArgumentException("No enum constant com.recruitpro.internal.Secret"));
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("Invalid request", response.getBody().getMessage());
+    }
+
+    @Test
+    @DisplayName("An unparsable multipart request is a 400, not a 500; oversize uploads stay 413")
+    void handleMalformedMultipart() {
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler.handleMultipart(
+                new MultipartException("Failed to parse multipart servlet request"));
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertFalse(response.getBody().isSuccess());
+        assertEquals(HttpStatus.PAYLOAD_TOO_LARGE,
+                exceptionHandler.handleUploadTooLarge(new MaxUploadSizeExceededException(10)).getStatusCode());
+    }
+
+    @Test
+    @DisplayName("A missing required header is a 400 without internal details")
+    void handleMissingHeader() throws Exception {
+        java.lang.reflect.Method method = GlobalExceptionHandlerTest.class.getDeclaredMethod("headerTarget", String.class);
+        org.springframework.core.MethodParameter parameter = new org.springframework.core.MethodParameter(method, 0);
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler.handleRequestBinding(
+                new MissingRequestHeaderException("X-Custom", parameter));
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("Invalid request", response.getBody().getMessage());
+    }
+
+    @SuppressWarnings("unused")
+    private void headerTarget(String header) {
+    }
+
+    @Test
+    @DisplayName("Not acceptable is a 406 without a body the client could not read anyway")
+    void handleNotAcceptable() {
+        ResponseEntity<Void> response = exceptionHandler.handleNotAcceptable(
+                new HttpMediaTypeNotAcceptableException(List.of(org.springframework.http.MediaType.APPLICATION_JSON)));
+        assertEquals(HttpStatus.NOT_ACCEPTABLE, response.getStatusCode());
+        assertNull(response.getBody());
+    }
+
+    @Test
+    @DisplayName("405 answers carry the Allow header")
+    void handleMethodNotSupportedSetsAllow() {
+        ResponseEntity<ApiResponse<Void>> response = exceptionHandler.handleMethodNotSupported(
+                new HttpRequestMethodNotSupportedException("DELETE", Set.of("GET", "POST")));
+        assertEquals(HttpStatus.METHOD_NOT_ALLOWED, response.getStatusCode());
+        assertEquals(Set.of(HttpMethod.GET, HttpMethod.POST), response.getHeaders().getAllow());
     }
 }

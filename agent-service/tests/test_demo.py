@@ -73,3 +73,12 @@ def test_demo_fixtures_are_only_for_demo_identifiers():
     assert not build_network(on, "real-user").demo
     assert not build_network(on, "https://example.com/demo-page").demo
     assert not build_network(off, "demo-asha").demo
+
+
+def test_demo_ravi_always_shows_bulk_history(demo_client):
+    """The bulk-history repository used to have a fixed creation date that aged out of the 14-day window."""
+    data = demo_client.post("/api/v1/verify/code", headers=HEADERS, json={
+        "provider": "github", "login": "demo-ravi", "ownershipProven": True,
+        "claims": [{"id": "fact:1", "type": "SKILL", "value": "Java"}]}).json()
+    codes = {note["code"] for note in data["verdicts"][0]["integrityNotes"]}
+    assert {"BULK_HISTORY", "FORK_ONLY"} <= codes and "BACKDATED_HISTORY" not in codes

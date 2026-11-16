@@ -34,6 +34,19 @@ public interface BackgroundJobRepository extends JpaRepository<BackgroundJob, Lo
 
     List<BackgroundJob> findAllByStatusAndLockedAtBefore(BackgroundJobStatus status, LocalDateTime cutoff);
 
+    /**
+     * Conditional release of one stale RUNNING job: only succeeds while the job is still RUNNING with a lock older than
+     * {@code cutoff}, so two instances releasing at the same time cannot both act on it (and a job that another worker
+     * re-claimed meanwhile, with a fresh lock, is left alone).
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update BackgroundJob j set j.status = :status, j.lockedAt = null, j.lastError = :error, j.runAfter = :runAfter, "
+            + "j.updatedAt = :now where j.id = :id and j.status = :running and j.lockedAt < :cutoff")
+    int releaseStale(@Param("id") Long id, @Param("running") BackgroundJobStatus running,
+                     @Param("cutoff") LocalDateTime cutoff, @Param("status") BackgroundJobStatus status,
+                     @Param("error") String error, @Param("runAfter") LocalDateTime runAfter,
+                     @Param("now") LocalDateTime now);
+
     long countByStatus(BackgroundJobStatus status);
 
     Optional<BackgroundJob> findByDedupeKey(String dedupeKey);

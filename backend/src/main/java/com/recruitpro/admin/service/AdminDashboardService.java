@@ -12,16 +12,18 @@ import com.recruitpro.user.entity.Role;
 import com.recruitpro.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Organisation-scoped dashboard metrics (D3) with real system health (M11). */
+/**
+ * Organisation-scoped dashboard metrics (D3) with real system health (M11). Deliberately not transactional: the health
+ * check makes outbound HTTP calls (up to 2 s each) that must not hold a database connection, and a failing health
+ * query must not mark a surrounding transaction rollback-only (each repository call has its own transaction).
+ */
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class AdminDashboardService {
     private final UserRepository userRepository;
     private final JobRepository jobRepository;

@@ -47,12 +47,23 @@ export function InterviewDetailPage() {
   return <InterviewView interview={query.data} />
 }
 
+/** Why the assigned interviewer can no longer submit or edit the scorecard. */
+function scorecardLockedNote(interview: InterviewDetail): string {
+  const status = interview.applicationStatus
+  if (status === 'WITHDRAWN') return 'The candidate withdrew the application, so the scorecard is closed.'
+  if (status === 'SELECTED' || status === 'REJECTED') return `The application was ${status === 'SELECTED' ? 'selected' : 'rejected'}, so the scorecard is locked. Earlier versions are kept for the audit trail.`
+  return 'The scorecard can no longer be changed for this interview.'
+}
+
 function InterviewView({ interview }: { interview: InterviewDetail }) {
   const user = useCurrentUser()
   const { can } = useAuth()
   const mine = interview.interviewerUserId === user.id
-  const canScore = mine && interview.status === 'SCHEDULED' && !interview.scorecard
-  const canEdit = mine && interview.scorecard != null && interview.status !== 'CANCELLED'
+  // The server says whether the scorecard is still open (R6-B4); it is still only the assigned interviewer's to write.
+  const locked = interview.scorecardEditable === false
+  const canScore = mine && interview.status === 'SCHEDULED' && !interview.scorecard && !locked
+  const canEdit = mine && interview.scorecard != null && interview.status !== 'CANCELLED' && !locked
+  const lockedNote = mine && locked && interview.status !== 'CANCELLED' ? scorecardLockedNote(interview) : null
   const [editing, setEditing] = useState(false)
   const link = safeHttpUrl(interview.location)
   const start = new Date(interview.scheduledAt).getTime()
@@ -67,7 +78,8 @@ function InterviewView({ interview }: { interview: InterviewDetail }) {
         status={
           interview.scorecard ? <Badge tone="success">Scorecard in</Badge>
             : interview.status === 'CANCELLED' ? <Badge tone="neutral" variant="outline">Cancelled</Badge>
-              : start < Date.now() ? <Badge tone="warning">Awaiting scorecard</Badge> : <Badge tone="info">Scheduled</Badge>
+              : locked ? <Badge tone="neutral" variant="outline">Scorecard closed</Badge>
+                : start < Date.now() ? <Badge tone="warning">Awaiting scorecard</Badge> : <Badge tone="info">Scheduled</Badge>
         }
         meta={[
           <span key="t" className="numeric">{slotLabel(interview.scheduledAt, interview.durationMinutes)}</span>,
@@ -97,12 +109,13 @@ function InterviewView({ interview }: { interview: InterviewDetail }) {
               </div>
               <ScorecardView scorecard={interview.scorecard} questions={interview.kit} />
               {canEdit && <p className="iv-fine">You can edit it until the application is decided. Earlier versions are kept for the audit trail.</p>}
+              {lockedNote && <p className="iv-fine">{lockedNote}</p>}
             </section>
           ) : (
             <section aria-labelledby="iv-kit-h" className="iv-section">
               <div className="iv-section-head">
                 <h2 id="iv-kit-h" className="t-h2">Questions</h2>
-                <p className="iv-fine">{interview.status === 'CANCELLED' ? 'This interview was cancelled.' : mine ? '' : `${interview.interviewerName} has not submitted a scorecard yet.`}</p>
+                <p className="iv-fine">{interview.status === 'CANCELLED' ? 'This interview was cancelled.' : lockedNote ? lockedNote : mine ? '' : `${interview.interviewerName} has not submitted a scorecard yet.`}</p>
               </div>
               {interview.kit.length === 0 ? <EmptyState icon={FileText} title="No interview kit yet" description="An HR manager can generate one on the job’s Interview kit tab." /> : (
                 <ol className="iv-questions">
@@ -152,10 +165,14 @@ function ScorecardForm({ interview, existing, onDone, onCancel }: { interview: I
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const editing = existing != null
-  const key = `scorecard:${interview.id}${editing ? ':edit' : ''}`
+  const { user } = useAuth()
+  const key = `scorecard:${user?.id ?? 'anon'}:${interview.id}${editing ? ':edit' : ''}`
   const initial = useMemo<Draft>(() => {
     const saved = readDraft<Draft>(key)?.value
-    if (saved) return saved
+    // A stored draft is used only if it has the expected shape (another app version could have written it).
+    if (saved && typeof saved === 'object' && saved.ratings && typeof saved.ratings === 'object' && saved.notes && typeof saved.notes === 'object') {
+      return { ratings: saved.ratings, notes: saved.notes, recommendation: saved.recommendation ?? null, summary: typeof saved.summary === 'string' ? saved.summary : '' }
+    }
     return {
       ratings: Object.fromEntries(interview.kit.map(q => [q.id, existing?.ratings.find(r => r.questionId === q.id)?.rating ?? null])),
       notes: Object.fromEntries((existing?.ratings ?? []).filter(r => r.notes).map(r => [r.questionId, r.notes as string])),
@@ -262,7 +279,7 @@ function ScorecardForm({ interview, existing, onDone, onCancel }: { interview: I
             <span><strong className="numeric">{rated}</strong> of <span className="numeric">{interview.kit.length}</span> rated{draft.recommendation ? <> · {REC_WORD[draft.recommendation]}</> : null}</span>
           </p>
           <div className="ap-foot-actions">
-            {onCancel && <Button variant="secondary" onClick={onCancel} disabled={submit.isPending}>Cancel</Button>}
+            {onCancel && <Button variant="secondary" onClick={() => { autosave.clear(); onCancel() }} disabled={submit.isPending}>Cancel</Button>}
             <Button type="submit" variant="primary">{editing ? 'Save changes' : 'Submit scorecard'}</Button>
           </div>
         </div>

@@ -193,7 +193,8 @@
     animation-delay: calc(var(--i, 0) * var(--stagger-step));
   }
   .sx-codes-grid li::before { content: counter(code, decimal-leading-zero); color: var(--fg-subtle); letter-spacing: 0; }
-  .sx-codes-actions { display: flex; flex-wrap: wrap; gap: var(--s-4); }
+  .sx-codes-actions { display: flex; flex-wrap: wrap; gap: var(--s-4); align-items: center; }
+  .sx-codes-copyfail { flex-basis: 100%; color: var(--fg-muted); font-size: var(--text-sm); }
 
   @media (prefers-reduced-motion: reduce) {
     .sx-domains-list li, .sx-codes-grid li, .sx-qr, .sx-rating-option[data-checked] .sx-rating-num { animation: none; }

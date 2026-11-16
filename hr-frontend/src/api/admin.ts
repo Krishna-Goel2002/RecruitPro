@@ -1,4 +1,4 @@
-import { api, downloadFile } from './client'
+import { api, downloadFileWithHeaders } from './client'
 import type {
   AdminDashboard,
   AdminJob,
@@ -31,7 +31,11 @@ export const adminApi = {
   jobs: (params: AdminJobParams, signal?: AbortSignal) => api.get<Page<AdminJob>>('/admin/jobs', params, signal),
   overrideJobStatus: (id: number, status: JobStatus, reason: string) => api.patch<AdminJob>(`/admin/jobs/${id}/status`, { status, reason }),
   audit: (params: AuditParams, signal?: AbortSignal) => api.get<Page<AuditEvent>>('/admin/audit-logs', params, signal),
-  exportAudit: (from: string | undefined, to: string | undefined) => downloadFile('/admin/audit-export', 'audit.csv', { from, to }),
+  /** `truncated`: the server stopped at its 50,000-row cap (header `X-Export-Truncated: true`, R1-U8). */
+  exportAudit: async (from: string | undefined, to: string | undefined): Promise<{ filename: string; truncated: boolean }> => {
+    const { filename, headers } = await downloadFileWithHeaders('/admin/audit-export', 'audit.csv', { from, to })
+    return { filename, truncated: (headers.get('X-Export-Truncated') ?? '').trim().toLowerCase() === 'true' }
+  },
   /** `from`/`to`: inclusive ISO dates (UTC days); `from > to` or a malformed date is 400. */
   fairness: (range: FairnessRange, signal?: AbortSignal) => api.get<FairnessReport>('/admin/fairness', { from: range.from, to: range.to }, signal),
 }

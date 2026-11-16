@@ -23,9 +23,12 @@ import com.recruitpro.user.service.UserAccountService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.text.Normalizer;
@@ -43,6 +46,8 @@ public class OrganizationService {
 
     private static final Logger log = LoggerFactory.getLogger(OrganizationService.class);
     private static final int MAX_SLUG_LENGTH = 80;
+    /** R1-U6: sign-ups that collide on the slug (two sign-ups with the same name at once) are retried this often. */
+    static final int MAX_SIGNUP_ATTEMPTS = 3;
 
     private final OrganizationRepository organizationRepository;
     private final UserRepository userRepository;
@@ -52,10 +57,12 @@ public class OrganizationService {
     private final SecurityUtils securityUtils;
     private final SecretCipher secretCipher;
     private final boolean selfSignupEnabled;
+    private final TransactionTemplate transactionTemplate;
 
     public OrganizationService(OrganizationRepository organizationRepository, UserRepository userRepository,
                                UserAccountService userAccountService, AuthService authService,
                                AuditService auditService, SecurityUtils securityUtils, SecretCipher secretCipher,
+                               PlatformTransactionManager transactionManager,
                                @Value("${app.organizations.self-signup-enabled:true}") boolean selfSignupEnabled) {
         this.organizationRepository = organizationRepository;
         this.userRepository = userRepository;
@@ -65,11 +72,29 @@ public class OrganizationService {
         this.securityUtils = securityUtils;
         this.secretCipher = secretCipher;
         this.selfSignupEnabled = selfSignupEnabled;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    /** POST /api/v1/organizations/signup: new organisation with its first ADMIN; returns a session. */
-    @Transactional
+    /**
+     * POST /api/v1/organizations/signup: new organisation with its first ADMIN; returns a session. Each attempt runs in
+     * its own transaction; when two sign-ups with the same name race for the same slug, the loser's unique violation
+     * is retried in a fresh transaction (which then sees the winner's slug and picks the next one) instead of a
+     * generic 409 (R1-U6). A concurrent sign-up with the same e-mail ends as "Email is already registered".
+     */
     public AuthSession signup(OrganizationSignupRequest request) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return transactionTemplate.execute(status -> signupOnce(request));
+            } catch (DataIntegrityViolationException ex) {
+                if (attempt >= MAX_SIGNUP_ATTEMPTS) {
+                    throw ex;
+                }
+                log.info("Organisation sign-up collided with a concurrent sign-up (attempt {}); retrying", attempt);
+            }
+        }
+    }
+
+    private AuthSession signupOnce(OrganizationSignupRequest request) {
         if (!selfSignupEnabled) {
             throw new ForbiddenException("Organisation sign-up is disabled on this installation");
         }
@@ -110,6 +135,12 @@ public class OrganizationService {
         log.info("Bootstrap created organisation '{}' (id {}) with administrator {}", organization.getName(),
                 organization.getId(), admin.getEmail());
         return true;
+    }
+
+    /** Whether any organisation exists (BootstrapRunner, after losing a first-start race). */
+    @Transactional(readOnly = true)
+    public boolean anyOrganizationExists() {
+        return organizationRepository.count() > 0;
     }
 
     /** Creates an organisation with a unique slug derived from the name (or the preferred slug). */

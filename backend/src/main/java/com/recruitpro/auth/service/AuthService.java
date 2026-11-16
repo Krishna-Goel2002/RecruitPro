@@ -12,6 +12,7 @@ import com.recruitpro.auth.mfa.dto.MfaChallengeResponse;
 import com.recruitpro.auth.validation.PasswordPolicy;
 import com.recruitpro.auth.web.Portal;
 import com.recruitpro.common.exception.BadRequestException;
+import com.recruitpro.common.exception.TooManyRequestsException;
 import com.recruitpro.common.exception.UnauthorizedException;
 import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.notification.entity.NotificationTemplate;
@@ -31,6 +32,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -49,6 +51,9 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
+    /** Answer (429) while the account is locked after repeated failures. */
+    public static final String TOO_MANY_ATTEMPTS = "Too many failed attempts. Please try again later.";
 
     private final UserRepository userRepository;
     private final UserAccountService userAccountService;
@@ -104,7 +109,12 @@ public class AuthService {
         try {
             authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(email, request.getPassword()));
-        } catch (LockedException ex) {
+        } catch (LockedException | DisabledException ex) {
+            // Spring checks "locked" and "enabled" before the password, so these answers came back without the
+            // bcrypt comparison. Spend it anyway: a locked or disabled account must not be distinguishable from a
+            // wrong password by response time (R1-L1). The result is ignored.
+            userRepository.findByEmail(email)
+                    .ifPresent(user -> passwordEncoder.matches(request.getPassword(), user.getPasswordHash()));
             throw new BadCredentialsException("Invalid credentials");
         } catch (BadCredentialsException ex) {
             userRepository.findByEmail(email).ifPresent(user -> userAccountService.recordFailedLogin(user.getId()));
@@ -188,6 +198,9 @@ public class AuthService {
         if (user.getEmailVerifiedAt() == null) {
             user.setEmailVerifiedAt(UtcTime.now());
         }
+        // Second sign-in steps started with the old password must not survive the reset (R1-L3).
+        userTokenService.invalidateOutstanding(user.getId(), UserTokenPurpose.RESET_PASSWORD,
+                UserTokenPurpose.MFA_LOGIN, UserTokenPurpose.MFA_ENROLL);
         refreshTokenService.revokeAllForUser(user.getId(), RefreshTokenService.REASON_PASSWORD_CHANGED);
         auditService.recordFor(user.getOrganizationId(), user.getId(), user.getEmail(), AuditActions.PASSWORD_RESET,
                 "USER", String.valueOf(user.getId()), "Password reset through an emailed link; all sessions revoked");
@@ -202,13 +215,22 @@ public class AuthService {
         CurrentUser current = securityUtils.currentUser();
         User user = userRepository.findById(current.userId())
                 .orElseThrow(() -> new UnauthorizedException("Authentication is required"));
+        // R1-H2: the current-password check is a password oracle for anyone holding a (stolen) access token, so it
+        // shares the sign-in lockout: refused while locked, and every wrong password counts as a failed sign-in.
+        if (UserAccountService.isLocked(user)) {
+            throw new TooManyRequestsException(TOO_MANY_ATTEMPTS, UserAccountService.lockRemainingSeconds(user));
+        }
         if (currentPassword == null || !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            userAccountService.recordFailedLogin(user.getId());
             throw new BadRequestException("Current password is incorrect");
         }
         if (newPassword != null && passwordEncoder.matches(newPassword, user.getPasswordHash())) {
             throw new BadRequestException("The new password must be different from the current password");
         }
         userAccountService.applyNewPassword(user, newPassword);
+        // A reset link or a pending second sign-in step issued before the change stops working (R1-L3).
+        userTokenService.invalidateOutstanding(user.getId(), UserTokenPurpose.RESET_PASSWORD,
+                UserTokenPurpose.MFA_LOGIN, UserTokenPurpose.MFA_ENROLL);
         refreshTokenService.revokeAllForUser(user.getId(), RefreshTokenService.REASON_PASSWORD_CHANGED);
         auditService.recordFor(user.getOrganizationId(), user.getId(), user.getEmail(), AuditActions.PASSWORD_CHANGED,
                 "USER", String.valueOf(user.getId()), "Password changed; other sessions revoked");

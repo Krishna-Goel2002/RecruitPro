@@ -148,6 +148,11 @@ public class CandidateLedgerService {
                 if (!wasShared) {
                     auditService.record(VerificationAuditActions.VERDICT_SHARED, "CLAIM_VERDICT", String.valueOf(verdict.getId()),
                             "Candidate shared a " + verdict.getVerdict() + " verdict from " + verdict.getVerifier());
+                    // R3-B11: shared again after HIDE: an organisation's earlier CONFIRM applies again, so its
+                    // matching must pick the lift back up (HIDE re-matched when it removed it).
+                    if (reviewRepository.existsByVerdictIdIn(List.of(verdict.getId()))) {
+                        matchTriggerService.requestMatchForCandidate(me.getId());
+                    }
                 }
             }
             case "HIDE" -> {

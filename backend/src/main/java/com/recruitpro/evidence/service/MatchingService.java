@@ -15,15 +15,15 @@ import com.recruitpro.candidate.repository.ResumeAnalysisRepository;
 import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.common.util.JsonText;
 import com.recruitpro.evidence.entity.CandidateClaim;
+import com.recruitpro.evidence.entity.CandidateClaimVerification;
 import com.recruitpro.evidence.repository.CandidateClaimRepository;
+import com.recruitpro.evidence.repository.CandidateClaimVerificationRepository;
 import com.recruitpro.hr.entity.Job;
 import com.recruitpro.hr.entity.JobMatchRun;
 import com.recruitpro.hr.entity.JobRequirement;
 import com.recruitpro.hr.repository.JobMatchRunRepository;
 import com.recruitpro.hr.repository.JobRepository;
 import com.recruitpro.hr.repository.JobRequirementRepository;
-import com.recruitpro.user.entity.User;
-import com.recruitpro.user.repository.UserRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,7 +38,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +67,7 @@ public class MatchingService {
     private final ResumeAnalysisFactRepository factRepository;
     private final CandidateClaimRepository claimRepository;
     private final JobMatchRunRepository matchRunRepository;
-    private final UserRepository userRepository;
+    private final CandidateClaimVerificationRepository claimVerificationRepository;
     private final ObjectProvider<EvidenceContributor> contributors;
     private final ObjectMapper objectMapper;
     private final MatchRequestBuilder requestBuilder;
@@ -76,7 +75,8 @@ public class MatchingService {
     public MatchingService(ApplicationRepository applicationRepository, JobRepository jobRepository,
                            JobRequirementRepository requirementRepository, ResumeAnalysisRepository analysisRepository,
                            ResumeAnalysisFactRepository factRepository, CandidateClaimRepository claimRepository,
-                           JobMatchRunRepository matchRunRepository, UserRepository userRepository,
+                           JobMatchRunRepository matchRunRepository,
+                           CandidateClaimVerificationRepository claimVerificationRepository,
                            ObjectProvider<EvidenceContributor> contributors, ObjectMapper objectMapper) {
         this.applicationRepository = applicationRepository;
         this.jobRepository = jobRepository;
@@ -85,7 +85,7 @@ public class MatchingService {
         this.factRepository = factRepository;
         this.claimRepository = claimRepository;
         this.matchRunRepository = matchRunRepository;
-        this.userRepository = userRepository;
+        this.claimVerificationRepository = claimVerificationRepository;
         this.contributors = contributors;
         this.objectMapper = objectMapper;
         this.requestBuilder = new MatchRequestBuilder(objectMapper);
@@ -104,7 +104,7 @@ public class MatchingService {
             return null;
         }
         Job job = application.getJob();
-        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderById(job.getId());
+        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId());
         if (requirements.isEmpty()) {
             return null;
         }
@@ -115,12 +115,11 @@ public class MatchingService {
         boolean usable = USABLE_ANALYSIS.contains(analysis.getStatus());
         List<ResumeAnalysisFact> facts = usable ? factRepository.findAllByAnalysisIdOrderById(analysis.getId()) : List.of();
         List<CandidateClaim> candidateClaims = claimRepository.findAllByCandidateIdOrderByIdAsc(application.getCandidate().getId());
-        Map<Long, Long> verifierOrganizations = verifierOrganizations(candidateClaims);
+        // R2-H02: only the job's organisation's own verification of each claim counts.
+        Map<Long, CandidateClaimVerification> verifications = organizationVerifications(candidateClaims, job.getOrganizationId());
         List<ClaimEvidence> claims = new ArrayList<>();
         for (CandidateClaim claim : candidateClaims) {
-            ClaimEvidence evidence = ClaimEvidence.forOrganization(claim,
-                    claim.getVerifiedByUserId() == null ? null : verifierOrganizations.get(claim.getVerifiedByUserId()),
-                    job.getOrganizationId());
+            ClaimEvidence evidence = ClaimEvidence.forOrganization(claim, verifications.get(claim.getId()));
             if (!evidence.rejected()) {
                 claims.add(evidence);
             }
@@ -188,22 +187,17 @@ public class MatchingService {
         return matchRunRepository.save(run);
     }
 
-    private Map<Long, Long> verifierOrganizations(List<CandidateClaim> claims) {
-        Set<Long> verifierIds = new HashSet<>();
-        for (CandidateClaim claim : claims) {
-            if (claim.getVerifiedByUserId() != null) {
-                verifierIds.add(claim.getVerifiedByUserId());
-            }
+    private Map<Long, CandidateClaimVerification> organizationVerifications(List<CandidateClaim> claims, Long organizationId) {
+        Map<Long, CandidateClaimVerification> result = new HashMap<>();
+        if (claims.isEmpty() || organizationId == null) {
+            return result;
         }
-        Map<Long, Long> organizations = new HashMap<>();
-        if (!verifierIds.isEmpty()) {
-            for (User user : userRepository.findAllById(verifierIds)) {
-                if (user.getOrganizationId() != null) {
-                    organizations.put(user.getId(), user.getOrganizationId());
-                }
-            }
+        List<Long> claimIds = claims.stream().map(CandidateClaim::getId).toList();
+        for (CandidateClaimVerification verification
+                : claimVerificationRepository.findAllByClaimIdInAndOrganizationId(claimIds, organizationId)) {
+            result.put(verification.getClaimId(), verification);
         }
-        return organizations;
+        return result;
     }
 
     /** Why this run happened, derived by comparing with the previous current run. */

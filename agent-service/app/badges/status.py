@@ -38,12 +38,34 @@ def _decode_list(encoded: str) -> bytes:
     return data
 
 
+MAX_STATUS_ENTRIES = 3
+
+
 def check_status(status: Any, fetcher: Fetcher,
                  verify_jwt: Callable[[str], dict[str, Any] | None]) -> StatusResult:
-    """``verify_jwt`` returns the verified payload of a list VC-JWT from the same issuer, or None."""
+    """``verify_jwt`` returns the verified payload of a list VC-JWT from the same issuer, or None.
+
+    ``credentialStatus`` may list several entries (the Bitstring Status List spec uses one per purpose, e.g. a
+    suspension list and a revocation list): every revocation/suspension entry is checked (at most 3) and any set bit
+    means revoked; entries with other purposes are ignored when such an entry exists."""
     if status is None:
         return StatusResult("not_checked", None)
-    entry = status[0] if isinstance(status, list) and status else status
+    entries = status if isinstance(status, list) else [status]
+    if not entries:
+        return StatusResult("not_checked", None)
+    relevant = [entry for entry in entries if isinstance(entry, dict)
+                and str(entry.get("statusPurpose", "revocation")) in {"revocation", "suspension"}]
+    results = [_check_entry(entry, fetcher, verify_jwt) for entry in (relevant or entries)[:MAX_STATUS_ENTRIES]]
+    revoked = next((result for result in results if result.state == "revoked"), None)
+    if revoked is not None:
+        return revoked
+    unchecked = next((result for result in results if result.state == "not_checked"), None)
+    if unchecked is not None or len(relevant or entries) > MAX_STATUS_ENTRIES:
+        return unchecked or StatusResult("not_checked", "REVOCATION_NOT_CHECKED")
+    return next((result for result in results if result.warning), results[0])
+
+
+def _check_entry(entry: Any, fetcher: Fetcher, verify_jwt: Callable[[str], dict[str, Any] | None]) -> StatusResult:
     if not isinstance(entry, dict) or entry.get("type") not in SUPPORTED_TYPES:
         return StatusResult("not_checked", "REVOCATION_NOT_CHECKED")
     if str(entry.get("statusPurpose", "revocation")) not in {"revocation", "suspension"}:
@@ -71,7 +93,7 @@ def check_status(status: Any, fetcher: Fetcher,
     else:
         try:
             credential = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):
             return StatusResult("not_checked", "REVOCATION_NOT_CHECKED", document=text, url=url)
         warning = "STATUS_LIST_UNVERIFIED"
     subject = credential.get("credentialSubject") if isinstance(credential, dict) else None

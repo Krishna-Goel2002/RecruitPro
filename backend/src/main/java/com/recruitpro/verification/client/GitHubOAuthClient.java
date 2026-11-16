@@ -11,7 +11,6 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
-import java.util.List;
 
 /**
  * GitHub OAuth (authorization code) for connecting a candidate's account: exchanges the code at
@@ -74,13 +73,8 @@ public class GitHubOAuthClient {
         public String toString() {
             return "TokenResponse[scope=" + scope + ", error=" + error + "]";
         }
-
-        public List<String> scopes() {
-            if (scope == null || scope.isBlank()) {
-                return List.of();
-            }
-            return List.of(scope.split("[,\\s]+"));
-        }
+        // R3-B19 (integration pass): the unused scopes() helper (leading empty element for a scope string starting with
+        // a separator) was removed; the granted scopes are stored as GitHub's raw string.
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

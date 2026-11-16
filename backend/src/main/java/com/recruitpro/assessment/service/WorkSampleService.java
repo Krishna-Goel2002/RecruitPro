@@ -140,7 +140,7 @@ public class WorkSampleService {
             throw new BadRequestException("Cancelled jobs cannot get work samples");
         }
         CurrentUser actor = securityUtils.currentUser();
-        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderById(job.getId());
+        List<JobRequirement> requirements = requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId());
         List<AiMatchRequest.Requirement> aiRequirements = new ArrayList<>();
         Set<Long> requirementIds = new HashSet<>();
         for (JobRequirement requirement : requirements) {
@@ -492,7 +492,7 @@ public class WorkSampleService {
 
     private Set<Long> requirementIds(Job job) {
         Set<Long> ids = new HashSet<>();
-        for (JobRequirement requirement : requirementRepository.findByJobIdOrderById(job.getId())) {
+        for (JobRequirement requirement : requirementRepository.findByJobIdOrderByDisplayOrderAscIdAsc(job.getId())) {
             ids.add(requirement.getId());
         }
         return ids;

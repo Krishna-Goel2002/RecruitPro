@@ -8,6 +8,8 @@ allow-list of content types, and robots.txt for crawled pages.
 from __future__ import annotations
 
 import ipaddress
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 from urllib.parse import urljoin, urlsplit
@@ -17,7 +19,7 @@ import httpx
 from app.core.budget import Budget, BudgetExceeded
 from app.core.config import Settings
 from app.fetch.robots import RobotsPolicy
-from app.fetch.ssrf import CheckedTarget, FetchError, Resolver, check_url, system_resolver
+from app.fetch.ssrf import BlockedUrlError, CheckedTarget, FetchError, Resolver, check_url, system_resolver
 
 MAX_REDIRECTS = 5
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
@@ -28,6 +30,23 @@ DATA_TYPES = frozenset({"application/json", "application/ld+json", "text/plain",
                         "text/html"})
 ROBOTS_MAX_BYTES = 256 * 1024
 TransportFactory = Callable[[], httpx.BaseTransport]
+_META_CHARSET = re.compile(rb"""<meta[^>]{0,200}?charset\s*=\s*["']?\s*([A-Za-z0-9._:-]{1,40})""", re.I)
+
+
+def _now() -> float:
+    """Monotonic clock of the fetcher (a seam for tests)."""
+    return time.monotonic()
+
+
+def sniff_charset(body: bytes) -> str | None:
+    """Charset of an HTML body without a ``charset`` header parameter: a byte-order mark, else ``<meta charset>`` /
+    ``<meta http-equiv=content-type content="...; charset=...">`` in the first 2 KB."""
+    if body.startswith(b"\xef\xbb\xbf"):
+        return "utf-8"
+    if body.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return "utf-16"
+    match = _META_CHARSET.search(body[:2048])
+    return match.group(1).decode("ascii").lower() if match else None
 
 
 @dataclass
@@ -46,8 +65,11 @@ class FetchResult:
         return 200 <= self.status < 300
 
     def text(self) -> str:
+        charset = self.charset
+        if charset is None and self.content_type in {"text/html", "application/xhtml+xml"}:
+            charset = sniff_charset(self.body)
         try:
-            return self.body.decode(self.charset or "utf-8", errors="replace")
+            return self.body.decode(charset or "utf-8", errors="replace")
         except LookupError:
             return self.body.decode("utf-8", errors="replace")
 
@@ -73,6 +95,13 @@ def _accepted(media: str, accept: frozenset[str]) -> bool:
     if media in accept:
         return True
     return media.endswith("+json") and "application/json" in accept
+
+
+def _is_ipv6_literal(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).version == 6
+    except ValueError:
+        return False
 
 
 def origin(url: str) -> str:
@@ -105,7 +134,10 @@ class SafeFetcher:
                 location = result.location
                 if not location:
                     raise FetchError("BAD_REDIRECT", "redirect without a location")
-                current = urljoin(current, location)
+                following = urljoin(current, location)
+                if urlsplit(current).scheme.lower() == "https" and urlsplit(following).scheme.lower() == "http":
+                    raise BlockedUrlError("redirects from https to http are not allowed")
+                current = following
                 redirects.append(current)
                 continue
             result.redirects = redirects
@@ -145,11 +177,16 @@ class SafeFetcher:
         port_part = "" if target.port == default_port else f":{target.port}"
         path = target.parts.path or "/"
         pinned_url = f"{scheme}://{ip_host}{port_part}{path}" + (f"?{target.parts.query}" if target.parts.query else "")
-        host_header = target.host + port_part
+        # An IPv6 literal host needs its brackets in the Host header (RFC 7230 5.4).
+        host_header = (f"[{target.host}]" if _is_ipv6_literal(target.host) else target.host) + port_part
         headers = {"Host": host_header, "User-Agent": self.settings.user_agent,
                    "Accept": ", ".join(sorted(accept)) + ", */*;q=0.1", "Accept-Encoding": "gzip, deflate"}
         extensions = {"sni_hostname": target.host} if scheme == "https" else {}
         timeout = httpx.Timeout(self.settings.fetch_timeout_seconds)
+        # httpx timeouts apply per network operation, so a server trickling bytes could hold a request open far
+        # longer; the whole request (headers and body) must finish within the timeout and the verification deadline.
+        budget_left = self.budget.deadline_seconds - (time.monotonic() - self.budget.started)
+        deadline = _now() + max(0.0, min(self.settings.fetch_timeout_seconds, budget_left))
         try:
             with httpx.Client(transport=self.transport_factory(), timeout=timeout, follow_redirects=False,
                               trust_env=False) as client:
@@ -170,11 +207,15 @@ class SafeFetcher:
                             truncated = True
                             del body[max_bytes:]
                             break
+                        if _now() > deadline:
+                            raise FetchError("TIMEOUT", "the response took too long to arrive")
                     return FetchResult(url=target.url, status=response.status_code, content_type=media,
                                        body=bytes(body), truncated=truncated, charset=charset)
                 finally:
                     response.close()
         except httpx.TimeoutException as exc:
             raise FetchError("TIMEOUT", "the request timed out") from exc
+        except httpx.InvalidURL as exc:  # e.g. characters httpx refuses; not an HTTPError subclass
+            raise BlockedUrlError("malformed URL") from exc
         except httpx.HTTPError as exc:
             raise FetchError("NETWORK_ERROR", type(exc).__name__) from exc

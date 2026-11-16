@@ -8,7 +8,9 @@ import com.recruitpro.application.entity.ApplicationDecisionHistory;
 import com.recruitpro.application.entity.ApplicationStatus;
 import com.recruitpro.application.repository.ApplicationDecisionHistoryRepository;
 import com.recruitpro.application.repository.ApplicationRepository;
+import com.recruitpro.assessment.dto.WorkSampleFileResponse;
 import com.recruitpro.assessment.entity.WorkSampleAssignment;
+import com.recruitpro.assessment.service.WorkSampleFileService;
 import com.recruitpro.assessment.repository.WorkSampleAssignmentRepository;
 import com.recruitpro.candidate.dto.CandidateProfileResponse;
 import com.recruitpro.candidate.entity.CandidateProfile;
@@ -35,6 +37,7 @@ import com.recruitpro.organization.entity.Organization;
 import com.recruitpro.organization.repository.OrganizationRepository;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.verification.service.VerificationPrivacyService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -96,6 +99,14 @@ public class CandidateDataExportService {
         this.verificationPrivacyService = verificationPrivacyService;
     }
 
+    /** Work-sample submission files (setter-injected to keep the constructor stable). */
+    private WorkSampleFileService workSampleFileService;
+
+    @Autowired
+    public void setWorkSampleFileService(WorkSampleFileService workSampleFileService) {
+        this.workSampleFileService = workSampleFileService;
+    }
+
     public CandidateDataExport exportMine() {
         CandidateProfile profile = profileService.getOrProvisionMine();
         User user = profile.getUser();
@@ -121,13 +132,13 @@ public class CandidateDataExportService {
                             fact.getReviewedValue(), fact.getReviewStatus() == null ? null : fact.getReviewStatus().name(),
                             fact.getEvidence(), fact.getSourceSection(),
                             fact.getEvidenceTier() == null ? null : fact.getEvidenceTier().name(),
-                            fact.getReviewedAt(), fact.getCreatedAt()));
+                            fact.getReviewedAt(), fact.getCreatedAt(), json(fact.getAttributesJson())));
                 }
             }
         }
 
-        List<CandidateClaimResponse> claims = claimRepository.findAllByCandidateIdOrderByCreatedAtDescIdDesc(profile.getId())
-                .stream().map(CandidateClaimResponse::forCandidate).toList();
+        List<CandidateDataExport.ClaimExport> claims = claimRepository.findAllByCandidateIdOrderByCreatedAtDescIdDesc(profile.getId())
+                .stream().map(CandidateClaimResponse::forCandidate).map(CandidateDataExport.ClaimExport::from).toList();
 
         List<Application> applications = applicationRepository.findAllByCandidateId(profile.getId(),
                 PageRequest.of(0, 10_000, Sort.by(Sort.Direction.DESC, "appliedAt"))).getContent();
@@ -152,12 +163,18 @@ public class CandidateDataExportService {
         }
 
         List<CandidateDataExport.WorkSampleExport> workSamples = new ArrayList<>();
-        for (WorkSampleAssignment assignment : assignmentRepository.findAllForCandidate(profile.getId())) {
+        List<WorkSampleAssignment> assignments = assignmentRepository.findAllForCandidate(profile.getId());
+        // R2-L04: the files the candidate submitted (WP-PLAT) are part of the export (metadata; the bytes are
+        // downloadable from the work-sample page).
+        Map<Long, List<WorkSampleFileResponse>> files = workSampleFileService == null ? Map.of()
+                : workSampleFileService.listFor(assignments.stream().map(WorkSampleAssignment::getId).toList());
+        for (WorkSampleAssignment assignment : assignments) {
             workSamples.add(new CandidateDataExport.WorkSampleExport(assignment.getId(), assignment.getApplication().getId(),
                     assignment.getWorkSample().getJob().getTitle(), assignment.getWorkSample().getTitle(),
                     assignment.getStatus().name(), assignment.getAssignedAt(), assignment.getDueAt(),
                     assignment.getStartedAt(), assignment.getSubmittedAt(), assignment.getResponseText(),
-                    assignment.getResponseUrl()));
+                    assignment.getResponseUrl(), files.getOrDefault(assignment.getId(), List.of()),
+                    assignment.getCancelledAt(), assignment.getCancelReason()));
         }
 
         List<CandidateInterviewResponse> interviews = interviewRepository.findAllForCandidate(profile.getId()).stream()
@@ -177,7 +194,8 @@ public class CandidateDataExportService {
                     notification.getCreatedAt(), notification.getSentAt(), notification.getReadAt()));
         }
 
-        return new CandidateDataExport(CandidateDataExport.FORMAT, UtcTime.now(), account, CandidateProfileResponse.from(profile),
+        return new CandidateDataExport(CandidateDataExport.FORMAT, UtcTime.now(), account,
+                CandidateDataExport.ProfileExport.from(CandidateProfileResponse.from(profile)),
                 resumes, facts, claims, applicationExports, workSamples, interviews, survey, notifications, verificationPrivacyService.export(profile.getId()));
     }
 

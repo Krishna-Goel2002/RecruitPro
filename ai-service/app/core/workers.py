@@ -35,35 +35,44 @@ class ParserPool:
                 self._workers = workers
             return self._executor
 
-    def _discard(self) -> None:
+    def _discard(self, only: ProcessPoolExecutor | None = None) -> None:
+        """Drop the current pool (or, with ``only``, drop it only if it is still that pool: a pool that
+        another request already replaced must not be torn down a second time)."""
+        if only is not None and self._executor is not only:
+            return
         executor, self._executor = self._executor, None
         if executor is None:
             return
         # A stuck worker cannot be cancelled through the public API; terminate the processes so a
         # pathological document cannot hold a worker forever (best effort, private attribute).
-        for process in list(getattr(executor, "_processes", {}).values()):
+        for process in list((getattr(executor, "_processes", None) or {}).values()):
             process.terminate()
         executor.shutdown(wait=False, cancel_futures=True)
 
     async def run(self, func: Callable[..., T], *args: Any, timeout: float, workers: int, **kwargs: Any) -> T:
         loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(self._get(workers), functools.partial(func, *args, **kwargs))
-        try:
-            return await asyncio.wait_for(future, timeout)
-        except asyncio.TimeoutError:
-            with self._lock:
-                self._discard()
-            raise
-        except BrokenProcessPool as exc:
-            with self._lock:
-                self._discard()
-            raise WorkerCrashed() from exc
+        deadline = loop.time() + timeout
+        for attempt in range(2):
+            executor = self._get(workers)
+            future = loop.run_in_executor(executor, functools.partial(func, *args, **kwargs))
+            try:
+                return await asyncio.wait_for(future, max(0.01, deadline - loop.time()))
+            except asyncio.TimeoutError:
+                with self._lock:
+                    self._discard(only=executor)
+                raise
+            except BrokenProcessPool as exc:
+                with self._lock:
+                    collateral = self._executor is not executor  # another request's time-out recycled the pool
+                    self._discard(only=executor)
+                if attempt == 0 and collateral and deadline - loop.time() > 1:
+                    continue  # this job did not crash anything; run it once more on the fresh pool
+                raise WorkerCrashed() from exc
+        raise WorkerCrashed()  # pragma: no cover - the loop always returns or raises
 
     def shutdown(self) -> None:
         with self._lock:
-            if self._executor is not None:
-                self._executor.shutdown(wait=True, cancel_futures=True)
-                self._executor = None
+            self._discard()
 
 
 parser_pool = ParserPool()

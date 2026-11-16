@@ -308,6 +308,8 @@ class InterviewIntegrationTest {
                 .andExpect(jsonPath("$.data.length()", is(1)))
                 .andExpect(jsonPath("$.data[0].status", is("COMPLETED")))
                 .andExpect(jsonPath("$.data[0].jobTitle", is("Data Engineer")))
+                // Integration pass (R5#8): the candidate's interview names its application.
+                .andExpect(jsonPath("$.data[0].applicationId", is(shortlisted.getId().intValue())))
                 .andReturn().getResponse().getContentAsString();
         String detail = mvc.perform(get("/api/v1/candidates/me/applications/{id}", shortlisted.getId()).with(candidate))
                 .andExpect(status().isOk())

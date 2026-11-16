@@ -17,6 +17,26 @@ function afterPrefix(subject: string, prefixes: string[]): string | null {
   return null
 }
 
+/**
+ * The item whose title is exactly the subject's title, else the one with the longest title contained in it. A plain
+ * "first that is contained" sent "Update on your application for Senior Backend Engineer" to "Backend Engineer".
+ */
+export function bestTitleMatch<T>(items: readonly T[], titleOf: (item: T) => string, title: string): T | undefined {
+  const wanted = title.trim().toLowerCase()
+  const exact = items.find(item => titleOf(item).trim().toLowerCase() === wanted)
+  if (exact) return exact
+  let best: T | undefined
+  let bestLength = 0
+  for (const item of items) {
+    const candidate = titleOf(item).trim().toLowerCase()
+    if (candidate && wanted.includes(candidate) && candidate.length > bestLength) {
+      best = item
+      bestLength = candidate.length
+    }
+  }
+  return best
+}
+
 export function notificationTarget(n: AppNotification, applications: Application[] = [], samples: CandidateWorkSample[] = []): NotificationTarget {
   const s = n.subject
   switch (n.template) {
@@ -24,12 +44,13 @@ export function notificationTarget(n: AppNotification, applications: Application
     case 'APPLICATION_STATUS_CHANGED':
     case 'APPLICATION_UPDATE': {
       const title = afterPrefix(s, ['We received your application for', 'Update on your application for']) ?? s
-      const match = applications.find(a => title.includes(a.jobTitle))
+      const match = bestTitleMatch(applications, a => a.jobTitle, title)
       return { to: match ? `/applications/${match.id}` : '/applications', icon: FileText, label: 'Open application' }
     }
     case 'WORK_SAMPLE_ASSIGNED':
     case 'WORK_SAMPLE_CANCELLED': {
-      const match = samples.find(w => s.includes(w.title))
+      const title = afterPrefix(s, ['A work sample is waiting for you:', 'Work sample cancelled:']) ?? s
+      const match = bestTitleMatch(samples, w => w.title, title)
       return { to: match ? `/work-samples/${match.assignmentId}` : '/work-samples', icon: ListChecks, label: 'Open work sample' }
     }
     case 'INTERVIEW_SCHEDULED':

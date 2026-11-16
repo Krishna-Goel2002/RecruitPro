@@ -6,8 +6,10 @@ import com.recruitpro.audit.service.AuditService;
 import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.evidence.entity.CandidateClaim;
+import com.recruitpro.evidence.entity.CandidateClaimVerification;
 import com.recruitpro.evidence.entity.EvidenceTier;
 import com.recruitpro.evidence.repository.CandidateClaimRepository;
+import com.recruitpro.evidence.repository.CandidateClaimVerificationRepository;
 import com.recruitpro.evidence.service.ClaimEvidence;
 import com.recruitpro.evidence.service.MatchTriggerService;
 import com.recruitpro.hr.service.ApplicantQueryService;
@@ -15,8 +17,6 @@ import com.recruitpro.hr.service.HrJobAccessService;
 import com.recruitpro.organization.entity.Organization;
 import com.recruitpro.organization.repository.OrganizationRepository;
 import com.recruitpro.security.CurrentUser;
-import com.recruitpro.user.entity.User;
-import com.recruitpro.user.repository.UserRepository;
 import com.recruitpro.verification.dto.StaffClaim;
 import com.recruitpro.verification.dto.StaffVerdict;
 import com.recruitpro.verification.dto.StaffVerificationResponse;
@@ -54,7 +54,7 @@ public class StaffVerificationService {
     private final ClaimVerdictRepository verdictRepository;
     private final ClaimVerdictReviewRepository reviewRepository;
     private final CandidateClaimRepository claimRepository;
-    private final UserRepository userRepository;
+    private final CandidateClaimVerificationRepository claimVerificationRepository;
     private final VerificationLookupRepository lookupRepository;
     private final VerificationSettingsService settingsService;
     private final VerificationStaffSupport support;
@@ -64,7 +64,8 @@ public class StaffVerificationService {
     public StaffVerificationService(HrJobAccessService jobAccess, ApplicationRepository applicationRepository,
                                     OrganizationRepository organizationRepository, ClaimVerdictRepository verdictRepository,
                                     ClaimVerdictReviewRepository reviewRepository, CandidateClaimRepository claimRepository,
-                                    UserRepository userRepository, VerificationLookupRepository lookupRepository,
+                                    CandidateClaimVerificationRepository claimVerificationRepository,
+                                    VerificationLookupRepository lookupRepository,
                                     VerificationSettingsService settingsService, VerificationStaffSupport support,
                                     AuditService auditService, MatchTriggerService matchTriggerService) {
         this.jobAccess = jobAccess;
@@ -73,7 +74,7 @@ public class StaffVerificationService {
         this.verdictRepository = verdictRepository;
         this.reviewRepository = reviewRepository;
         this.claimRepository = claimRepository;
-        this.userRepository = userRepository;
+        this.claimVerificationRepository = claimVerificationRepository;
         this.lookupRepository = lookupRepository;
         this.settingsService = settingsService;
         this.support = support;
@@ -203,24 +204,24 @@ public class StaffVerificationService {
         return organizationRepository.findById(organizationId).map(Organization::isBlindReview).orElse(true);
     }
 
-    /** Tier of each of the candidate's claims for this organisation (another organisation's check does not count). */
+    /**
+     * Tier of each of the candidate's claims for this organisation, from the organisation's own verification row
+     * (R3-B03 / R2-H02): another organisation's check neither raises nor removes it here, and the claim's own
+     * (candidate-facing summary) columns are never read.
+     */
     private Map<Long, EvidenceTier> claimTiers(Long candidateId, Long organizationId) {
         List<CandidateClaim> claims = claimRepository.findAllByCandidateIdOrderByIdAsc(candidateId);
-        List<Long> verifierIds = new ArrayList<>();
-        for (CandidateClaim claim : claims) {
-            if (claim.getVerifiedByUserId() != null) {
-                verifierIds.add(claim.getVerifiedByUserId());
+        Map<Long, CandidateClaimVerification> own = new HashMap<>();
+        if (!claims.isEmpty() && organizationId != null) {
+            List<Long> claimIds = claims.stream().map(CandidateClaim::getId).toList();
+            for (CandidateClaimVerification row : claimVerificationRepository.findAllByClaimIdInAndOrganizationId(claimIds,
+                    organizationId)) {
+                own.put(row.getClaimId(), row);
             }
-        }
-        Map<Long, Long> verifierOrganizations = new HashMap<>();
-        for (User user : userRepository.findAllById(verifierIds)) {
-            verifierOrganizations.put(user.getId(), user.getOrganizationId());
         }
         Map<Long, EvidenceTier> tiers = new HashMap<>();
         for (CandidateClaim claim : claims) {
-            ClaimEvidence evidence = ClaimEvidence.forOrganization(claim,
-                    claim.getVerifiedByUserId() == null ? null : verifierOrganizations.get(claim.getVerifiedByUserId()),
-                    organizationId);
+            ClaimEvidence evidence = ClaimEvidence.forOrganization(claim, own.get(claim.getId()));
             tiers.put(claim.getId(), evidence.tier() == null ? EvidenceTier.SELF_CLAIMED : evidence.tier());
         }
         return tiers;

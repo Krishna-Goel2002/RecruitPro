@@ -38,7 +38,8 @@ class TestCompiler:
         cloud = rows[("SKILL", "AWS")]
         assert cloud.alternatives == ["Azure"] and cloud.mandatory and not cloud.knockout
         postgres = rows[("SKILL", "PostgreSQL")]
-        assert postgres.knockout and postgres.proficiency == "ADVANCED"
+        # "strong" is job-ad filler, not a depth bar: INTERMEDIATE (bug hunt R4, proficiency calibration).
+        assert postgres.knockout and postgres.proficiency == "INTERMEDIATE"
         assert rows[("EDUCATION", "Bachelor's degree in Computer Science or related field")].mandatory
         assert not rows[("SKILL", "Kubernetes")].mandatory
         assert rows[("CERTIFICATION", "AWS Certified Developer certification")].mandatory is False

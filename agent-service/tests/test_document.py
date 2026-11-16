@@ -87,3 +87,55 @@ def test_zip_bomb_guard(monkeypatch: pytest.MonkeyPatch):
         archive.writestr("bomb.bin", b"\x00" * (2 * 1024 * 1024))
     with pytest.raises(ExtractionError):
         extract_document(buffer.getvalue())
+
+
+# ------------------------------------------------------------------------------------- bug-hunt regressions
+def _looping_pdf() -> bytes:
+    """Two same-length byte flips (found by fuzzing): pypdf's repair loops on an object and raises LimitReachedError,
+    a PyPdfError that is not a PdfReadError and used to escape as a 500."""
+    pdf = make_pdf(["Hello world line one", "Second line"], author="X")
+    return pdf.replace(b"/Type /Catalog /Pages", b"/Type /Catalog\x9d/Pages").replace(b"endstream", b"end\xbftream")
+
+
+def test_malformed_pdfs_are_unreadable_not_a_server_error(client):
+    import logging
+
+    logging.disable(logging.CRITICAL)
+    try:
+        samples = [_looping_pdf(), b"%PDF-1.4\n" + b"[" * 5000, b"%PDF-1.4 garbage"]
+        for sample in samples:
+            response = _post(client, sample, "x.pdf", [("SKILL", "Go")])
+            assert response.status_code == 422, response.text
+            assert response.json()["detail"]["code"] == "DOCUMENT_UNREADABLE"
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+def test_pypdf_errors_outside_pdfreaderror_are_mapped(monkeypatch: pytest.MonkeyPatch):
+    from pypdf.errors import LimitReachedError
+
+    class Boom:
+        def __init__(self, *args, **kwargs):
+            raise LimitReachedError("loop")
+
+    monkeypatch.setattr("pypdf.PdfReader", Boom)
+    with pytest.raises(ExtractionError) as error:
+        extract_document(make_pdf(["x"]))
+    assert error.value.code == "DOCUMENT_UNREADABLE"
+
+
+def test_a_docx_with_broken_core_properties_is_unreadable(client):
+    source = zipfile.ZipFile(io.BytesIO(make_docx(["B.Tech 2018"], author="Ana Sample")))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            archive.writestr(info, b"<cp:coreProperties broken" if info.filename == "docProps/core.xml" else data)
+    response = _post(client, buffer.getvalue(), "t.docx", [("EDUCATION", "B.Tech 2018")])
+    assert response.status_code == 422 and response.json()["detail"]["code"] == "DOCUMENT_UNREADABLE"
+
+
+def test_deeply_nested_request_json_is_a_422(client):
+    response = client.post("/api/v1/verify/document", headers=HEADERS, files={"file": ("a.pdf", make_pdf(["x"]), "x")},
+                           data={"request": "[" * 100_000})
+    assert response.status_code == 422 and response.json()["detail"]["code"] == "BAD_REQUEST"
