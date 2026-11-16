@@ -1,6 +1,6 @@
 # Bug hunt summary: 7 reviewers and the integration pass
 
-**Branch:** `Kshitij-redesign`, working tree of 16 Nov 2026. Nothing has been committed.
+**Branch:** `Kshitij-redesign`, committed as `2f705ac` (17 Nov 2026).
 
 **Reports:**
 - [R1 platform](BUG_HUNT_R1_PLATFORM.md)
