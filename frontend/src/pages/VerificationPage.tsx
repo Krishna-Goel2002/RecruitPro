@@ -16,6 +16,7 @@ import {
 import type { Verdict } from '../design/lib/labels'
 import { relativeTime } from '../design/lib/format'
 import { stagger } from '../design/motion'
+import { EnterList } from '../components/EnterList'
 import { humanize } from '../lib/labels'
 import { ledgerQuery } from '../lib/queries'
 import {
@@ -220,7 +221,7 @@ export function VerificationPage() {
                 </Button>
               }
             >
-              <ul className="v-rows v-review" role="list">
+              <EnterList className="v-rows v-review" role="list">
                 {awaiting.map(v => (
                   <li key={v.id}>
                     <button type="button" className="v-row v-row-button" onClick={() => patchParams({ review: String(v.id) })}>
@@ -236,7 +237,7 @@ export function VerificationPage() {
                     </button>
                   </li>
                 ))}
-              </ul>
+              </EnterList>
             </Section>
           )}
 

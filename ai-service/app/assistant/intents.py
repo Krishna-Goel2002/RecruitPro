@@ -51,10 +51,14 @@ _CREATE_JOB_RES = (
     re.compile(r"\b(?:need|want|plan) to (?:hire|recruit)\b|\bnew (?:job|posting|opening|requisition|vacancy|position)\b"),
     re.compile(r"\b(?:job posting|job post|job ad|job advert)\s+for\b|\bhiring for (?:a|an)\b"),
     re.compile(r"\b(?:we have|we've got|we got|there is|there's) (?:a |an )?(?:new |urgent )?(?:requirement|opening|vacancy|position|need) for\b"),
-    re.compile(r"^(?:urgently |urgent )?(?:looking for|hiring|requirement for|required|wanted)\s*:?\s+(?:a|an|\d+|two|three|four|five|one)?\s*\w"),
-    re.compile(r"^(?:we )?need (?:a|an|\d+|two|three)\s+(?:[\w#+./-]+\s+){0,4}?(?:analyst|engineer|developer|designer|manager|executive|"
-               r"accountant|intern|lead|architect|scientist|specialist|associate|consultant|recruiter|tester|admin|administrator|"
-               r"writer|officer|coordinator|representative|agent|nurse|teacher|technician)s?\b"),
+    re.compile(r"^(?:urgently |urgent )?(?:looking for|hiring|requirement for|required|wanted|(?:an? )?(?:new )?(?:opening|openings|vacancy|"
+               r"vacancies|position|positions) for)\s*:?\s+(?:a|an|\d+|two|three|four|five|one)?\s*\w"),
+    # "need 3 freshers for customer support", "we require a java dev urgently", "require 2 resources for SAP FICO"
+    re.compile(r"^(?:(?:urgently|urgent)[, ]+)?(?:we |i )?(?:need|needs|require|requires|want)\s+(?:a|an|\d+|one|two|three|four|five|few|some|more)\s+"
+               r"(?:[\w#+./-]+\s+){0,4}?(?:analyst|engineer|developer|dev|designer|manager|executive|accountant|intern|lead|architect|"
+               r"scientist|specialist|associate|consultant|recruiter|tester|admin|administrator|writer|officer|coordinator|"
+               r"representative|agent|nurse|teacher|technician|fresher|resource|trainee|staff|hire|programmer|operator|"
+               r"assistant|supervisor|driver|clerk|sales ?person|telecaller)(?:e?s)?\b"),
 )
 _JOB_STATUS_VERBS = (
     (re.compile(r"\b(?:unpublish|put (?:it|the [\w ]+|this [\w ]+)?\s*on hold|on hold|pause|freeze|hold)\b"), "ON_HOLD"),
@@ -79,11 +83,12 @@ _GENERATE_WS_RE = re.compile(r"\b(?:generate|create|draft|make|prepare|build|des
                              r"assignments?|exercises?|case stud(?:y|ies))\b")
 _GENERATE_KIT_RE = re.compile(r"\b(?:generate|create|draft|make|prepare|build|write|come up with|suggest|give me|need|get)\b.{0,40}\b(?:interview kits?|"
                               r"interview questions?|question (?:bank|set|list)|kit)\b|\binterview kit\b")
-_COMPARE_RE = re.compile(r"\bcompare\b|\bcomparison\b|\bvs\.?\b|\bversus\b|\bdifference between\b|\bwho is (?:better|stronger)\b|"
+_COMPARE_RE = re.compile(r"\bcompare\b|\bcomparison\b|\bvs\.?\b|\bversus\b|\bdifference between\b|\bwho(?:'s| is) (?:the )?(?:better|stronger)\b|"
+                         r"\bwhich (?:one |of (?:the|them|these) )?(?:is|looks|seems) (?:better|stronger)\b|"
                          r"\bside[- ]by[- ]side\b|\bstack up\b|\bbetter fit\b")
 _NAVIGATE_RE = re.compile(_LEAD + r"(?:open|go to|goto|take me to|navigate to|bring up|jump to|link (?:me )?to|show (?:me )?(?:the )?[\w ]{0,30}"
                           r"(?:page|tab|screen|section)|where (?:is|can i find|do i find)|how do i get to)\b")
-_FAIRNESS_RE = re.compile(r"\bfairness\b|\badverse impact\b|\bbias(?:ed)? (?:report|check|summary)\b|\bselection rates?\b|\bdiversity\b|"
+_FAIRNESS_RE = re.compile(r"\bfairness\b|\badverse impact\b|\bbias(?:ed)? (?:report|check|summary)\b|\bany bias\b|\bbias (?:in|against|towards?)\b|\bselection rates?\b|\bdiversity\b|"
                           r"\bfour[- ]fifths\b|\b4/5(?:ths)?\b|\beeo\b|\bequal opportunity\b|\bis (?:the|this|our) .{0,40}\b(?:fair|biased)\b|"
                           r"\bfair across\b|\bbiased\b")
 _DIGEST_RE = re.compile(r"\battention\b|\burgent\b|\bpending\b|\bto-?do\b|\bpriorit\w*\b|\bcatch me up\b|\bwhat'?s new\b|\banything new\b|"
@@ -104,7 +109,7 @@ _JOB_INSIGHT_RE = re.compile(r"\bhow(?:'s| is| are)?\b.{0,60}\b(?:doing|going|pe
                              r"\bwho (?:applied|is leading|are the top|is on top)\b|\bmost missing\b|\bmissing requirements?\b|"
                              r"\btime in stage\b|\bsummar(?:y|ise|ize)\b|\boverview\b|\breport on\b|\banalysis\b|\bbreakdown\b|"
                              r"\bresponse\b|\bapplicants? (?:for|on|to)\b|\bapplications? (?:for|on|to)\b")
-_LIST_JOBS_RE = re.compile(r"\b(?:list|show|which|what|all|my|our|open|active|current|live|published|draft|closed|how many|any)\b.{0,30}"
+_LIST_JOBS_RE = re.compile(r"\b(?:list|show|which|what|all|my|our|open|active|current|live|published|draft|closed|how many|any|kitne|kitni)\b.{0,30}"
                            r"\b(?:jobs|postings|positions|openings|roles|vacancies|requisitions|job posts)\b|"
                            r"\bwhat (?:are we|am i|roles are we) hiring\b|\b(?:jobs|postings) list\b")
 _APPLICANT_REF_RE = re.compile(r"\b(?:this|the current|current|that) (?:candidate|applicant|application|person|profile|one)\b|"

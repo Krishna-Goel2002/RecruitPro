@@ -56,6 +56,16 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # HR assistant planner (none = offline rules; gemini | groq | anthropic | openai_compatible need
+      # ASSISTANT_LLM_MODEL - no default - and the docker-compose.ai-egress.yml override).
+      ASSISTANT_LLM_PROVIDER: ${ASSISTANT_LLM_PROVIDER:-none}
+      ASSISTANT_LLM_MODEL: ${ASSISTANT_LLM_MODEL:-}
+      ASSISTANT_LLM_TIMEOUT_SECONDS: ${ASSISTANT_LLM_TIMEOUT_SECONDS:-20}
+      ASSISTANT_MAX_OUTPUT_TOKENS: ${ASSISTANT_MAX_OUTPUT_TOKENS:-1024}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_BASE_URL: ${GEMINI_BASE_URL:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-}
       # OCR for scanned resumes (RapidOCR is installed in the image; off unless set to true).
       OCR_ENABLED: ${OCR_ENABLED:-false}
     # No host port: the AI service is only on the internal network (no egress, as designed).
@@ -178,6 +188,13 @@ services:
     ports:
       - "5170:80"
     networks: [edge]
+    # Same probe as the image's HEALTHCHECK, stated here so `docker compose ps` shows it without reading the Dockerfile.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
 
 networks:
   internal:

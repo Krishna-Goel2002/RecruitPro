@@ -199,6 +199,7 @@
 
   /* metrics */
   .as-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--s-4); margin: 0; }
+  .as-panel .as-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .as-metric { display: flex; flex-direction: column; gap: 2px; padding: var(--s-4) var(--s-5); border-radius: var(--r-md); background: var(--bg-sunken); }
   .as-metric dt { color: var(--fg-muted); font: 400 var(--text-caption) / var(--lh-caption) var(--font-sans); }
   .as-metric-value { margin: 0; color: var(--fg-emphasis, var(--fg-default)); font: 600 var(--text-h3) / var(--lh-h3) var(--font-sans); }
@@ -220,7 +221,7 @@
 
   /* candidates */
   .as-cands { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border-default); border-radius: var(--r-md); background: var(--bg-surface); }
-  .as-cand { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 180px); align-items: center; gap: var(--s-3) var(--s-5); padding: var(--s-4) var(--s-5); }
+  .as-cand { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 280px); align-items: center; gap: var(--s-3) var(--s-5); padding: var(--s-4) var(--s-5); }
   .as-cand + .as-cand { border-top: 1px solid var(--border-hairline); }
   .as-cand-main { display: flex; flex-direction: column; gap: var(--s-2); min-width: 0; }
   .as-cand-link { display: inline-flex; align-items: center; gap: var(--s-3); color: var(--fg-default); font-weight: 500; text-decoration: none; }
@@ -231,6 +232,7 @@
   .as-cand-gates[data-ok='true'] svg { color: var(--success-fg); }
   .as-cand-gates[data-ok='false'] { color: var(--warning-fg); }
   .as-panel .as-cand { grid-template-columns: minmax(0, 1fr); }
+  .as-cand-cov .ui-coverage-row { grid-template-columns: 84px minmax(48px, 1fr) 4ch; }
 
   /* job preview */
   .as-job-title { margin: 0; font: 600 var(--text-h3) / var(--lh-h3) var(--font-sans); }
@@ -240,6 +242,8 @@
   .as-job-sec { display: flex; flex-direction: column; gap: var(--s-3); }
   .as-job-sec h4 { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-4); margin: 0; font: 600 var(--text-sm) / var(--lh-sm) var(--font-sans); }
   .as-job-sec h4 .subtle { font-weight: 400; font-size: var(--text-caption); }
+  .as-job-suggested { padding: 0 6px; border-radius: var(--r-full); background: var(--accent-subtle); color: var(--accent-text); font: 500 var(--text-caption) / 18px var(--font-sans); }
+  .as-job-note { margin: 0; font-size: var(--text-sm); }
   .as-job-list { margin: 0; padding-left: 18px; font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
   .as-reqs { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
   .as-req { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--s-4); padding: var(--s-3) 0; border-top: 1px solid var(--border-hairline); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
@@ -301,7 +305,7 @@
   .as-page-main > .as-convo { flex: 1; min-height: 0; height: auto; }
   .as-page-main .as-scroll { padding-inline: clamp(16px, 4vw, 48px); }
   .as-page-main .as-foot { padding-inline: clamp(16px, 4vw, 48px); }
-  .as-page-main .as-log, .as-page-main .as-welcome, .as-page-main .as-suggest, .as-page-main .as-composer, .as-page-main .as-context { width: 100%; max-width: 820px; margin-inline: auto; }
+  .as-page-main .as-log-region, .as-page-main .as-log, .as-page-main .as-welcome, .as-page-main .as-suggest, .as-page-main .as-composer, .as-page-main .as-context { width: 100%; max-width: 820px; margin-inline: auto; }
   .as-carried { display: flex; align-items: center; gap: var(--s-3); margin: 0; padding: var(--s-3) var(--s-6); border-bottom: 1px solid var(--border-hairline); color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
   .as-carried strong { color: var(--fg-default); font-weight: 500; }
   .as-history { display: flex; flex-direction: column; gap: var(--s-4); padding: var(--s-5); }
@@ -329,5 +333,12 @@
   }
   @media (max-width: 599px) {
     .as-page-actions .ui-btn:last-child .ui-btn-label { display: none; }
+  }
+
+  /* Reduced motion: the panel cross-fades instead of sliding (closing still ends on animationend). */
+  @media (prefers-reduced-motion: reduce) {
+    .as-panel { animation: ui-fade-in 120ms linear both; }
+    .as-panel[data-closing] { animation: ui-fade-out 120ms linear forwards; }
+    .as-page-history[data-open] { animation: none; }
   }
 }

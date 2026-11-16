@@ -42,6 +42,8 @@
 
   /* ------------------------------------------------------------------------------------------- jobs list */
   .hra-status-tabs { margin-top: var(--s-2); }
+  .hra-pulse { margin: var(--s-2) 0 var(--s-7); }
+  .hra-rank-pulse { margin: 0 0 var(--s-6); }
   .hra-list-toolbar {
     display: flex;
     align-items: center;

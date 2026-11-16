@@ -60,6 +60,20 @@ describe('candidates block', () => {
     expect(screen.getByText('Gates verified')).toBeInTheDocument()
     expect(screen.getByText('1 of 2 gates open')).toBeInTheDocument()
   })
+
+  it('backend shape: open gates by name, an empty list means verified; coverage rows are labelled', () => {
+    show([{
+      kind: 'candidates',
+      items: [
+        { applicationId: 3014, code: 'A-3014', revealedName: null, status: 'SUBMITTED', verified: 72.5, claimed: 80, group: 'MUST_HAVES_UNVERIFIED', gates: ['Java'], link: '/jobs/12/applicants/3014' },
+        { applicationId: 3022, code: 'A-3022', revealedName: null, status: 'SUBMITTED', verified: 68, claimed: 78, group: 'RANKED', gates: [], link: '/jobs/12/applicants/3022' },
+      ],
+    }])
+    expect(screen.getByText('Gate open: Java')).toBeInTheDocument()
+    expect(screen.getByText('Gates verified')).toBeInTheDocument()
+    expect(screen.getAllByText('Verified').length).toBe(2)
+    expect(screen.getAllByText('With claims').length).toBe(2)
+  })
 })
 
 describe('job_preview block: Save as draft vs Publish', () => {
@@ -117,6 +131,16 @@ describe('job_preview block: Save as draft vs Publish', () => {
     show([preview, { ...create, status: 'CONFIRMED', result: { kind: 'job', id: 55, link: '/jobs/55' } }])
     expect(screen.queryByRole('button', { name: 'Publish' })).toBeNull()
     expect(screen.getByRole('link', { name: /Open the job/ })).toHaveAttribute('href', '/jobs/55')
+  })
+
+  it('backend shape: linked by actionId, suggested requirements and the compiler note are shown', () => {
+    const linked: Block = { kind: 'job_preview', actionId: 77, draft: { ...(preview as { draft: object }).draft, requirementsSuggested: true, compilerNote: 'The requirement compiler is unavailable; add requirements yourself.', warnings: [{ phrase: 'rockstar', kind: 'EXCLUSIONARY', suggestion: 'experienced' }] } }
+    const h = show([linked, action({ actionId: 77, action: 'create_job', preview: null })])
+    expect(screen.getByText('Suggested from the description')).toBeInTheDocument()
+    expect(screen.getByText(/compiler is unavailable/)).toBeInTheDocument()
+    expect(screen.getByText(/“rockstar” may discourage/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }))
+    expect(h.onConfirm).toHaveBeenCalledWith(expect.objectContaining({ actionId: 77 }), 'DRAFT')
   })
 })
 
@@ -190,6 +214,11 @@ describe('question, link and notice blocks', () => {
     const { container } = render(<MemoryRouter><Blocks blocks={[{ kind: 'notice', tone: 'warning', text: 'Only offline rules are used.' }]} handlers={handlers()} /></MemoryRouter>)
     expect(screen.getByText('Only offline rules are used.')).toBeInTheDocument()
     expect(container.querySelector('.ui-alert')).toHaveAttribute('data-tone', 'warning')
+  })
+
+  it('the backend tone "error" renders as danger', () => {
+    const { container } = render(<MemoryRouter><Blocks blocks={[{ kind: 'notice', tone: 'error', text: 'The planner could not be reached.' }]} handlers={handlers()} /></MemoryRouter>)
+    expect(container.querySelector('.ui-alert')).toHaveAttribute('data-tone', 'danger')
   })
 })
 

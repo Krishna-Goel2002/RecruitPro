@@ -10,7 +10,7 @@ import { QueryError } from '../../components/QueryError'
 import { useShortcuts } from '../../components/Shortcuts'
 import { JobStatusBadge } from '../../components/StatusBadges'
 import {
-  Button, DataTable, EmptyState, IconButton, Input, Menu, PageHeader, Pagination, TabPanel, Tabs, buttonProps, type Column,
+  Button, DataTable, EmptyState, IconButton, Input, Menu, PageHeader, Pagination, SummaryStrip, TabPanel, Tabs, buttonProps, type Column, type SummaryItem,
 } from '../../design/components'
 import { formatDate, formatNumber, plural, relativeTime } from '../../design/lib/format'
 import { BriefcaseBusiness, Ellipsis, Icon, MessagesSquare, Plus, Search, X } from '../../design/icons'
@@ -103,6 +103,16 @@ export function JobsListPage() {
   }, [data])
   const noJobsAtAll = counts.ALL === 0 && !search
 
+  // At a glance + needs attention: each tile filters the list to the jobs it counts (press again to show all).
+  const toggle = (value: StatusTab) => state.set({ status: status === value ? null : value === 'ALL' ? null : value })
+  const pulse: SummaryItem[] = counts.ALL != null && counts.ALL > 0 ? [
+    { key: 'open', label: 'Open jobs', value: counts.PUBLISHED, hint: 'Accepting applications', onSelect: () => toggle('PUBLISHED'), pressed: status === 'PUBLISHED' },
+    { key: 'new', label: 'New applicants', value: summary.fresh, hint: 'Since your last visit', tone: summary.fresh > 0 ? 'attention' : undefined },
+    { key: 'closing', label: 'Closing soon', value: summary.closing, hint: 'Deadline within 7 days', tone: summary.closing > 0 ? 'attention' : undefined },
+    ...(canManage ? [{ key: 'drafts', label: 'Drafts', value: counts.DRAFT, hint: 'Not visible to candidates', tone: (counts.DRAFT ?? 0) > 0 ? 'attention' as const : undefined, onSelect: () => toggle('DRAFT'), pressed: status === 'DRAFT' }] : []),
+    { key: 'hold', label: 'On hold', value: counts.ON_HOLD, hint: 'Paused, not taking applications', onSelect: () => toggle('ON_HOLD'), pressed: status === 'ON_HOLD' },
+  ] : []
+
   const columns = useMemo<Column<JobStaff>[]>(() => [
     {
       key: 'title',
@@ -174,8 +184,6 @@ export function JobsListPage() {
         title="Jobs"
         meta={counts.ALL != null && counts.ALL > 0 ? [
           <span key="pub">{plural(counts.PUBLISHED ?? 0, 'published job')}</span>,
-          summary.fresh > 0 ? <span key="new" className="hra-meta-new">{plural(summary.fresh, 'new applicant')} since your last visit</span> : null,
-          summary.closing > 0 ? <span key="cl" className="hra-meta-soon">{plural(summary.closing, 'job closes', 'jobs close')} within 7 days</span> : null,
         ] : undefined}
         actions={<>
           {assistant && counts.ALL != null && counts.ALL > 0 && (
@@ -184,6 +192,8 @@ export function JobsListPage() {
           {canManage && <Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>}
         </>}
       />
+
+      {pulse.length > 0 && <SummaryStrip label="Jobs at a glance" items={pulse} className="hra-pulse" />}
 
       <Tabs
         label="Job status"

@@ -8,7 +8,7 @@
 export type AssistantId = number | string
 
 /** `context.page` sent with every message (the contract's page types). */
-export type AssistantPageType = 'job' | 'applicant' | 'jobs' | 'admin' | 'other'
+export type AssistantPageType = 'job' | 'applicant' | 'jobs' | 'admin' | 'interviews' | 'other'
 
 export interface AssistantContext {
   page: AssistantPageType
@@ -35,7 +35,7 @@ export interface TableBlock {
 }
 
 /** `gates` is open in the contract: a boolean (all verified), a count of open gates, `{open,total}` or a sentence. */
-export type CandidateGates = boolean | number | string | { open?: number; verified?: number; total?: number } | null
+export type CandidateGates = boolean | number | string | string[] | { open?: number; verified?: number; total?: number } | null
 
 export interface CandidateItem {
   applicationId: number
@@ -68,7 +68,7 @@ export interface DraftRequirement {
 }
 
 /** Biased-wording or completeness warning on a job draft: a sentence, or the wording and a suggested rewrite. */
-export type DraftWarning = string | { text?: string; message?: string; field?: string | null; phrase?: string | null; suggestion?: string | null }
+export type DraftWarning = string | { text?: string; message?: string; field?: string | null; phrase?: string | null; kind?: string | null; suggestion?: string | null }
 
 export interface JobDraft {
   title?: string | null
@@ -86,6 +86,10 @@ export interface JobDraft {
   description?: string | null
   requirements?: DraftRequirement[] | null
   warnings?: DraftWarning[] | null
+  /** The requirements were suggested by the compiler (none were given). */
+  requirementsSuggested?: boolean | null
+  /** Why the requirement compiler could not help (shown as a note). */
+  compilerNote?: string | null
   [extra: string]: unknown
 }
 

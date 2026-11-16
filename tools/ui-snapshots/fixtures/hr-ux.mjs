@@ -127,10 +127,10 @@ const allGoodDashboard = {
 
 export const screens = [
   // Assistant: panel
-  { name: 'ux-assistant-panel', path: '/jobs/101', action: openPanel },
-  { name: 'ux-assistant-panel-insights', path: '/jobs/101', action: seq(openPanel, clickText("Summarise this job's applicants", 'button.as-chip', 1400)) },
-  { name: 'ux-assistant-panel-applicant', path: '/jobs/101/applicants/3014', action: openPanel },
-  { name: 'ux-assistant-panel-interviewer', path: '/interviews', role: 'INTERVIEWER', action: openPanel },
+  { name: 'ux-assistant-panel', path: '/jobs/101', viewport: true, action: openPanel },
+  { name: 'ux-assistant-panel-insights', path: '/jobs/101', viewport: true, action: seq(openPanel, clickText("Summarise this job's applicants", 'button.as-chip', 1400)) },
+  { name: 'ux-assistant-panel-applicant', path: '/jobs/101/applicants/3014', viewport: true, action: openPanel },
+  { name: 'ux-assistant-panel-interviewer', path: '/interviews', role: 'INTERVIEWER', viewport: true, action: openPanel },
   // Assistant: full page
   { name: 'ux-assistant-page', path: '/assistant', override: [route('GET', '/assistant/conversations', page([], { size: 20 }))] },
   { name: 'ux-assistant-insights', path: '/assistant?c=insights', settle: 1200 },

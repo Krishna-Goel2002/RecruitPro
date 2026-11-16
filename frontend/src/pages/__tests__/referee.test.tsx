@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { PublicReference } from '../../api/types'
+import brand from '../../design/brand/active'
 import { fail, mockApi, ok, renderPage } from '../../test/utils'
 import { RefereePage } from '../RefereePage'
 
@@ -29,6 +30,13 @@ describe('RefereePage', () => {
     expect(await screen.findByRole('heading', { level: 1, name: /Can you confirm Meera.s work\?/ })).toBeInTheDocument()
     expect(api.find('POST', '/auth/refresh')).toHaveLength(0)
     expect(api.calls.every(c => c.headers.get('Authorization') === null)).toBe(true)
+  })
+
+  it('links to the public landing site, so a referee can see what the product is', async () => {
+    mockApi([{ path: PATH, reply: ok(reference) }])
+    renderReferee()
+    await screen.findByRole('heading', { level: 1 })
+    expect(screen.getByRole('link', { name: `About ${brand.name}` })).toHaveAttribute('href', 'http://localhost:5170/')
   })
 
   it('shows "not valid" for an unknown token (404)', async () => {

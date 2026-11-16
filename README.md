@@ -33,6 +33,7 @@ docker compose up --build
 |---|---|
 | Candidate portal | http://localhost:5173 |
 | HR, interviewer and admin portal | http://localhost:5174 |
+| Landing site (public, static; links to both portals) | http://localhost:5170 |
 | Backend API | http://localhost:8080/api/v1 (Swagger UI: http://localhost:8080/swagger-ui.html, not in `prod`) |
 | AI service | not published (internal network, no egress): `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` (the same line works in PowerShell) |
 | Agent service (verification agents) | http://localhost:8100/health (127.0.0.1 only) |
@@ -170,7 +171,10 @@ Requirements: JDK 21, Node.js 22 with pnpm 10, Python 3.10–3.12 (CI and the im
    ```bash
    cd frontend && pnpm install && pnpm dev       # terminal 1: http://localhost:5173
    cd hr-frontend && pnpm install && pnpm dev    # terminal 2: http://localhost:5174
+   cd site && pnpm install && pnpm dev           # optional, landing site: http://localhost:5170
    ```
+   The landing site's calls to action use `VITE_HR_URL` and `VITE_CANDIDATE_URL` (defaults `:5174` and `:5173`); the
+   candidate portal's signed-out pages link back to `VITE_SITE_URL` (default `http://localhost:5170`).
 
 ## Verification gates
 
@@ -188,7 +192,8 @@ Run all of these before merging. CI (`.github/workflows/ci.yml`, on every push t
 | G-JAVA-STATIC syntax, imports, types | `pip install tree-sitter tree-sitter-java && python tools/java_static_check.py backend/src` | passed (0 errors) |
 | G-FE candidate portal | `cd frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | passed (`Kshitij-redesign`: 113 Vitest tests in 14 files, build OK) |
 | G-FE HR portal | `cd hr-frontend && pnpm install --frozen-lockfile && pnpm run --if-present test && pnpm build` | passed (`Kshitij-redesign`: 132 Vitest tests in 20 files, build OK) |
-| Shared portal files identical (`src/design`, `public/theme-init.js`, `nginx.conf`, `Dockerfile`, `.dockerignore`) | `python tools/check_design_sync.py` | passed (`Kshitij-redesign`) |
+| G-FE landing site | `cd site && pnpm install --frozen-lockfile && pnpm test && pnpm build` | passed (29 Vitest tests in 4 files: 11 for the page, the rest from the synced design system; build OK) |
+| Shared files identical (`hr-frontend/src/design` → `frontend/` and `site/`; `public/theme-init.js`; the portals' `nginx.conf`, `Dockerfile`; `.dockerignore`) | `python tools/check_design_sync.py` | passed (`Kshitij-redesign`) |
 | agent-service taxonomy = ai-service taxonomy | `python tools/sync_taxonomy.py --check` (without `--check` it copies) | passed |
 
 `AiLifecycleIntegrationTest` needs a running AI service and only runs with `RECRUITPRO_AI_IT=true`. The portals need pnpm 10 (`pnpm-workspace.yaml` uses pnpm 10 settings; `npx pnpm@10 …` works without a global install). Use `python -B` when running the Python tools inside the repository to avoid leaving `__pycache__` folders.
@@ -237,6 +242,7 @@ ai-service/     FastAPI resume intelligence service and evaluation harness (eval
 agent-service/  FastAPI verification agents (code, web, document, badge, reference) and evaluation harness (eval/)
 frontend/       Candidate portal (Vite + React)
 hr-frontend/    HR, interviewer and administration portal (Vite + React)
+site/           Public landing page (Vite + React, static, nginx with a strict CSP; compose service `site`, port 5170)
 docs/           Handbook, guides (run and test), architecture, database, the implementation plans and STATUS.md
 tools/          Checks used locally and in CI (migrations, entity/schema, Java static, design sync, taxonomy sync),
                 totp.py (MFA codes for demos) and ui-snapshots/ (headless screenshot harness, Kshitij-redesign)

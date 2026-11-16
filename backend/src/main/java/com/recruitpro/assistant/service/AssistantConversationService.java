@@ -15,6 +15,8 @@ import com.recruitpro.assistant.entity.AssistantMessage;
 import com.recruitpro.assistant.repository.AssistantActionRepository;
 import com.recruitpro.assistant.repository.AssistantConversationRepository;
 import com.recruitpro.assistant.repository.AssistantMessageRepository;
+import com.recruitpro.assistant.service.AssistantApplicationLookup.AppInfo;
+import com.recruitpro.assistant.tool.ApplicationAccess;
 import com.recruitpro.common.dto.PageResponse;
 import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.ForbiddenException;
@@ -31,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -51,16 +54,18 @@ public class AssistantConversationService {
     private final AssistantActionRepository actionRepository;
     private final SecurityUtils securityUtils;
     private final AssistantJson json;
+    private final ApplicationAccess access;
 
     public AssistantConversationService(AssistantConversationRepository conversationRepository,
                                         AssistantMessageRepository messageRepository,
                                         AssistantActionRepository actionRepository, SecurityUtils securityUtils,
-                                        AssistantJson json) {
+                                        AssistantJson json, ApplicationAccess access) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.actionRepository = actionRepository;
         this.securityUtils = securityUtils;
         this.json = json;
+        this.access = access;
     }
 
     /** The caller, who must be staff of an organisation (every staff role may use the assistant). */
@@ -106,7 +111,7 @@ public class AssistantConversationService {
         AssistantConversation conversation = requireOwned(conversationId, user);
         List<AssistantMessage> messages = messageRepository.findAllByConversationIdOrderByIdAsc(conversation.getId());
         return new ConversationResponse(conversation.getId(), conversation.getTitle(), conversation.getCreatedAt(),
-                conversation.getUpdatedAt(), toResponses(messages));
+                conversation.getUpdatedAt(), toResponses(messages, user));
     }
 
     @Transactional
@@ -125,7 +130,10 @@ public class AssistantConversationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Conversation not found"));
     }
 
-    /** Appends a message and marks the conversation active (and titles it after its first user message). */
+    /**
+     * Appends a message and marks the conversation active (and titles it after its first user message). Candidate names
+     * in the blocks are not stored: {@code toResponses} resolves them again for the reader (see {@code withoutNames}).
+     */
     @Transactional
     public AssistantMessage append(Long conversationId, String role, String text, ArrayNode blocks, String planner,
                                    String trace) {
@@ -133,7 +141,7 @@ public class AssistantConversationService {
         message.setConversationId(conversationId);
         message.setRole(role);
         message.setText(text == null ? "" : text);
-        message.setBlocksJson(blocks == null ? "[]" : json.write(blocks));
+        message.setBlocksJson(blocks == null ? "[]" : json.write(withoutNames(blocks)));
         message.setPlanner(planner == null ? null : limit(planner, 40));
         message.setStatusTrace(trace == null || trace.isBlank() ? null : limit(trace, 1000));
         message.setCreatedAt(UtcTime.now());
@@ -158,7 +166,12 @@ public class AssistantConversationService {
         });
     }
 
-    public List<MessageResponse> toResponses(List<AssistantMessage> messages) {
+    /**
+     * Messages as the API returns them: action blocks carry the action's current status, and every {@code revealedName}
+     * (candidate items, action previews) is resolved now for {@code user}: the name when the user may see the
+     * application and its identity is revealed, otherwise null.
+     */
+    public List<MessageResponse> toResponses(List<AssistantMessage> messages, CurrentUser user) {
         Set<Long> actionIds = new LinkedHashSet<>();
         List<ArrayNode> blocks = new ArrayList<>();
         for (AssistantMessage message : messages) {
@@ -177,6 +190,13 @@ public class AssistantConversationService {
             }
         }
         LocalDateTime now = UtcTime.now();
+        List<ObjectNode> named = new ArrayList<>();
+        for (ArrayNode array : blocks) {
+            for (JsonNode block : array) {
+                collectNamed(block, named);
+            }
+        }
+        resolveNames(user, named);
         List<MessageResponse> responses = new ArrayList<>();
         for (int i = 0; i < messages.size(); i++) {
             AssistantMessage message = messages.get(i);
@@ -195,21 +215,94 @@ public class AssistantConversationService {
         return responses;
     }
 
-    public MessageResponse toResponse(AssistantMessage message) {
-        return toResponses(List.of(message)).get(0);
+    public MessageResponse toResponse(AssistantMessage message, CurrentUser user) {
+        return toResponses(List.of(message), user).get(0);
     }
 
-    public ActionResponse toResponse(AssistantAction action) {
+    public ActionResponse toResponse(AssistantAction action, CurrentUser user) {
         JsonNode preview = json.read(action.getPreviewJson(), AssistantJson.object());
+        if (preview instanceof ObjectNode object && object.has("revealedName")) {
+            List<ObjectNode> named = new ArrayList<>();
+            named.add(object);
+            resolveNames(user, named);
+        }
         String summary = preview.path("summary").isTextual() ? preview.path("summary").asText() : action.getAction();
-        return new ActionResponse(action.getId(), action.getConversationId(), action.getAction(), summary, preview,
-                effectiveStatus(action, UtcTime.now()).name(), action.getExpiresAt(), json.read(action.getResultJson(), null),
+        JsonNode result = json.read(action.getResultJson(), null);
+        String error = result != null && result.path("error").isTextual() ? result.path("error").asText() : null;
+        return new ActionResponse("action", action.getId(), action.getId(), action.getConversationId(), action.getAction(),
+                summary, preview, effectiveStatus(action, UtcTime.now()).name(), action.getExpiresAt(), result, error,
                 action.getCreatedAt(), action.getUpdatedAt());
     }
 
     /** PENDING actions past their expiry are EXPIRED. */
     public static AssistantActionStatus effectiveStatus(AssistantAction action, LocalDateTime now) {
         return action.isExpired(now) ? AssistantActionStatus.EXPIRED : action.getStatus();
+    }
+
+    /**
+     * A copy of the blocks without candidate names ({@code revealedName} set to null in candidate items and action
+     * previews): names are never stored in assistant messages, so a later anonymisation or a lost permission applies
+     * to old conversations too.
+     */
+    public static ArrayNode withoutNames(ArrayNode blocks) {
+        ArrayNode copy = blocks.deepCopy();
+        List<ObjectNode> named = new ArrayList<>();
+        for (JsonNode block : copy) {
+            collectNamed(block, named);
+        }
+        for (ObjectNode object : named) {
+            object.putNull("revealedName");
+        }
+        return copy;
+    }
+
+    /** A copy of an action preview without the candidate's name (see {@code withoutNames}). */
+    public static Map<String, Object> withoutNames(Map<String, Object> preview) {
+        Map<String, Object> copy = new LinkedHashMap<>(preview);
+        if (copy.containsKey("revealedName")) {
+            copy.put("revealedName", null);
+        }
+        return copy;
+    }
+
+    /** Candidate items and action previews that carry a {@code revealedName} and an {@code applicationId}. */
+    private static void collectNamed(JsonNode block, List<ObjectNode> named) {
+        String kind = block.path("kind").asText();
+        if ("candidates".equals(kind)) {
+            for (JsonNode item : block.path("items")) {
+                if (item instanceof ObjectNode object && object.has("revealedName")) {
+                    named.add(object);
+                }
+            }
+        } else if ("action".equals(kind)) {
+            if (block.path("preview") instanceof ObjectNode preview && preview.has("revealedName")) {
+                named.add(preview);
+            }
+        }
+    }
+
+    /** Sets {@code revealedName} of each object from the application it names, as {@code user} may see it now. */
+    private void resolveNames(CurrentUser user, List<ObjectNode> named) {
+        if (named.isEmpty()) {
+            return;
+        }
+        Set<Long> ids = new LinkedHashSet<>();
+        for (ObjectNode object : named) {
+            if (object.path("applicationId").canConvertToLong()) {
+                ids.add(object.path("applicationId").asLong());
+            }
+        }
+        Map<Long, AppInfo> visible = ids.isEmpty() || user == null ? Map.of() : access.visible(user, ids);
+        for (ObjectNode object : named) {
+            AppInfo info = object.path("applicationId").canConvertToLong() ? visible.get(object.path("applicationId").asLong())
+                    : null;
+            String name = info == null ? null : info.revealedName();
+            if (name == null) {
+                object.putNull("revealedName");
+            } else {
+                object.put("revealedName", name);
+            }
+        }
     }
 
     private static String limit(String value, int max) {

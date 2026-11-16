@@ -107,6 +107,30 @@ describe('FAQ accordion', () => {
   })
 })
 
+describe('header menu (phones)', () => {
+  it('opens and closes with the button, closes on Escape and returns focus, and closes after choosing a link', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const button = screen.getByRole('button', { name: 'Open menu' })
+    const panel = document.getElementById('site-menu')!
+    expect(button).toHaveAttribute('aria-controls', 'site-menu')
+    expect(panel).not.toBeVisible()
+
+    await user.click(button)
+    expect(button).toHaveAttribute('aria-expanded', 'true')
+    expect(panel).toBeVisible()
+    expect(within(panel).getByRole('link', { name: 'For companies: HR portal' })).toHaveAttribute('href', `${DEFAULT_HR_URL}/login`)
+
+    await user.keyboard('{Escape}')
+    expect(panel).not.toBeVisible()
+    expect(screen.getByRole('button', { name: 'Open menu' })).toHaveFocus()
+
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    await user.click(within(panel).getByRole('link', { name: 'FAQ' }))
+    expect(panel).not.toBeVisible()
+  })
+})
+
 describe('motion', () => {
   it('reduced motion: nothing waits to be revealed and the hero shows its end state', () => {
     // setup.ts answers prefers-reduced-motion: reduce.

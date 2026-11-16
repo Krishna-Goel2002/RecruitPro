@@ -12,6 +12,7 @@ import { Button, Checkbox, Field, LoadingRegion, SegmentedControl, Skeleton, Ske
 import { CircleAlert, CircleCheck, Clock, Icon, Link2, MailPlus } from '../design/icons'
 import { formatDate } from '../design/lib/format'
 import { humanize } from '../lib/labels'
+import { siteUrl } from '../lib/site'
 import { refereeRelationshipLabel } from '../lib/verification'
 import './referee/referee.css'
 
@@ -34,7 +35,12 @@ function Shell({ title, children, footer }: { title: string; children: ReactNode
           <span className="p-wordmark">{brand.name}</span>
           <span className="rf-brand-label">Reference request</span>
         </span>
-        <ThemeSwitch variant="icon" />
+        <span className="rf-top-end">
+          <a href={siteUrl()} className="rf-site-link">
+            About {brand.name}
+          </a>
+          <ThemeSwitch variant="icon" />
+        </span>
       </header>
       <main id="main" className="rf-main">
         {children}

@@ -246,7 +246,9 @@ export function ConversationView({ compact }: { compact?: boolean }) {
         ) : empty ? (
           <Welcome compact={compact} />
         ) : (
-          <ol className="as-log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
+          // The live region wraps the list (role="log" on the <ol> itself would strip the list semantics its items need).
+          <div role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation" className="as-log-region">
+          <ol className="as-log" role="list">
             {messages.map(m => (
               <Message key={String(m.id)} message={m} latest={m === lastAssistant && m === messages[messages.length - 1]} canAct={!a.pending} />
             ))}
@@ -256,6 +258,7 @@ export function ConversationView({ compact }: { compact?: boolean }) {
               </li>
             )}
           </ol>
+          </div>
         )}
         {a.pending && <Thinking pending={a.pending} />}
         <p className="sr-only" role="status">{a.pending ? 'The assistant is working on it.' : ''}</p>

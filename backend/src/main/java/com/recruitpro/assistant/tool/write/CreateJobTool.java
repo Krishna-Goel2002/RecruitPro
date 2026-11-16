@@ -138,13 +138,15 @@ public class CreateJobTool implements WriteTool {
             compilerNote = "The wording check is unavailable right now; review the text yourself.";
         }
 
-        Map<String, Object> normalised = new LinkedHashMap<>(args.values());
-        normalised.put("description", description);
-        normalised.put("requirements", requirements);
-        normalised.putIfAbsent("openings", 1L);
-        normalised.putIfAbsent(PUBLISH, false);
-        // Re-validated exactly like on confirm, so the preview is what will be created.
-        ToolArgs.validate(args(), normalised);
+        Map<String, Object> merged = new LinkedHashMap<>(args.values());
+        merged.put("description", description);
+        merged.put("requirements", requirements);
+        merged.putIfAbsent("openings", 1L);
+        merged.putIfAbsent(PUBLISH, false);
+        // Validated exactly like on confirm (suggested requirements included), so the preview is what will be created.
+        ToolArgs validated = ToolArgs.validate(args(), merged);
+        Map<String, Object> normalised = new LinkedHashMap<>(validated.values());
+        requirements = new ArrayList<>(validated.getObjects("requirements"));
 
         Map<String, Object> draft = new LinkedHashMap<>();
         for (String key : List.of("title", "department", "location", "jobType", "experienceLevel", "salaryMin",

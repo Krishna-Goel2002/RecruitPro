@@ -8,7 +8,7 @@ public enum ArgType {
     BOOLEAN("boolean"),
     /** One of {@link ArgSpec#values()} (case-insensitive; stored upper case). */
     ENUM("string"),
-    /** ISO-8601 date-time (with offset or UTC) or date; stored as UTC ISO-8601. */
+    /** ISO-8601 date-time (with offset or UTC) or a plain date (= 23:59:59 UTC that day); stored as UTC ISO-8601. */
     DATE_TIME("ISO-8601 date-time"),
     /** An application code such as "A-3014" (a bare number is accepted); stored as "A-3014". */
     APPLICATION_CODE("application code like A-3014"),

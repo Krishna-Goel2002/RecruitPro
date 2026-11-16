@@ -5,8 +5,9 @@ import { interviewsApi } from '../../api/assessments'
 import { qk } from '../../api/queryKeys'
 import type { Interview } from '../../api/types'
 import { QueryError } from '../../components/QueryError'
-import { Badge, EmptyState, LoadingRegion, PageHeader, Skeleton, SkeletonText, buttonProps } from '../../design/components'
-import { ArrowUpRight, CalendarClock, ChevronRight, Icon, Link2, Building2 } from '../../design/icons'
+import { useOptionalAssistant } from '../../assistant/AssistantProvider'
+import { Badge, Button, EmptyState, LoadingRegion, PageHeader, Skeleton, SkeletonText, SummaryStrip, buttonProps } from '../../design/components'
+import { ArrowUpRight, CalendarClock, ChevronRight, Icon, Link2, Building2, MessagesSquare } from '../../design/icons'
 import { plural, relativeTime } from '../../design/lib/format'
 import { safeHttpUrl } from '../../lib/format'
 import { dayLabel, timeOf, timeZoneLabel } from '../../lib/when'
@@ -24,6 +25,11 @@ export function InterviewsPage() {
   const past = all.filter(i => i.status !== 'SCHEDULED' || ((i.scorecard || i.scorecardEditable === false) && new Date(i.scheduledAt).getTime() <= now)).sort((a, b) => byTime(b, a))
   const days = groupByDay(upcoming)
   const next = upcoming[0] && new Date(upcoming[0].scheduledAt).getTime() - now < 7 * 86_400_000 ? upcoming[0] : null
+  const assistant = useOptionalAssistant()
+  const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999)
+  const today = upcoming.filter(i => new Date(i.scheduledAt).getTime() <= endOfToday.getTime()).length
+  const week = upcoming.filter(i => new Date(i.scheduledAt).getTime() - now < 7 * 86_400_000).length
+  const scored = all.filter(i => i.scorecard).length
 
   return (
     <div className="iv" data-width="wide">
@@ -34,6 +40,9 @@ export function InterviewsPage() {
           <span key="u">{plural(upcoming.length, 'upcoming interview')}</span>,
           <span key="tz">Times in {timeZoneLabel()}</span>,
         ] : undefined}
+        actions={assistant && (
+          <Button icon={MessagesSquare} onClick={() => assistant.ask('My interviews this week')}>Ask about my interviews</Button>
+        )}
       />
       {query.isPending ? (
         <LoadingRegion label="Loading your interviews">
@@ -54,6 +63,16 @@ export function InterviewsPage() {
         />
       ) : (
         <div className="iv-groups">
+          <SummaryStrip
+            label="Interviews at a glance"
+            className="iv-pulse"
+            items={[
+              { key: 'wait', label: 'Scorecards waiting', value: waiting.length, hint: waiting.length ? 'Write them while it is fresh' : 'All written', tone: waiting.length ? 'attention' : undefined },
+              { key: 'today', label: 'Today', value: today, hint: today ? plural(today, 'interview') + ' left today' : 'Nothing else today' },
+              { key: 'week', label: 'Next 7 days', value: week, hint: 'Scheduled with you' },
+              { key: 'done', label: 'Scorecards submitted', value: scored, hint: 'Visible to the hiring team' },
+            ]}
+          />
           {next && <NextUp interview={next} />}
           {waiting.length > 0 && (
             <section className="iv-group" aria-labelledby="iv-wait" data-tone="warning">

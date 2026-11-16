@@ -185,7 +185,7 @@ _TITLE_STOP = (r"\s+(?:in|at|for|based|located|with|who|having|that|which|need|n
                r"\d)\b|\s*[,;.!?()\[\]]|\s+[-–—:]\s+|$")
 _TITLE_STARTS = (
     r"\b(?:job|posting|post|role|position|opening|vacancy|requisition|job description|jd|ad|advert)\s+(?:for|of)\s+",
-    r"\b(?:hire|hiring|recruit|recruiting|looking for|need|want|searching for)\s+(?:for\s+)?(?!to\s|a\s+job\b|an?\s+new\s+job\b)",
+    r"\b(?:hire|hiring|recruit|recruiting|looking for|need|want|require|requires|searching for)\s+(?:for\s+)?(?!to\s|a\s+job\b|an?\s+new\s+job\b)",
     r"\b(?:opening|position|role|job|title|designation)\s*(?:is|[:\-])\s*",
     r"^(?:the )?(?:role|title|position|job title) (?:is|would be|will be)\s+",
 )
@@ -220,7 +220,30 @@ def clean_title(phrase: str) -> tuple[str, int | None]:
         text = text[match.end():]
     text = re.sub(r"^(?:new|good|great|strong|talented|experienced)\s+", "", text, flags=re.I)
     text = _ROLE_PLURALS.sub(lambda m: m.group(1), text)
+    text = re.sub(r"(?i)\bdevs?$", "Developer", text)  # "java dev" -> "Java Developer"
     return _title_case(text)[:120], count
+
+
+_GENERIC_HEAD = re.compile(r"(?i)(fresher|resource|people|person|staff|candidate|trainee|hand|guy|folk|member|hire)s?")
+_ROLE_NOUN_END = re.compile(r"(?i)\b(?:analyst|engineer|developer|designer|manager|executive|accountant|intern|lead|architect|scientist|"
+                            r"specialist|associate|consultant|recruiter|tester|administrator|writer|officer|coordinator|"
+                            r"representative|agent|nurse|teacher|technician|programmer|marketer|trainee|assistant|head|director)$")
+
+
+def _generic_title(head: str, after: str) -> str | None:
+    """'3 freshers for customer support' -> 'Customer Support Trainee'; '2 resources for SAP FICO' -> 'SAP FICO Consultant'."""
+    match = re.match(r"\s+for\s+(?:the\s+|a\s+|an\s+|our\s+)?", after, re.I)
+    if not match:
+        return None
+    rest = after[match.end():]
+    stop = re.search(_TITLE_STOP, rest, re.I)
+    area, _ = clean_title(rest[:stop.start() if stop else len(rest)])
+    if not area or len(area.split()) > 5 or re.fullmatch(r"(?i)(?:a|an|the|it|this|that|our|my|us|me|job|team|company)", area):
+        return None
+    if _ROLE_NOUN_END.search(area):
+        return area
+    suffix = {"fresher": "Trainee", "trainee": "Trainee", "resource": "Consultant"}.get(head.lower().rstrip("s"), "Executive")
+    return f"{area} {suffix}"
 
 
 def find_title(raw: str) -> tuple[str | None, int | None]:
@@ -233,6 +256,8 @@ def find_title(raw: str) -> tuple[str | None, int | None]:
             stop = re.search(_TITLE_STOP, rest[offset:], re.I)
             candidate = rest[:offset + (stop.start() if stop else len(rest) - offset)]
             title, count = clean_title(candidate)
+            if _GENERIC_HEAD.fullmatch(title):
+                title = _generic_title(title, rest[len(candidate):]) or title
             if 1 <= len(title.split()) <= 7 and not re.fullmatch(r"(?i)(?:a|an|the|job|someone|people|candidates?|it|this|that|"
                                                                  r"to|help|more|new|urgently)", title):
                 return title, count
@@ -280,7 +305,7 @@ _OPENINGS_RES = (
     re.compile(r"\bx\s?(\d{1,3})\b", re.I),
 )
 _DEADLINE_CUE = re.compile(r"\b(?:deadline|apply by|applications? (?:close|closes|closing|due|open till|open until)|closing date|"
-                           r"last date|close (?:it |the job |applications )?(?:on|by|in)|closes (?:on|in)|until|till|by|before|due|"
+                           r"last date|close (?:it |the job |applications )?(?:on|by|in)|closes (?:on|in)|closing (?:on|in|by)|until|till|by|before|due|"
                            r"expires?|expiry|ends?(?: on)?|valid till)\b", re.I)
 _NO_DEADLINE = re.compile(r"\bno deadline\b|\bwithout (?:a )?deadline\b|\bno closing date\b|\buntil filled\b|\btill filled\b|"
                           r"\bopen[- ]ended\b|\bno end date\b|\bnone\b|\bskip\b|\bnot needed\b|\bno need\b|\bnot sure\b|\bno\b")
@@ -370,6 +395,14 @@ class Extraction:
     notes: list[str] = field(default_factory=list)
 
 
+# A short answer that clearly fills another field ("mid", "full time", "no deadline") is never taken as a title,
+# a city or a department just because that was the pending question.
+_OTHER_FIELD_ANSWER = re.compile(r"^(?:entry|mid|middle|senior|junior|lead|fresher|freshers|executive|experienced)(?:[- ]?level)?$|"
+                                 r"^(?:full|part)[- ]?time$|^contract(?:ual)?$|^internship$|^(?:yes|no|ok|okay|sure|skip|none|n/?a)$|"
+                                 r"\bdeadline\b|\bclos(?:e|es|ing)\b|\buntil filled\b|\bsalary\b|\blpa\b|\bctc\b|\bopenings?\b|"
+                                 r"\bpositions?\b|\byears?\b|\byrs?\b")
+
+
 def _bare_answer(text: str) -> str:
     stripped = re.sub(r"(?i)^(?:it(?:'s| is| will be| should be)|it'?s|the (?:role|title|location|department|team) (?:is|will be)|"
                       r"we are|location is|based in|in|at|title is|department is|dept is|team is|call it|for)\s+", "", text.strip())
@@ -389,7 +422,7 @@ def extract(raw: str, fields: dict[str, Any], pending: str | None, today: date) 
                        r"\b(?:rename (?:it|the job|the role) to|call it|title should be|make the title)\s+(.+?)\s*$", text, re.I)
     if rename:
         title, head_count = clean_title(rename.group(1) or rename.group(2))
-    elif pending == "title" and not title:
+    elif pending == "title" and not title and not _OTHER_FIELD_ANSWER.search(_bare_answer(text).lower()):
         candidate = _bare_answer(text)
         candidate = re.split(_TITLE_STOP, candidate, maxsplit=1, flags=re.I)[0] if len(candidate.split()) > 6 else candidate
         title, head_count = clean_title(candidate)
@@ -420,7 +453,7 @@ def extract(raw: str, fields: dict[str, Any], pending: str | None, today: date) 
         up["city"] = _title_case(label.group(1).strip())
     elif pending == "location" and "workMode" not in up:
         answer = _bare_answer(text)
-        if 1 <= len(answer.split()) <= 4 and not re.search(r"\d", answer):
+        if 1 <= len(answer.split()) <= 4 and not re.search(r"\d", answer) and not _OTHER_FIELD_ANSWER.search(answer.lower()):
             up["city"] = _title_case(answer)
     if re.search(r"\b(?:make it|change it to|switch to|go)\s+(?:on[- ]?site|in[- ]office)\b", lowered):
         up["workMode"] = "ONSITE"
@@ -508,7 +541,7 @@ def extract(raw: str, fields: dict[str, Any], pending: str | None, today: date) 
         up["department"] = _title_case(department.group(1).strip())
     elif pending == "department":
         answer = _bare_answer(text)
-        if 1 <= len(answer.split()) <= 5:
+        if 1 <= len(answer.split()) <= 5 and not _OTHER_FIELD_ANSWER.search(answer.lower()) and not parse_date(answer, today):
             up["department"] = _title_case(answer)
 
     # ---- summary / responsibilities

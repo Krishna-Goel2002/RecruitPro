@@ -8,6 +8,7 @@ tools/ui-snapshots/
 ├─ lib/mock.mjs          envelope, paging and relative-time helpers
 ├─ fixtures/candidate.mjs  routes + screen list for frontend/
 ├─ fixtures/hr.mjs         routes + screen list for hr-frontend/ (roles: HR_MANAGER default, ADMIN, INTERVIEWER)
+├─ fixtures/site.mjs       screens for the landing site site/ (no API; landing, FAQ open, phone menu)
 └─ out/                  screenshots + report.json (git-ignored)
 ```
 
@@ -21,6 +22,7 @@ cd tools/ui-snapshots && npm install && npm install --no-save axe-core
 # 3. capture (light + dark, 1440x900 and 390x844, full page, reduced motion)
 node snap.mjs --portal candidate --dist ../../frontend/dist --theme both --axe
 node snap.mjs --portal hr --dist ../../hr-frontend/dist --theme both --axe
+node snap.mjs --portal site --dist ../../site/dist --theme both --axe   # landing page (build site/ first)
 ```
 
 On Windows or macOS, point it at an installed browser: `CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"` (Edge works too). Without `CHROME_PATH` it uses `@sparticuz/chromium`, which only runs on Linux.
@@ -33,7 +35,7 @@ On Windows or macOS, point it at an installed browser: `CHROME_PATH="C:\Program 
 | `--theme light\|dark\|both` | emulates `prefers-color-scheme` **and** sets `localStorage['theme-preference']` |
 | `--widths 1440,390` | viewport widths (height 900 desktop, 844 phone) |
 | `--only a,b` | capture only these screen names |
-| `--viewport` | viewport-only shots instead of full page |
+| `--viewport` | viewport-only shots instead of full page (a screen can also set `viewport: true`, e.g. a fixed side panel) |
 | `--motion` | allow animations (default emulates `prefers-reduced-motion: reduce` so pixels are stable) |
 | `--axe` | run axe-core (tags wcag2a, wcag2aa, wcag21a, wcag21aa) on every capture |
 

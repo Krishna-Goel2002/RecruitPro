@@ -238,6 +238,9 @@ textarea.ui-input {
   overflow-y: auto;
   overscroll-behavior: contain;
   resize: vertical;
+  /* A clearly visible thumb: the page's faint default made a scrollable field look like it simply ended. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-hover) transparent;
 }
 textarea.ui-input[data-autogrow] { overflow-y: auto; }
 .ui-textarea { position: relative; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -974,6 +977,57 @@ textarea.ui-input[data-autogrow] { overflow-y: auto; }
 }
 .ui-stat-hint { margin: 0; color: var(--fg-subtle); font: 400 var(--text-caption) / var(--lh-caption) var(--font-sans); }
 
+/* Summary strip (HR-UX): tiles joined by hairlines inside one bordered band; interactive tiles lift and press. */
+.ui-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+.ui-summary-item { display: flex; min-width: 0; box-shadow: -1px 0 0 var(--border-hairline), 0 -1px 0 var(--border-hairline); }
+.ui-summary-tile {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 14px 18px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-default);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  /* Inside the band a tile does not rise (it would be clipped); it tints on hover and presses in. */
+  --lift: 0px;
+  --shadow-lift: none;
+}
+a.ui-summary-tile, button.ui-summary-tile { cursor: pointer; }
+a.ui-summary-tile:hover, button.ui-summary-tile:hover { background: var(--bg-hover); color: var(--fg-default); text-decoration: none; }
+a.ui-summary-tile:active, button.ui-summary-tile:active { background: var(--bg-active); }
+.ui-summary-tile:focus-visible { outline-offset: -3px; }
+.ui-summary-tile[aria-pressed='true'] { background: var(--accent-subtle); }
+.ui-summary-tile[aria-pressed='true']::after { content: ''; position: absolute; inset: auto 0 0; height: 2px; background: var(--accent); }
+.ui-summary-tile[data-tone]::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--t-rule); }
+.ui-summary-tile[data-tone='attention'] { --t-rule: var(--warning-fg); }
+.ui-summary-tile[data-tone='danger'] { --t-rule: var(--danger-fg); }
+.ui-summary-tile[data-tone='success'] { --t-rule: var(--success-fg); }
+.ui-summary-label { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+.ui-summary-mark { width: 6px; height: 6px; border-radius: var(--r-full); background: var(--t-rule); }
+.ui-summary-value { color: var(--fg-default); font: 600 var(--text-h2) / var(--lh-h2) var(--font-sans); letter-spacing: -.01em; }
+.ui-summary-hint { overflow: hidden; color: var(--fg-subtle); font: 400 var(--text-caption) / var(--lh-caption) var(--font-sans); text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 599px) {
+  .ui-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ui-summary-tile { padding: 12px 14px; }
+}
+
 /* ============================================================================================ dialog, drawer */
 .ui-dialog,
 .ui-drawer {
@@ -1045,7 +1099,7 @@ textarea.ui-input[data-autogrow] { overflow-y: auto; }
 .ui-drawer-handle { display: none; }
 .ui-drawer-header { flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--border-hairline); }
 .ui-drawer-header-extra { flex: 0 0 100%; }
-.ui-drawer-body { overflow: auto; padding: 20px; overscroll-behavior: contain; animation: ui-fade-in var(--dur-fast) var(--ease-standard) 60ms both; }
+.ui-drawer-body { overflow: auto; padding: 20px; overscroll-behavior: contain; scrollbar-gutter: stable; animation: ui-fade-in var(--dur-fast) var(--ease-standard) 60ms both; }
 
 @media (max-width: 599px) {
   .ui-drawer,

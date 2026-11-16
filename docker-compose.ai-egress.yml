@@ -1,5 +1,6 @@
 # Opt-in override: gives the AI service outbound internet for an LLM provider
-# (LLM_PROVIDER=anthropic or openai_compatible). Without it the AI service has no egress.
+# (LLM_PROVIDER=anthropic or openai_compatible, or ASSISTANT_LLM_PROVIDER=gemini|groq|anthropic|openai_compatible).
+# Without it the AI service has no egress (the HR assistant then always plans offline).
 #   docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d
 # Only de-identified text is sent to the LLM (ai-service/app/llm/provider.py).
 services:

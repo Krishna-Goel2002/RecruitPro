@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
+import { skipToken, useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
 import { assistantApi } from '../api/assistant'
 import type {
@@ -131,17 +131,20 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   }, [onPage, routeContext])
   const context = onPage ? carried : routeContext
 
+  // Subscribe to the page's job (never fetches here: the page loads it), so the label switches from "Job #12" to the
+  // title as soon as the job arrives.
+  const contextJob = useQuery<JobStaff>({ queryKey: qk.job(context.jobId ?? 0), queryFn: skipToken })
+  const jobTitle = context.jobId ? contextJob.data?.title : undefined
   const contextLabel = useMemo(() => {
     if (context.page === 'applicant' && context.applicationId) {
-      const job = context.jobId ? queryClient.getQueryData<JobStaff>(qk.job(context.jobId))?.title : undefined
-      return [`A-${context.applicationId}`, job].filter(Boolean).join(' · ')
+      return [`A-${context.applicationId}`, jobTitle].filter(Boolean).join(' · ')
     }
-    if (context.page === 'job' && context.jobId) return queryClient.getQueryData<JobStaff>(qk.job(context.jobId))?.title ?? `Job #${context.jobId}`
+    if (context.page === 'job' && context.jobId) return jobTitle ?? `Job #${context.jobId}`
     if (context.page === 'jobs') return 'Jobs'
     if (context.page === 'admin') return 'Administration'
+    if (context.page === 'interviews') return 'My interviews'
     return null
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context.page, context.jobId, context.applicationId, location.key])
+  }, [context.page, context.jobId, context.applicationId, jobTitle])
 
   useEffect(() => writeStored(conversationId), [conversationId])
 

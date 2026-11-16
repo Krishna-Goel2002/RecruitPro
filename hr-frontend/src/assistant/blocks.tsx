@@ -169,6 +169,11 @@ function gatesText(gates: CandidateGates | undefined): { text: string; ok: boole
   if (typeof gates === 'boolean') return { text: gates ? 'Gates verified' : 'Gate open', ok: gates }
   if (typeof gates === 'number') return { text: gates === 0 ? 'Gates verified' : `${gates} gate${gates === 1 ? '' : 's'} open`, ok: gates === 0 }
   if (typeof gates === 'string') return { text: gates, ok: null }
+  // The backend sends the open gates by name (["Java"]); an empty list means every gate is verified.
+  if (Array.isArray(gates)) {
+    const names = gates.filter(g => typeof g === 'string' && g.trim())
+    return names.length === 0 ? { text: 'Gates verified', ok: true } : { text: `Gate open: ${names.slice(0, 2).join(', ')}${names.length > 2 ? ` +${names.length - 2}` : ''}`, ok: false }
+  }
   const total = gates.total ?? null
   const open = gates.open ?? (total != null && gates.verified != null ? total - gates.verified : null)
   if (open == null) return null
@@ -219,7 +224,7 @@ export function CandidatesView({ block }: { block: CandidatesBlock }) {
                 )}
               </span>
             </div>
-            {c.verified != null && <CoverageMeter compact verified={c.verified} claimed={Math.max(c.verified, c.claimed ?? c.verified)} className="as-cand-cov" />}
+            {c.verified != null && <CoverageMeter verified={c.verified} claimed={Math.max(c.verified, c.claimed ?? c.verified)} note={null} className="as-cand-cov" />}
           </li>
         )
       })}
@@ -319,12 +324,14 @@ export function JobPreviewView({
         <section className="as-job-sec">
           <h4>
             Requirements <span className="subtle numeric">{must.length} must-have · {nice.length} nice to have</span>
+            {d.requirementsSuggested && <span className="as-job-suggested">Suggested from the description</span>}
           </h4>
           <ul className="as-reqs">
             {[...must, ...nice].map((r, i) => <RequirementRow key={i} r={r} />)}
           </ul>
         </section>
       )}
+      {typeof d.compilerNote === 'string' && d.compilerNote.trim() && <p className="as-muted as-job-note">{d.compilerNote}</p>}
       {action && (
         <footer className="as-card-foot">
           {status === 'PENDING' && interactive ? (
@@ -493,7 +500,8 @@ export function LinkView({ block }: { block: LinkBlock }) {
 }
 
 export function NoticeView({ block }: { block: NoticeBlock }) {
-  const tone = (['info', 'success', 'warning', 'danger', 'neutral'] as const).find(t => t === block.tone) ?? 'info'
+  const wire = block.tone === 'error' ? 'danger' : block.tone
+  const tone = (['info', 'success', 'warning', 'danger', 'neutral'] as const).find(t => t === wire) ?? 'info'
   return <Alert tone={tone} className="as-notice">{block.text}</Alert>
 }
 

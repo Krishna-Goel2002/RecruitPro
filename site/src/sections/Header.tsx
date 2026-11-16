@@ -34,7 +34,7 @@ function useActiveSection(ids: readonly string[]): string | null {
 
 /**
  * Sticky header: wordmark, section links, theme toggle and the two portal entries. It gains a hairline and a
- * surface once the page scrolls. Below 960 px the links move into a disclosure panel (Menu button; Escape closes
+ * surface once the page scrolls. Below 1060 px the links move into a disclosure panel (Menu button; Escape closes
  * and returns focus; choosing a link closes it).
  */
 export function Header({ links }: { links: PortalLinks }) {

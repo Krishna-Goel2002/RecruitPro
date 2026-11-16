@@ -91,6 +91,20 @@ public class UpdateJobStatusTool implements WriteTool {
                 List.of());
     }
 
+    /** The job must still have the status the user saw when the change was proposed. */
+    @Override
+    public void checkUnchanged(ToolContext context, ToolArgs args, Map<String, Object> preview) {
+        Object from = preview == null ? null : preview.get("from");
+        if (from == null) {
+            return;
+        }
+        Job job = jobAccess.requireManageAccess(args.getLong("jobId"));
+        if (job.getStatus() == null || !job.getStatus().name().equals(String.valueOf(from))) {
+            throw new AssistantToolException("Job #" + job.getId() + " changed from " + from + " to " + job.getStatus()
+                    + " since this was proposed");
+        }
+    }
+
     @Override
     public ActionOutcome execute(ToolContext context, ToolArgs args) {
         JobStatus target = JobStatus.valueOf(args.getString("status"));

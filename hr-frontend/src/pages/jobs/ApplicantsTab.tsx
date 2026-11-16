@@ -11,7 +11,7 @@ import { QueryError } from '../../components/QueryError'
 import { Kbd, ShortcutSheet, useShortcuts } from '../../components/Shortcuts'
 import { ApplicationStatusBadge } from '../../components/StatusBadges'
 import {
-  Alert, Button, DataTable, DensityToggle, EmptyState, IconButton, Menu, Pagination, SegmentedControl, Spinner, Tag, Tooltip,
+  Alert, Button, DataTable, DensityToggle, EmptyState, IconButton, Menu, Pagination, SegmentedControl, Spinner, SummaryStrip, Tag, Tooltip, type SummaryItem,
   buttonProps, useTableDensity, useToast, type Column, type RowGroup,
 } from '../../design/components'
 import { formatDate, formatNumber, plural, relativeTime } from '../../design/lib/format'
@@ -210,6 +210,26 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
       else groups.push({ id: row.rankGroup, title: GROUP_COPY[row.rankGroup].title, description: GROUP_COPY[row.rankGroup].description, rows: [row] })
     }
   }
+
+  // At a glance (main-page pass): totals, what is new, and where the work is. Group counts come from the loaded page;
+  // with more than one page they say "on this page".
+  const pulse: SummaryItem[] = ((): SummaryItem[] => {
+    if (!data || data.totalElements === 0 || status) return []
+    const partial = data.totalElements > rows.length
+    const by = (g: RankGroup) => view.filter(row => row.rankGroup === g).length
+    const fresh = previousVisit ? view.filter(row => new Date(row.appliedAt).getTime() > new Date(previousVisit).getTime()).length : 0
+    const best = view.reduce<number | null>((m, row) => (row.verifiedCoverage == null ? m : Math.max(m ?? 0, row.verifiedCoverage)), null)
+    const scope = partial ? ' on this page' : ''
+    const gates = by('MUST_HAVES_UNVERIFIED')
+    const unscored = by('UNSCORED')
+    return [
+      { key: 'all', label: 'Applicants', value: data.totalElements, hint: fresh > 0 ? `${formatNumber(fresh)} new since your last visit` : 'Nothing new since your last visit', tone: fresh > 0 ? 'attention' : undefined },
+      { key: 'ranked', label: 'Ranked', value: by('RANKED'), hint: `Every gate verified${scope}` },
+      { key: 'gates', label: 'Must-haves to verify', value: gates, hint: gates > 0 ? `Check evidence or a claim${scope}` : `None open${scope}`, tone: gates > 0 ? 'attention' : undefined },
+      { key: 'unscored', label: 'Unscored', value: unscored, hint: unscored > 0 ? `Still being matched${scope}` : `All matched${scope}` },
+      { key: 'best', label: 'Best verified coverage', value: best, format: (n: number) => `${Math.round(n)}%`, hint: 'Not a probability of success' },
+    ]
+  })()
 
   const columns: Column<ApplicantSummary>[] = [
     {
@@ -442,6 +462,8 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
 
   return (
     <div className="hra-ranking" onFocusCapture={onFocusCapture} onKeyDownCapture={onKeyDownCapture} ref={tableRef}>
+      {pulse.length > 0 && <SummaryStrip label="Applicants at a glance" items={pulse} className="hra-rank-pulse" />}
+
       {!hintHidden && (
         <Alert
           tone="neutral"

@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import brand from '../../design/brand/active'
-import { Alert, EvidenceLadder, ThemeSwitch } from '../../design/components'
+import { Alert, CoverageMeter, EvidenceLadder, ThemeSwitch } from '../../design/components'
 import { usePageTitle } from '../../lib/hooks'
 import './auth.css'
 
@@ -71,7 +71,18 @@ export function AuthLayout({ title, intro, overline, children, footer, stepKey, 
   )
 }
 
-/** The right-hand column: what the product actually does, drawn with the real components. Decorative. */
+/** Specimen rows for the product preview: fictional, blind codes only (blind-first is the default the product ships). */
+const PREVIEW = [
+  { code: 'A-3001', tier: 'INTERVIEW_VERIFIED', verified: 86, claimed: 90, note: 'Every gate verified' },
+  { code: 'A-3014', tier: 'DEMONSTRATED', verified: 74, claimed: 82, note: 'Work sample scored 4 of 4' },
+  { code: 'A-3022', tier: 'CORROBORATED', verified: 61, claimed: 78, note: 'Certificate confirmed' },
+] as const
+
+/**
+ * The right-hand column: what the product actually does, drawn with the real components. Decorative (aria-hidden).
+ * A product preview (a blind ranking whose coverage bars grow and whose rungs fill on arrival) above the ladder legend,
+ * on a quiet dotted field.
+ */
 function AuthSpecimen() {
   return (
     <aside className="hra-auth-aside" aria-hidden="true">
@@ -79,9 +90,28 @@ function AuthSpecimen() {
         <p className="hra-specimen-kicker">Evidence ladder</p>
         <p className="hra-specimen-line">Every rank shows the evidence behind it.</p>
         <p className="hra-specimen-sub">
-          Five rungs, from a candidate’s own claim to a structured interview. Rankings count what was shown, never what was only said.
+          Rankings count what was shown, never what was only said. People make every decision.
         </p>
-        <EvidenceLadder tier="INTERVIEW_VERIFIED" variant="legend" audience="staff" />
+        <div className="hra-preview">
+          <div className="hra-preview-head">
+            <span className="hra-preview-title">Senior Backend Engineer</span>
+            <span className="hra-preview-live"><span className="hra-preview-dot" />Ranked by verified evidence</span>
+          </div>
+          <ol className="hra-preview-list ui-stagger">
+            {PREVIEW.map((row, i) => (
+              <li key={row.code} className="hra-preview-row">
+                <span className="hra-preview-rank numeric">{i + 1}</span>
+                <span className="hra-preview-who">
+                  <span className="hra-preview-code mono">{row.code}</span>
+                  <span className="hra-preview-note">{row.note}</span>
+                </span>
+                <EvidenceLadder tier={row.tier} variant="chip" audience="staff" compact />
+                <CoverageMeter compact verified={row.verified} claimed={row.claimed} note={null} className="hra-preview-cov" />
+              </li>
+            ))}
+          </ol>
+        </div>
+        <EvidenceLadder tier="INTERVIEW_VERIFIED" variant="legend" audience="staff" compact />
         <p className="hra-specimen-foot">Coverage is the share of weighted requirements with evidence. It is not a probability of success.</p>
       </div>
     </aside>

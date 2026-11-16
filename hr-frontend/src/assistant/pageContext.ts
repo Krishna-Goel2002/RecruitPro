@@ -9,6 +9,7 @@ export function pageContext(pathname: string): AssistantContext {
   if (job) return { page: 'job', jobId: Number(job[1]) }
   if (pathname === '/jobs' || pathname === '/jobs/new') return { page: 'jobs' }
   if (pathname === '/admin' || pathname.startsWith('/admin/') || pathname === '/welcome') return { page: 'admin' }
+  if (pathname === '/interviews' || /^\/interviews\/\d+\/?$/.test(pathname)) return { page: 'interviews' }
   return { page: 'other' }
 }
 

@@ -474,6 +474,29 @@ class TestJobPosting:
         assert "hr@example.test" not in json.dumps(result)
         assert {item["description"] for item in args["requirements"]} >= {"Tally", "SAP"}
 
+    def test_indian_english_headcount_phrasing_gets_a_real_title(self):
+        freshers = step("need 3 freshers for customer support in Gurgaon, WFO, apply by 15th Dec")
+        fields = freshers["draft"]["fields"]
+        assert (fields["title"], fields["openings"], fields["city"], fields["experienceLevel"], fields["deadline"]) == \
+            ("Customer Support Trainee", 3, "Gurugram", "ENTRY", "2026-12-15")
+        sap = step("require 2 resources for SAP FICO in Noida, contract")
+        assert sap["draft"]["fields"]["title"] == "SAP FICO Consultant" and sap["draft"]["fields"]["openings"] == 2
+        dev = step("we require 2 java devs urgently in Pune")
+        assert dev["draft"]["fields"]["title"] == "Java Developer"
+        closing = step("Opening for 2 Python developers at Bangalore, hybrid, full time, senior, closing in 2 weeks, Django")
+        assert closing["type"] == "propose" and closing["args"]["deadline"] == "2026-12-01"
+
+    def test_an_answer_for_another_field_is_not_taken_as_the_pending_one(self):
+        first = step("post a job")
+        assert first["field"] == "title"
+        level = step("mid", draft=first["draft"])
+        assert level["field"] == "title" and "title" not in level["draft"]["fields"]
+        assert level["draft"]["fields"]["experienceLevel"] == "MID"
+        draft = step("Data Analyst in Pune, full time, 1 opening, mid level", draft=level["draft"])["draft"]
+        draft["pending"] = "department"
+        answered = step("no deadline", draft=draft)
+        assert answered["draft"]["fields"].get("department") != "No Deadline" and answered["draft"]["fields"]["noDeadline"]
+
     def test_create_job_needs_the_permission(self):
         result = step("Post a job for a QA engineer in Chennai", tools=RECRUITER_TOOLS)
         assert result["type"] == "answer" and "isn't available" in result["text"]

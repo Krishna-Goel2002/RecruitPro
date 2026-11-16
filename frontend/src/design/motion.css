@@ -1,7 +1,9 @@
 /*
- * Motion (DESIGN_SYSTEM §8): keyframes, list stagger, route entrance, and the reduced-motion overrides (§8.6).
- * Enter with decelerate/standard, exit with the exit curve at ~70 % of the enter duration; transform + opacity only;
- * travel 4–8 px (drawers excepted).
+ * Motion (DESIGN_SYSTEM §8, extended by HR-UX "motion v2"): keyframes, list stagger, route entrance, hover lift,
+ * reveal-on-view, the assistant panel, the thinking indicator, and the reduced-motion overrides (§8.6).
+ * Enter with decelerate/emphasized, exit with the exit curve at ~70 % of the enter duration; transform + opacity only;
+ * travel 4–8 px (drawers and side panels excepted). This file is imported AFTER components.css in the same layer, so
+ * its rules win where they restate a component's animation.
  */
 
 @keyframes ui-spin { to { transform: rotate(360deg); } }
@@ -9,34 +11,110 @@
 @keyframes ui-fade-out { to { opacity: 0; } }
 @keyframes ui-appear { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ui-enter { from { opacity: 0; transform: translateY(var(--travel)); } }
-@keyframes ui-route-in { from { opacity: 0; transform: translateY(var(--travel)); } }
-@keyframes ui-dialog-in { from { opacity: 0; transform: translateY(4px) scale(.98); } }
-@keyframes ui-dialog-out { to { opacity: 0; transform: scale(.98); } }
+@keyframes ui-route-in { from { opacity: 0; transform: translateY(var(--travel-route, var(--travel))); } }
+@keyframes ui-dialog-in { from { opacity: 0; transform: translateY(8px) scale(.97); } }
+@keyframes ui-dialog-out { to { opacity: 0; transform: translateY(4px) scale(.98); } }
 @keyframes ui-drawer-in { from { transform: translateX(100%); } }
 @keyframes ui-drawer-out { to { transform: translateX(100%); } }
 @keyframes ui-sheet-in { from { transform: translateY(100%); } }
 @keyframes ui-sheet-out { to { transform: translateY(100%); } }
 @keyframes ui-nav-in { from { transform: translateX(-100%); } }
-@keyframes ui-toast-in { from { opacity: 0; transform: translateY(8px); } }
-@keyframes ui-toast-out { to { opacity: 0; transform: translateX(8px); } }
+@keyframes ui-toast-in { from { opacity: 0; transform: translateX(24px) scale(.98); } }
+@keyframes ui-toast-out { to { opacity: 0; transform: translateX(calc(100% + 16px)); } }
 @keyframes ui-tooltip-in { from { opacity: 0; transform: translateY(2px); } }
 @keyframes ui-tooltip-in-below { from { opacity: 0; transform: translateY(-2px); } }
-@keyframes ui-pop-in { from { opacity: 0; transform: translateY(-4px); } }
+@keyframes ui-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
 @keyframes ui-rung-in { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 @keyframes ui-draw { from { stroke-dashoffset: 64; } to { stroke-dashoffset: 0; } }
 @keyframes ui-shimmer { to { transform: translateX(100%); } }
 @keyframes ui-progress { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @keyframes ui-pulse { 50% { opacity: .7; } }
 @keyframes ui-highlight { from { background-color: var(--accent-subtle); } }
+@keyframes ui-grow-x { from { transform: scaleX(0); } }
+@keyframes ui-focus-in { from { outline-offset: 6px; outline-color: transparent; } }
+@keyframes ui-panel-in { from { opacity: 0; transform: translateX(24px); } }
+@keyframes ui-panel-out { to { opacity: 0; transform: translateX(24px); } }
+@keyframes ui-panel-up { from { opacity: 0; transform: translateY(24px); } }
+@keyframes ui-thinking { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
+@keyframes ui-message-in { from { opacity: 0; transform: translateY(6px); } }
+
+/* M1: route entrance (AppShell keys .p-content by pathname): fade + 8 px rise, 180 ms. No fill mode, so nothing
+   keeps a transform (a held transform would re-anchor fixed descendants). */
+.p-content { animation: ui-route-in var(--dur-route, var(--dur-base)) var(--ease-decelerate); }
 
 /* M2: list stagger (motion.ts stagger() sets --i and .is-entering). */
 .is-entering {
-  animation: ui-enter var(--dur-base) var(--ease-standard) both;
+  animation: ui-enter var(--dur-base) var(--ease-standard) backwards;
   animation-delay: calc(var(--i, 0) * var(--stagger-step));
 }
 
-/* M1: route entrance (AppShell keys .p-content by pathname). */
-.p-content { animation: ui-route-in var(--dur-base) var(--ease-standard); }
+/* M2, CSS only: put .ui-stagger on a list; its first ten children arrive 24 ms apart (the rest with the tenth).
+   Plays once when the list mounts; use it on lists that mount with their data (not on refetch). */
+.ui-stagger > * {
+  animation: ui-enter var(--dur-base) var(--ease-decelerate) backwards;
+  animation-delay: calc(var(--i, 9) * var(--stagger-step));
+}
+.ui-stagger > :nth-child(1) { --i: 0; }
+.ui-stagger > :nth-child(2) { --i: 1; }
+.ui-stagger > :nth-child(3) { --i: 2; }
+.ui-stagger > :nth-child(4) { --i: 3; }
+.ui-stagger > :nth-child(5) { --i: 4; }
+.ui-stagger > :nth-child(6) { --i: 5; }
+.ui-stagger > :nth-child(7) { --i: 6; }
+.ui-stagger > :nth-child(8) { --i: 7; }
+.ui-stagger > :nth-child(9) { --i: 8; }
+
+/* Reveal on first view (motion.ts useReveal / <Reveal>): JS sets data-reveal="hidden" only when it will also show it,
+   so content never stays hidden without JS. */
+[data-reveal='hidden'] { opacity: 0; transform: translateY(var(--travel-route, 8px)); }
+[data-reveal='shown'] {
+  transition: opacity var(--dur-slow) var(--ease-decelerate), transform var(--dur-slow) var(--ease-emphasized);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+/* Hover lift + press feedback for interactive cards and tiles (not for buttons: they only press, M15). */
+.ui-lift {
+  transition:
+    transform var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
+}
+@media (hover: hover) {
+  .ui-lift:hover { transform: translateY(var(--lift)); box-shadow: var(--shadow-lift); }
+}
+.ui-lift:active { transform: translateY(0) scale(.99); transition-duration: var(--dur-instant); }
+
+/* Press feedback for icon buttons and links styled as buttons (M15). */
+.ui-icon-btn { transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), transform var(--dur-instant) var(--ease-standard); }
+.ui-icon-btn:active:not(:disabled) { transform: scale(.94); }
+
+/* Focus ring: the outline settles in from a little further out (140 ms). :where() keeps it below any component that
+   has its own animation. */
+:where(:focus-visible) { animation: ui-focus-in var(--dur-fast) var(--ease-decelerate); }
+
+/* M8 / M9 restated with the v2 curves: dialogs rise with a gentle spring, drawers glide in on the emphasized curve. */
+.ui-dialog[open] { animation: ui-dialog-in var(--dur-slow) var(--ease-spring); }
+.ui-drawer[open] { animation: ui-drawer-in 320ms var(--ease-emphasized); }
+.ui-drawer[open]::backdrop { animation: ui-fade-in var(--dur-slow) var(--ease-standard); }
+.ui-menu, .ui-popover { animation: ui-pop-in var(--dur-fast) var(--ease-decelerate); transform-origin: top; }
+
+/* M10: toasts slide in from the right and leave to the right; the newest sits at the bottom of the stack. */
+.ui-toast { animation: ui-toast-in 260ms var(--ease-emphasized); }
+.ui-toast[data-leaving] { animation: ui-toast-out 180ms var(--ease-exit) forwards; }
+
+/* Bars that grow on first view (StackedBar, meters): JS toggles data-grow from "pending" to "done". */
+[data-grow='pending'] { clip-path: inset(0 100% 0 0); }
+[data-grow='done'] { clip-path: inset(0 0 0 0); transition: clip-path var(--dur-slower) var(--ease-decelerate); }
+
+/* Thinking indicator (assistant): three dots, opacity only, calm. */
+.ui-thinking { display: inline-flex; align-items: center; gap: 3px; height: 1em; }
+.ui-thinking > span { width: 5px; height: 5px; border-radius: var(--r-full); background: currentColor; animation: ui-thinking 1.2s var(--ease-standard) infinite; }
+.ui-thinking > span:nth-child(2) { animation-delay: .15s; }
+.ui-thinking > span:nth-child(3) { animation-delay: .3s; }
+
+/* A new chat message rises in. */
+.ui-message-in { animation: ui-message-in var(--dur-base) var(--ease-decelerate) backwards; }
 
 /* M6: verdict icon draws in after a check completes. */
 .ui-verdict.is-revealing svg > * { stroke-dasharray: 64; animation: ui-draw 240ms var(--ease-decelerate) both; }
@@ -52,6 +130,8 @@ tr.is-moved > * { animation: ui-highlight 1200ms var(--ease-standard); }
 @media (prefers-reduced-motion: reduce) {
   .p-content,
   .is-entering,
+  .ui-stagger > *,
+  .ui-message-in,
   .ui-tabpanel,
   .ui-toast,
   .ui-tooltip,
@@ -68,9 +148,17 @@ tr.is-moved > * { animation: ui-highlight 1200ms var(--ease-standard); }
   .ui-ladder-label[data-swap],
   .ui-verdict.is-revealing svg > *,
   .ui-verdict.is-revealing .ui-verdict-label,
+  .ui-thinking > span,
+  :where(:focus-visible),
   .is-urgent { animation: none; }
+  .ui-thinking > span { opacity: .6; }
   tr.is-moved > * { animation: ui-highlight 1200ms steps(1, end); }
   .ui-skeleton::after { display: none; }
+  [data-reveal='hidden'] { opacity: 1; transform: none; }
+  [data-grow='pending'] { clip-path: none; }
+  [data-reveal='shown'],
+  [data-grow='done'],
+  .ui-lift,
   .ui-coverage-fill,
   .ui-coverage-hatch,
   .ui-meter-fill,
@@ -78,6 +166,8 @@ tr.is-moved > * { animation: ui-highlight 1200ms var(--ease-standard); }
   .ui-seg-thumb,
   .ui-switch-thumb,
   .ui-check-tick { transition: none; }
+  .ui-lift:hover,
+  .ui-lift:active,
   .ui-btn:active:not(:disabled),
   .ui-icon-btn:active:not(:disabled) { transform: none; }
 }

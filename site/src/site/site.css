@@ -297,6 +297,11 @@
     .feat:nth-child(1), .feat:nth-child(3) { border-left: 0; padding-left: 0; }
     .feat[data-wide] { grid-column: span 3; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); grid-template-rows: auto; align-items: center; gap: clamp(40px, 6vw, 96px); padding-inline: 0; border-left: 0; }
     .feat:nth-child(5) { padding-right: 0; }
+    /* The three narrow features share two subgrid rows, so their demos start on one line whatever the text length. */
+    @supports (grid-template-rows: subgrid) {
+      .feat:not([data-wide]) { grid-row: span 2; grid-template-rows: subgrid; row-gap: 28px; }
+      .feat:not([data-wide]) .feat-demo { align-self: start; }
+    }
   }
   .feat-icon {
     display: inline-grid; place-items: center; width: 40px; height: 40px; margin-bottom: 16px; border-radius: var(--r-md);
@@ -319,7 +324,7 @@
     transform: scaleX(0); transform-origin: left; transition: transform var(--dur-slower) var(--ease-decelerate) calc(var(--i) * 90ms);
   }
   .rk-row:nth-child(2) .rk-fill { background: color-mix(in srgb, var(--tier-fill) 55%, var(--tier-empty)); }
-  .rk-row:nth-child(3) .rk-fill { background: var(--border-strong); }
+  .rk-row:nth-child(3) .rk-fill { background: var(--fg-subtle); }
   .rk[data-state='shown'] .rk-fill { transform: scaleX(var(--v)); }
   .rk-n { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
 

@@ -189,7 +189,24 @@ async function capture(screen, theme, width) {
   }
   checks.axe = axe
   const file = path.join(outDir, `${screen.name}--${theme}--${width}.png`)
-  await page.screenshot({ path: file, fullPage })
+  // Full page: grow the viewport to the content first and let it settle. Puppeteer's own full-page resize happens
+  // inside the capture, which restarts entrance animations on anything a resize re-lays out and photographs them
+  // half-faded.
+  // A screen can ask for a viewport capture (`viewport: true`), e.g. a fixed side panel that must keep its real height.
+  const full = fullPage && !screen.viewport
+  if (full) {
+    const contentHeight = await page.evaluate(() => Math.ceil(document.documentElement.scrollHeight))
+    if (contentHeight > height) {
+      await page.setViewport({ width, height: Math.min(contentHeight, 16000), deviceScaleFactor: 1, isMobile: width < 700, hasTouch: width < 700 })
+      await new Promise((r) => setTimeout(r, 400))
+    }
+  }
+  // Finished entrance animations keep their fill on a compositor layer, which full-page capture can paint at the
+  // first keyframe (half-faded). Cancelling a finished, filled animation leaves exactly its end state.
+  await page.evaluate(() => document.getAnimations().forEach((a) => { if (a.playState === 'finished') a.cancel() }))
+  // The viewport already holds the whole page (above), so capture it as is: Chromium's beyond-viewport path repaints
+  // composited layers (masks, finished fades) incorrectly.
+  await page.screenshot({ path: file, fullPage: full, captureBeyondViewport: !full })
   await page.close()
   report.push({ screen: screen.name, theme, width, file: path.basename(file), errors, ...checks })
   if (checks.blank) console.warn(`  [${screen.name}@${width}] BLANK PAGE (render crashed?)`)

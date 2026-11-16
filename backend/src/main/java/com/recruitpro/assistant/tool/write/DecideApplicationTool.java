@@ -95,6 +95,20 @@ public class DecideApplicationTool implements WriteTool {
         return new ActionProposal(summary, new LinkedHashMap<>(args.values()), preview, List.of());
     }
 
+    /** The application must still be in the status the user saw when the decision was proposed. */
+    @Override
+    public void checkUnchanged(ToolContext context, ToolArgs args, Map<String, Object> preview) {
+        Object from = preview == null ? null : preview.get("from");
+        if (from == null) {
+            return;
+        }
+        AppInfo info = access.requireManageable(context, args.getApplicationId("applicationCode"));
+        if (info.status() == null || !info.status().name().equals(String.valueOf(from))) {
+            throw new AssistantToolException(info.code() + " changed from " + from + " to " + info.status()
+                    + " since this was proposed");
+        }
+    }
+
     @Override
     public ActionOutcome execute(ToolContext context, ToolArgs args) {
         ApplicationDecisionAction action = ApplicationDecisionAction.valueOf(args.getString("decision"));

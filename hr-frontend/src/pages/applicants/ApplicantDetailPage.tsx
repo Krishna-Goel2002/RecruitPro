@@ -242,7 +242,7 @@ function ApplicantView({ jobId, jobTitle, detail, polling, pollTimedOut, onCheck
         actions={
           <>
             {assistant && (
-              <IconButton label="Ask the assistant about this applicant" icon={MessagesSquare} variant="secondary" onClick={() => assistant.ask('Tell me about this applicant')} />
+              <Button icon={MessagesSquare} onClick={() => assistant.ask('Tell me about this applicant')} aria-label="Ask the assistant about this applicant">Ask</Button>
             )}
             {canReveal && (
               <Button icon={Eye} onClick={() => { reveal.reset(); setRevealOpen(true) }}>Reveal identity</Button>

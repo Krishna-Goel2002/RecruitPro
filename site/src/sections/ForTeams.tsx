@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { buttonProps, CountUp, EvidenceLadder } from '../design/components'
-import { Check, Icon, ListChecks, Rows3, Scale, Search, Users, type IconComponent } from '../design/icons'
+import { Check, Icon, ListChecks, MessagesSquare, Rows3, Scale, Users, type IconComponent } from '../design/icons'
 import { reduced } from '../design/motion'
 import type { PortalLinks } from '../site/config'
 import { Reveal, useSeen } from '../site/reveal'
@@ -117,7 +117,7 @@ const FEATURES: { id: string; icon: IconComponent; title: string; body: string; 
   },
   {
     id: 'assistant',
-    icon: Search,
+    icon: MessagesSquare,
     title: 'An assistant that asks first',
     body: 'Ask how a posting is doing, what needs attention today, or about one applicant. It works as you, with your permissions, refers to candidates by application code, and shows a preview before any change. Nothing happens until you press Confirm.',
     demo: <AssistantDemo />,

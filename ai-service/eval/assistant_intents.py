@@ -148,6 +148,16 @@ CASES: list[tuple[str, dict, str]] = [
     ("what is a knockout requirement", NONE, "help"), ("how is coverage calculated", NONE, "help"), ("go to admin", NONE, "navigate"),
     ("list draft jobs", NONE, "list_jobs"), ("A-1 vs A-2 vs A-3", NONE, "compare_applicants"), ("stop", NONE, "cancel"),
     ("tell me something interesting", NONE, "unknown"), ("how is A-4410 doing", NONE, "applicant_insights"),
+    # ---- more Indian-English hiring phrasing and Hinglish (added on resume of AS-PY)
+    ("need 3 freshers for customer support in Gurgaon", NONE, "create_job"),
+    ("require 2 resources for SAP FICO in Noida", NONE, "create_job"), ("we require a java dev urgently", NONE, "create_job"),
+    ("Opening for 2 Python developers at Bangalore", NONE, "create_job"),
+    ("urgent requirement for 5 telecallers in Indore", NONE, "create_job"),
+    ("is there any bias in this job", JOB, "fairness_summary"), ("which is better A-3001 or A-3014", NONE, "compare_applicants"),
+    ("kitne jobs open hain", NONE, "list_jobs"), ("A-3014 ka status kya hai", NONE, "applicant_insights"),
+    ("what all is pending for me today", NONE, "attention_digest"), ("setup an interview for this guy on monday 11am", APPLICANT,
+                                                                      "schedule_interview"),
+    ("need 2 more days", NONE, "unknown"),
     # ---- unknown
     ("what's the weather in Pune", NONE, "unknown"), ("asdfgh", NONE, "unknown"), ("tell me a joke", NONE, "unknown"),
 ]

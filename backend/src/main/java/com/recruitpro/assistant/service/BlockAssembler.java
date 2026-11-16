@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 public class BlockAssembler {
 
     static final Set<String> PLANNER_KINDS = Set.of("metrics", "table", "candidates", "link", "notice", "question");
-    static final Set<String> TONES = Set.of("info", "success", "warning", "error");
+    static final Set<String> TONES = Set.of("info", "success", "warning", "error", "danger");
     static final int MAX_BLOCKS = 12;
     static final int MAX_ITEMS = 50;
     static final int MAX_COLUMNS = 12;

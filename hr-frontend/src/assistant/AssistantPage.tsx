@@ -107,7 +107,7 @@ export function AssistantPage() {
             <Button className="as-history-toggle" icon={History} onClick={() => setHistoryOpen(o => !o)} aria-expanded={historyOpen} aria-controls="as-history-pane">
               History
             </Button>
-            <Button icon={SquarePen} onClick={a.newConversation}>New conversation</Button>
+            <Button icon={SquarePen} onClick={a.newConversation} aria-label="New conversation">New conversation</Button>
           </span>
         }
       />

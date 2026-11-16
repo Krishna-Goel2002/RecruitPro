@@ -419,6 +419,10 @@ cd ..\hr-frontend
 pnpm install --frozen-lockfile
 pnpm test
 pnpm build
+cd ..\site
+pnpm install --frozen-lockfile
+pnpm test
+pnpm build
 cd ..
 ```
 
@@ -430,6 +434,9 @@ cd ..
 |---|---|---|
 | Candidate (`frontend`) | `Test Files 14 passed (14)`, `Tests 113 passed (113)` | ends with `✓ built in …`, no TypeScript errors |
 | HR (`hr-frontend`) | `Test Files 20 passed (20)`, `Tests 132 passed (132)` | ends with `✓ built in …`; prints a harmless **"Some chunks are larger than 500 kB"** warning (main chunk ≈ 544 kB, 165 kB gzip) |
+| Landing site (`site`) | `Test Files 4 passed (4)`, `Tests 29 passed (29)` (11 for the page, the rest come with the synced `src/design`) | ends with `✓ built in …` (one JS chunk ≈ 212 kB, 66 kB gzip) |
+
+The exact counts change as the parallel work packages land; what matters is `0 failed` and a finished build.
 
 Optional cleanup afterwards: `Remove-Item -Recurse -Force frontend\node_modules, frontend\dist, hr-frontend\node_modules, hr-frontend\dist`.
 
@@ -511,12 +518,12 @@ synthetic fixtures`.
 docker compose ps
 ```
 
-**Expected:** 7 services, `postgres`, `mailpit`, `ai-service`, `agent-service`, `backend`, `candidate-portal` and
-`hr-portal`.
+**Expected:** 8 services, `postgres`, `mailpit`, `ai-service`, `agent-service`, `backend`, `candidate-portal`,
+`hr-portal` and `site`.
 - Each shows `Up … (healthy)`. All have health checks: Mailpit's is built into its image; the portals use `wget /`.
 - PORTS:
   - `0.0.0.0:8080->8080` (backend)
-  - `0.0.0.0:5173->80` and `0.0.0.0:5174->80` (portals)
+  - `0.0.0.0:5173->80` and `0.0.0.0:5174->80` (portals), `0.0.0.0:5170->80` (landing site)
   - `127.0.0.1:8100->8100` (agent service)
   - `127.0.0.1:8025->8025` and `127.0.0.1:1025->1025` (Mailpit)
   - none for `postgres` and `ai-service`
@@ -564,6 +571,34 @@ The same `docker compose exec` lines work in bash. The bash equivalents of `Invo
 | **Wipe all data and reseed** | `docker compose down -v` then `docker compose up -d` |
 | Follow logs | `docker compose logs -f backend` (or `agent-service`, `ai-service`, `mailpit`) |
 | Switch to `Kshitij` | `docker compose down -v` first: this branch has migrations V26–V28 that `Kshitij` does not know |
+
+### 5.5 Landing site (http://localhost:5170)
+
+The public page that explains the product and sends people to the right portal. It is static (no API calls, no forms,
+no cookies) and uses the same design system and brand as the portals.
+
+1. **5.5-1** Open http://localhost:5170. **Expected:** heading **See the evidence behind every application.**; a card
+   "Candidate A-3014" marked **Example data** in which **Java 17** climbs from *Resume* to *Corroborated* and shows
+   "Confirmed by recruiter" after about two seconds (with the OS "reduce motion" setting on, it shows the end state at
+   once).
+2. **5.5-2** Scroll down. **Expected:** sections The problem, How it works, For HR teams, For candidates, Trust and
+   privacy, FAQ, footer; each rises in once as it enters the view; bars grow and numbers count up; "Coverage is the
+   share of requirements with evidence, not a probability of success" appears in How it works and in the footer.
+3. **5.5-3** **For companies: Open the HR portal** → http://localhost:5174/login. **For candidates: Find jobs** →
+   http://localhost:5173/jobs (sign-in first). On http://localhost:5173/login, **About RecruitPro** (top right) leads
+   back to the landing site.
+4. **5.5-4** Keyboard: Tab from the top. **Expected:** the first stop is **Skip to content**; in the FAQ, Enter or
+   Space opens an answer, ↑/↓ move between questions, Home/End jump to the first/last.
+5. **5.5-5** Narrow the window below 1060 px. **Expected:** the section links move into a **Menu** button; Escape
+   closes the panel and returns focus to the button. Theme: the moon/sun button in the header and System / Light /
+   Dark in the footer.
+6. **5.5-6** Headers: `curl.exe -s -D - -o NUL http://localhost:5170/ | findstr /i "content-security-policy"`.
+   **Expected:** `default-src 'self'; script-src 'self'; … connect-src 'self'; … form-action 'none'` (no external
+   origin anywhere: fonts and scripts are self-hosted).
+
+The portal addresses are compiled in at build time: change `VITE_HR_URL` / `VITE_CANDIDATE_URL` under `site:` →
+`build.args` in `docker-compose.yml` for another deployment, and set `VITE_SITE_URL` when building the candidate portal
+if the landing site is not at http://localhost:5170.
 
 ---
 

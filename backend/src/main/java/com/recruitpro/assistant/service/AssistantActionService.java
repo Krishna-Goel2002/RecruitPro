@@ -89,13 +89,16 @@ public class AssistantActionService {
                     .filter(found -> found instanceof WriteTool).map(found -> (WriteTool) found)
                     .orElseThrow(() -> new AssistantToolException("You are no longer allowed to do this"));
             ToolArgs validated = ToolArgs.validate(tool.args(), args);
+            Map<String, Object> shown = json.readMap(action.getPreviewJson());
             if (tool.transactional()) {
                 outcome = transactions.execute(status -> {
+                    tool.checkUnchanged(context, validated, shown);
                     ActionOutcome result = tool.execute(context, validated);
                     audit(action, result, validated);
                     return result;
                 });
             } else {
+                tool.checkUnchanged(context, validated, shown);
                 ActionOutcome result = tool.execute(context, validated);
                 transactions.executeWithoutResult(status -> audit(action, result, validated));
                 outcome = result;
@@ -138,7 +141,7 @@ public class AssistantActionService {
         nodes.add(blocks.action(saved.getId(), saved.getAction(), summary, preview, finalStatus.name(), saved.getExpiresAt()));
         AssistantMessage message = conversations.append(action.getConversationId(), AssistantMessage.ROLE_ASSISTANT, text,
                 BlockAssembler.blocks(nodes), null, null);
-        return new ConfirmActionResponse(conversations.toResponse(saved), result, conversations.toResponse(message));
+        return new ConfirmActionResponse(conversations.toResponse(saved, user), result, conversations.toResponse(message, user));
     }
 
     /** POST /api/v1/assistant/actions/{id}/cancel. */
@@ -148,7 +151,7 @@ public class AssistantActionService {
         claim(action, AssistantActionStatus.CANCELLED);
         AssistantAction saved = actionRepository.findById(action.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Action not found"));
-        return new CancelActionResponse(conversations.toResponse(saved));
+        return new CancelActionResponse(conversations.toResponse(saved, user));
     }
 
     private AssistantAction requireOwned(Long actionId, CurrentUser user) {

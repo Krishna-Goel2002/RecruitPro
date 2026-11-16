@@ -14,13 +14,14 @@ is ever sent.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | Public. `{status, version, llmProvider, ocrAvailable}` |
+| GET | `/health` | Public. `{status, version, llmProvider, assistantPlanner, ocrAvailable}` |
 | POST | `/api/v1/resume/parse` | Multipart `file` (PDF, DOCX, DOC) -> `ParseResponse` (facts, flags, timeline) |
 | POST | `/api/v1/match` | `{requirements, facts, timeline}` -> `MatchResponse` (`evidence-ladder-4`) |
 | POST | `/api/v1/match/batch` | `{requirements, candidates:[{applicationId, facts, timeline}]}` (max 50) |
 | POST | `/api/v1/requirements/compile` | `{title, description, experienceLevel?}` -> requirements + wording warnings |
 | POST | `/api/v1/work-samples/generate` | `{jobTitle, jobDescription?, requirements}` -> task, time limit, anchored rubric |
 | POST | `/api/v1/interview-kits/generate` | `{jobTitle, requirements, focusRequirementIds?}` -> structured questions |
+| POST | `/api/v1/assistant/step` | One planning step for the HR assistant (stateless; see [HR assistant planner](#hr-assistant-planner)) |
 
 Every `/api/*` route requires `X-Internal-Service-Token`. Field names and types follow
 `docs/plan/IMPLEMENTATION_PLAN.md` Section 6.1; worked request/response examples are in
@@ -135,6 +136,12 @@ Work-sample scenarios are self-contained (they never refer to material nobody at
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | -, `https://api.anthropic.com` | Anthropic Messages API |
 | `OPENAI_BASE_URL`, `OPENAI_API_KEY` | - | Any OpenAI-compatible `/chat/completions` server (e.g. a local one) |
 | `LLM_TIMEOUT_SECONDS` | `20` | Per LLM call; on time-out the rules result is used |
+| `ASSISTANT_LLM_PROVIDER` | `none` | HR assistant planner: `none` (offline rules), `gemini`, `groq`, `anthropic` or `openai_compatible` |
+| `ASSISTANT_LLM_MODEL` | - | Required when `ASSISTANT_LLM_PROVIDER` is set; **no default** (model names change, check the provider's list) |
+| `ASSISTANT_LLM_TIMEOUT_SECONDS` | `20` | Per planner call (0-120); on time-out the offline planner answers |
+| `ASSISTANT_MAX_OUTPUT_TOKENS` | `1024` | Output-token cap per planner call (64-8192) |
+| `GEMINI_API_KEY`, `GEMINI_BASE_URL` | -, `https://generativelanguage.googleapis.com/v1beta/openai/` | Gemini through its OpenAI-compatible API (Bearer key) |
+| `GROQ_API_KEY`, `GROQ_BASE_URL` | -, `https://api.groq.com/openai/v1` | Groq through its OpenAI-compatible API (Bearer key) |
 | `PARSE_WORKERS` | `2` | Parser process-pool size |
 | `PARSE_TIMEOUT_SECONDS` | `60` | Per document; returns `FAILED/PARSE_TIMEOUT` and recycles the pool |
 | `MAX_UPLOAD_BYTES` | `10485760` | Largest accepted file |
@@ -149,6 +156,49 @@ Work-sample scenarios are self-contained (they never refer to material nobody at
 drafts requirements (each quoting the job description) and drafts kits; responses must be strict JSON.
 Any invalid item is dropped, and any error, time-out or empty result falls back to the rules output
 (`engine: "rules"`, parser version without `+llm`). Contacts are scrubbed from job texts before sending.
+
+## HR assistant planner
+
+`POST /api/v1/assistant/step` plans **one** next step of the HR assistant (plan: `docs/plan/ASSISTANT_PLAN.md`
+sections 1-3; details and deviations: `docs/plan/AS-PY-NOTES.md`). It is stateless: the backend sends the
+de-identified conversation (last 20 messages), the page context, the user's tool catalogue (already filtered by role),
+this turn's tool observations and the slot-filling draft, runs the tools itself with the user's permissions, and
+calls again (at most 6 steps per user message). The reply is exactly one of `tool_call` (read tools only), `ask`,
+`propose` (every write; the user confirms in the backend) or `answer` (text plus `metrics` / `table` / `candidates` /
+`link` / `notice` / `job_preview` blocks), with `meta: {planner, model, fallback}`.
+
+**Offline planner** (`app/assistant/offline.py`, always available, deterministic). Intent rules with typo repair and
+Indian-English / chat shorthand (`intents.py`, `text.py`) cover job insights, applicant insights, compare (codes or
+"top 3"), attention digest, my interviews, fairness summary, list jobs, help (built-in topics in `help_topics.py`),
+navigation links, pipeline actions (shortlist / reject with a reason / interview / select, assign a work sample,
+schedule an interview, generate a work sample or interview kit, job status) and job posting. Missing arguments are
+asked for (with options), a job named by title is resolved through `list_jobs`, and answers are composed only from
+observation data (`compose.py`): candidates by application code, coverage described as evidenced requirements (never a
+probability), no invented numbers, links only to same-app relative paths.
+
+**Job posting** (`jobpost.py`) is guided slot filling: one message can give title, head count, city (Indian cities and
+aliases, remote / hybrid / on-site), job type, level, openings, relative or absolute deadline, salary (LPA, lakh, k,
+per month), years and skills (taxonomy, with must-have / gate / nice-to-have cues). Only missing required fields are
+asked, one or two at a time; department and level can be inferred and are shown as assumptions. The description is
+templated (or written by the LLM in LLM mode, validated and bias-checked), requirements come from the existing
+requirement compiler (`compile_rules`), `OTHER` requirements are never knockouts, and biased wording is flagged.
+The result is a `propose create_job` with a full `job_preview`. Edits work mid-flow and on the preview ("make it
+remote", "add Docker as nice to have", "extend the deadline by a week"); "start over" and "cancel" reset the draft.
+
+**LLM planner** (`llm_planner.py`; `ASSISTANT_LLM_PROVIDER` set **and** the request's `allowExternalModel` true).
+Strict-JSON prompting, provider-agnostic (no native tool calling). Inputs are scrubbed again (emails, phones, URLs;
+identity-like keys dropped; sizes capped) and observations are labelled untrusted data. The reply is validated: the
+tool or action must be in the catalogue with type-checked arguments, writes only as proposals and only when the
+user's own latest message asks for a change, `create_job` never (the guided flow owns it), no repeated tool calls,
+answers may only state numbers present in the inputs and must not call coverage a probability; blocks are always
+built from observation data, never from model text. Guided flows (job posting, pending action slots, help,
+navigation, cancel) stay deterministic. Any provider error, time-out, invalid JSON or rejected step falls back to the
+offline planner with `meta.fallback = true`. The service has no internet in compose: a hosted model needs the
+`docker-compose.ai-egress.yml` override.
+
+```bash
+python -m eval.assistant_intents --check     # offline intent accuracy on 204 utterances; exits 1 below 0.9
+```
 
 ## Run locally
 
@@ -198,6 +248,7 @@ Check it with `docker compose ps` (the `HEALTHCHECK` result), the admin dashboar
 pip install -r requirements-dev.txt
 python -m pytest -q                 # unit, document, API, LLM (mocked httpx) and audit-probe tests
 python -m eval.run --check          # synthetic evaluation; exits 1 below a threshold
+python -m eval.assistant_intents --check   # HR assistant intent set (also asserted in pytest)
 python ../audit/probe_matching.py   # the audit's matching probes, now behaving correctly
 ```
 

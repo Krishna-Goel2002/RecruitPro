@@ -2,6 +2,7 @@ package com.recruitpro.assistant.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.recruitpro.ai.dto.AiAssistantStepRequest;
 import com.recruitpro.ai.dto.AiAssistantStepResponse;
 import com.recruitpro.assistant.AssistantSettings;
@@ -63,6 +64,14 @@ public class AssistantOrchestrator {
     static final Set<String> PAGES = Set.of("job", "applicant", "jobs", "admin", "interviews", "other");
     static final int KNOWN_NAMES_LIMIT = 2000;
     static final int MAX_TEXT = 8000;
+    /**
+     * Limits of the ai-service step request (ai-service app/models/assistant.py): characters per history message,
+     * JSON size of an observation's data and args, and of the draft. Kept below them so a request is never refused.
+     */
+    static final int PLANNER_MESSAGE_CHARS = 3900;
+    static final int PLANNER_OBSERVATION_CHARS = 48_000;
+    static final int PLANNER_ARGS_CHARS = 3_500;
+    static final int PLANNER_DRAFT_CHARS = 30_000;
     static final String UNAVAILABLE_PLANNER = "unavailable";
 
     private static final Logger log = LoggerFactory.getLogger(AssistantOrchestrator.class);
@@ -146,6 +155,14 @@ public class AssistantOrchestrator {
                 break;
             }
             plannerName = plannerName(response.meta());
+            // The planner returns the slot-filling state with every step; null clears it (cancel, finished flow,
+            // plain answer), except on a tool_call, where a missing draft leaves it as it is.
+            if (response.draft() != null) {
+                draft = updateDraft(conversation.getId(), response.draft(), draft);
+            } else if (!"tool_call".equals(response.type()) && draft != null) {
+                conversations.saveDraft(conversation.getId(), null);
+                draft = null;
+            }
             switch (response.type()) {
                 case "tool_call" -> {
                     AssistantTool tool = registry.find(response.tool(), user).orElse(null);
@@ -154,7 +171,7 @@ public class AssistantOrchestrator {
                                 "Unknown tool, or not available to this user; use only the tools of the catalogue"));
                         trace.add("Skipped an unknown tool");
                     } else if (tool instanceof WriteTool writeTool) {
-                        reply = propose(writeTool, response.args(), null, conversation, toolContext, plannerName);
+                        reply = propose(writeTool, response.args(), null, null, conversation, toolContext, plannerName);
                     } else if (remainingMs(deadline) <= 0) {
                         reply = timedOut(plannerName);
                     } else {
@@ -162,15 +179,12 @@ public class AssistantOrchestrator {
                         trace.add(thought(response.thought(), tool.name()));
                     }
                 }
-                case "ask" -> {
-                    draft = updateDraft(conversation.getId(), response.draft(), draft);
-                    reply = ask(response, plannerName);
-                }
+                case "ask" -> reply = ask(response, plannerName);
                 case "propose" -> {
-                    draft = updateDraft(conversation.getId(), response.draft(), draft);
                     AssistantTool tool = registry.find(response.action(), user).orElse(null);
                     reply = tool instanceof WriteTool writeTool
-                            ? propose(writeTool, response.args(), response.summary(), conversation, toolContext, plannerName)
+                            ? propose(writeTool, response.args(), response.summary(), response.blocks(), conversation,
+                            toolContext, plannerName)
                             : notice(plannerName, "I can't do that for you: it is not an action available to your role.",
                             "warning");
                 }
@@ -184,7 +198,7 @@ public class AssistantOrchestrator {
         }
         AssistantMessage assistantMessage = conversations.append(conversation.getId(), AssistantMessage.ROLE_ASSISTANT,
                 reply.text(), reply.blocks(), reply.planner(), String.join(" · ", trace));
-        return new SendMessageResponse(conversations.toResponses(List.of(userMessage, assistantMessage)));
+        return new SendMessageResponse(conversations.toResponses(List.of(userMessage, assistantMessage), user));
     }
 
     // ---- request parts ----
@@ -210,6 +224,7 @@ public class AssistantOrchestrator {
                 : pageContext.page().trim().toLowerCase(Locale.ROOT);
         context.put("page", PAGES.contains(page) ? page : "other");
         context.put("role", user.role().name());
+        context.put("today", UtcTime.now().toLocalDate().toString());
         boolean reader = user.hasAnyRole(Role.ADMIN, Role.HR_MANAGER, Role.RECRUITER);
         Long jobId = pageContext == null ? null : pageContext.jobId();
         Long applicationId = pageContext == null ? null : pageContext.applicationId();
@@ -251,7 +266,9 @@ public class AssistantOrchestrator {
         Collections.reverse(recent);
         List<AiAssistantStepRequest.Message> history = new ArrayList<>();
         for (AssistantMessage message : recent) {
-            history.add(new AiAssistantStepRequest.Message(message.getRole(), deid.scrub(message.getText())));
+            String text = deid.scrub(message.getText());
+            history.add(new AiAssistantStepRequest.Message(message.getRole(),
+                    text == null ? "" : limit(text, PLANNER_MESSAGE_CHARS)));
         }
         return history;
     }
@@ -266,20 +283,30 @@ public class AssistantOrchestrator {
         return (Map<String, Object>) deid.scrubTree(map);
     }
 
-    /** The planner's draft as {kind: "job_posting", fields: {...}}; stored on the conversation. */
+    /**
+     * The planner's draft, stored on the conversation and sent back unchanged with the next steps: an object with
+     * {@code kind} ("job_posting", "action", ...) is kept whole (fields, pending slot, stage, ...); anything else is
+     * taken as the job-posting fields.
+     */
     private Map<String, Object> updateDraft(Long conversationId, Map<String, Object> proposed, Map<String, Object> current) {
         if (proposed == null || proposed.isEmpty()) {
             return current;
         }
         Map<String, Object> draft = new LinkedHashMap<>();
-        if (proposed.get("fields") instanceof Map<?, ?>) {
-            draft.put("kind", proposed.get("kind") instanceof String kind ? kind : "job_posting");
+        if (proposed.get("kind") instanceof String kind && !kind.isBlank()) {
+            draft.putAll(proposed);
+            draft.put("kind", BlockAssembler.text(kind, 40));
+            if (!(draft.get("fields") instanceof Map<?, ?>)) {
+                draft.put("fields", new LinkedHashMap<String, Object>());
+            }
+        } else if (proposed.get("fields") instanceof Map<?, ?>) {
+            draft.put("kind", "job_posting");
             draft.put("fields", proposed.get("fields"));
         } else {
             draft.put("kind", "job_posting");
             draft.put("fields", proposed);
         }
-        if (json.write(draft).length() > 60_000) {
+        if (json.write(draft).length() > PLANNER_DRAFT_CHARS) {
             return current;
         }
         conversations.saveDraft(conversationId, draft);
@@ -306,7 +333,55 @@ public class AssistantOrchestrator {
             observation.put("ok", false);
             observation.put("error", AssistantErrors.message(ex));
         }
-        return scrubMap(context.deidentifier(), observation);
+        return bounded(scrubMap(context.deidentifier(), observation));
+    }
+
+    /**
+     * Keeps an observation within the planner's size limits: oversized args are dropped; oversized data is cut to
+     * shorter lists (20, then 10, then 5 items per list) and, if still too large, replaced by a note.
+     */
+    private Map<String, Object> bounded(Map<String, Object> observation) {
+        if (json.write(observation.get("args")).length() > PLANNER_ARGS_CHARS) {
+            observation.put("args", Map.of());
+        }
+        Object data = observation.get("data");
+        if (data == null || json.write(data).length() <= PLANNER_OBSERVATION_CHARS) {
+            return observation;
+        }
+        for (int items : new int[] {20, 10, 5}) {
+            Object cut = cutLists(data, items);
+            if (json.write(cut).length() <= PLANNER_OBSERVATION_CHARS) {
+                if (cut instanceof Map<?, ?> map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> marked = (Map<String, Object>) map;
+                    marked.put("truncated", "lists shortened to " + items + " items");
+                }
+                observation.put("data", cut);
+                return observation;
+            }
+        }
+        Map<String, Object> note = new LinkedHashMap<>();
+        note.put("truncated", "The result was too large to show; ask a narrower question.");
+        observation.put("data", note);
+        return observation;
+    }
+
+    private static Object cutLists(Object value, int items) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                copy.put(String.valueOf(entry.getKey()), cutLists(entry.getValue(), items));
+            }
+            return copy;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>();
+            for (int i = 0; i < list.size() && i < items; i++) {
+                copy.add(cutLists(list.get(i), items));
+            }
+            return copy;
+        }
+        return value;
     }
 
     private Map<String, Object> failed(Deidentifier deid, String tool, Map<String, Object> rawArgs, String error) {
@@ -315,7 +390,7 @@ public class AssistantOrchestrator {
         observation.put("args", rawArgs == null ? Map.of() : rawArgs);
         observation.put("ok", false);
         observation.put("error", error);
-        return scrubMap(deid, observation);
+        return bounded(scrubMap(deid, observation));
     }
 
     /**
@@ -324,7 +399,8 @@ public class AssistantOrchestrator {
      * with a notice.
      */
     private Reply propose(WriteTool tool, Map<String, Object> rawArgs, String plannerSummary,
-                          AssistantConversation conversation, ToolContext context, String plannerName) {
+                          List<Map<String, Object>> plannerBlocks, AssistantConversation conversation,
+                          ToolContext context, String plannerName) {
         ActionProposal proposal;
         try {
             proposal = tool.prepare(context, ToolArgs.validate(tool.args(), rawArgs));
@@ -344,14 +420,23 @@ public class AssistantOrchestrator {
         action.setOrganizationId(user.organizationId());
         action.setAction(tool.name());
         action.setArgsJson(json.write(proposal.args()));
-        action.setPreviewJson(json.write(preview));
+        action.setPreviewJson(json.write(AssistantConversationService.withoutNames(preview)));
         action.setStatus(AssistantActionStatus.PENDING);
         action.setExpiresAt(UtcTime.now().plusMinutes(settings.actionTtlMinutes()));
         AssistantAction saved = actionRepository.saveAndFlush(action);
 
         List<JsonNode> nodes = new ArrayList<>();
         for (Map<String, Object> extra : proposal.extraBlocks()) {
-            nodes.add(json.toNode(extra));
+            JsonNode node = json.toNode(extra);
+            if (node instanceof ObjectNode object && "job_preview".equals(object.path("kind").asText())) {
+                object.put("actionId", saved.getId());
+            }
+            nodes.add(node);
+        }
+        // The planner's own notes on the proposal (assumptions, wording) as validated notice/link blocks; its
+        // job_preview is replaced by the backend's (built from the validated arguments).
+        for (JsonNode node : blocks.fromPlanner(user, plannerBlocks)) {
+            nodes.add(node);
         }
         nodes.add(blocks.action(saved.getId(), tool.name(), proposal.summary(), json.toNode(preview),
                 AssistantActionStatus.PENDING.name(), saved.getExpiresAt()));

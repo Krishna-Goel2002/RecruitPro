@@ -5,6 +5,7 @@ import com.recruitpro.hr.entity.Proficiency;
 import com.recruitpro.hr.entity.RequirementType;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Tool arguments validated against the tool's {@link ArgSpec}s (ASSISTANT_PLAN 1 "every argument is validated on the
@@ -30,6 +32,7 @@ public final class ToolArgs {
     static final int MAX_LIST_ITEM = 1000;
     private static final List<String> REQUIREMENT_TYPES = names(RequirementType.values());
     private static final List<String> PROFICIENCIES = names(Proficiency.values());
+    private static final Pattern DATE_ONLY = Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
 
     private final Map<String, Object> values;
 
@@ -157,7 +160,10 @@ public final class ToolArgs {
             case DATE_TIME -> {
                 if (!(value instanceof String text)) throw invalid(name, "an ISO-8601 date-time");
                 try {
-                    yield UtcTime.format(UtcTime.parse(text));
+                    // A plain date (deadlines, due dates) means the end of that UTC day.
+                    String trimmed = text.trim();
+                    yield UtcTime.format(DATE_ONLY.matcher(trimmed).matches()
+                            ? LocalDate.parse(trimmed).atTime(23, 59, 59) : UtcTime.parse(trimmed));
                 } catch (DateTimeParseException ex) {
                     throw invalid(name, "an ISO-8601 date-time such as 2026-12-01T10:00:00Z");
                 }
@@ -296,8 +302,18 @@ public final class ToolArgs {
     private static String enumValue(String name, Object value, List<String> allowed) {
         if (!(value instanceof String text)) throw invalid(name, "one of " + String.join("|", allowed));
         String normalised = text.trim().toUpperCase(Locale.ROOT).replace(' ', '_').replace('-', '_');
-        if (!allowed.contains(normalised)) throw invalid(name, "one of " + String.join("|", allowed));
-        return normalised;
+        if (allowed.contains(normalised)) return normalised;
+        // Planner wording ("INTERVIEW", "HOLD", "PUBLISH", "CLOSE"): the only value ending in "_<text>", or the only
+        // value sharing a prefix of at least 4 letters with it in either direction.
+        List<String> close = new ArrayList<>();
+        for (String option : allowed) {
+            boolean suffix = option.endsWith("_" + normalised);
+            boolean prefix = normalised.length() >= 4 && option.startsWith(normalised)
+                    || option.length() >= 4 && normalised.startsWith(option);
+            if (suffix || prefix) close.add(option);
+        }
+        if (close.size() == 1) return close.get(0);
+        throw invalid(name, "one of " + String.join("|", allowed));
     }
 
     private static AssistantToolException invalid(String name, String expected) {

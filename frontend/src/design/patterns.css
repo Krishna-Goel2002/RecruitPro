@@ -346,6 +346,11 @@
 
 /* ============================================================================================ page header */
 .p-page-header { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+.p-page-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 28px; }
+.p-page-nav > .ui-back + .ui-breadcrumb { padding-left: 12px; border-left: 1px solid var(--border-hairline); }
+@media (max-width: 599px) {
+  .p-page-nav > .ui-back + .ui-breadcrumb { display: none; }
+}
 .p-page-header-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 24px; }
 .p-page-header-main { flex: 1 1 360px; min-width: 0; }
 .p-page-title-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }

@@ -79,7 +79,9 @@ describe('page context and suggestions', () => {
     expect(pageContext('/jobs/101')).toEqual({ page: 'job', jobId: 101 })
     expect(pageContext('/jobs')).toEqual({ page: 'jobs' })
     expect(pageContext('/admin/users')).toEqual({ page: 'admin' })
-    expect(pageContext('/interviews/3')).toEqual({ page: 'other' })
+    expect(pageContext('/interviews/3')).toEqual({ page: 'interviews' })
+    expect(pageContext('/interviews')).toEqual({ page: 'interviews' })
+    expect(pageContext('/notifications')).toEqual({ page: 'other' })
   })
 
   it('suggests per page and role; interviewers only get interview prompts', () => {

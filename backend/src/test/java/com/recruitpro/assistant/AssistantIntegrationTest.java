@@ -287,6 +287,14 @@ class AssistantIntegrationTest {
         assertTrue(items.get(1).path("revealedName").isNull(), "blind review keeps the name hidden");
         assertEquals("link", blocks.get(1).path("kind").asText());
         assertEquals("/jobs/" + job.getId(), blocks.get(1).path("href").asText());
+
+        // Names are resolved when blocks are read, never stored with them.
+        for (String stored : jdbcTemplate.queryForList("SELECT blocks_json FROM assistant_messages", String.class)) {
+            assertFalse(stored.contains("Verstappen"), stored);
+        }
+        mvc.perform(get(BASE + "/conversations/{id}", id).with(staff("manager@a.test", "HR_MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.messages[1].blocks[0].items[0].revealedName", is("Rahul Verstappen")));
     }
 
     @Test
@@ -449,14 +457,80 @@ class AssistantIntegrationTest {
         assertTrue(auditEvents.findAllByActionOrderByIdAsc(AuditActions.ASSISTANT_ACTION_CONFIRMED).isEmpty());
 
         long move = proposedActionId(send(id, "manager@a.test", "HR_MANAGER", "Interview " + code(revealed), null));
+        assertFalse(jdbcTemplate.queryForObject("SELECT preview_json FROM assistant_actions WHERE id = ?", String.class, move)
+                .contains("Verstappen"), "the candidate's name is not stored with the action");
         mvc.perform(post(BASE + "/actions/{id}/confirm", move).with(staff("manager@a.test", "HR_MANAGER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.action.status", is("CONFIRMED")))
+                .andExpect(jsonPath("$.data.action.preview.revealedName", is("Rahul Verstappen")))
                 .andExpect(jsonPath("$.data.result.kind", is("application")))
                 .andExpect(jsonPath("$.data.result.link", is("/jobs/" + job.getId() + "/applicants/" + revealed.getId())));
         assertEquals(ApplicationStatus.INTERVIEWING, applications.findById(revealed.getId()).orElseThrow().getStatus());
         assertEquals(1, auditEvents.findAllByActionOrderByIdAsc(AuditActions.APPLICATION_DECISION).size());
         assertEquals(1, auditEvents.findAllByActionOrderByIdAsc(AuditActions.ASSISTANT_ACTION_CONFIRMED).size());
+    }
+
+    @Test
+    void aConfirmFailsWhenTheStateChangedSinceTheProposalEvenIfTheChangeWouldStillBeAllowed() throws Exception {
+        when(aiServiceClient.assistantStep(any())).thenReturn(
+                propose("decide_application", Map.of("applicationCode", code(hidden), "decision", "REJECT",
+                        "reason", "Missing must-haves"), null, null),
+                propose("update_job_status", Map.of("jobId", job.getId(), "status", "CLOSED"), null, null));
+        long id = createConversation("manager@a.test", "HR_MANAGER");
+
+        long reject = proposedActionId(send(id, "manager@a.test", "HR_MANAGER", "Reject " + code(hidden), null));
+        // Shortlisted in the portal meanwhile: REJECT would still be a valid transition, but not the one the user saw.
+        screening.withStatus(applications.findById(hidden.getId()).orElseThrow(), ApplicationStatus.SHORTLISTED);
+        mvc.perform(post(BASE + "/actions/{id}/confirm", reject).with(staff("manager@a.test", "HR_MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.action.status", is("FAILED")))
+                .andExpect(jsonPath("$.data.result.error", containsString("changed from SUBMITTED to SHORTLISTED")));
+        assertEquals(ApplicationStatus.SHORTLISTED, applications.findById(hidden.getId()).orElseThrow().getStatus());
+
+        long close = proposedActionId(send(id, "manager@a.test", "HR_MANAGER", "Close the job", null));
+        Job onHold = jobs.findById(job.getId()).orElseThrow();
+        onHold.setStatus(JobStatus.ON_HOLD);
+        jobs.saveAndFlush(onHold);
+        mvc.perform(post(BASE + "/actions/{id}/confirm", close).with(staff("manager@a.test", "HR_MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.action.status", is("FAILED")))
+                .andExpect(jsonPath("$.data.result.error", containsString("changed from PUBLISHED to ON_HOLD")));
+        assertEquals(JobStatus.ON_HOLD, jobs.findById(job.getId()).orElseThrow().getStatus());
+        assertTrue(auditEvents.findAllByActionOrderByIdAsc(AuditActions.ASSISTANT_ACTION_CONFIRMED).isEmpty());
+    }
+
+    @Test
+    void schedulingAnInterviewResolvesTheInterviewerAndOpensTheApplicantToThem() throws Exception {
+        String at = UtcTime.format(UtcTime.now().plusDays(3).withNano(0));
+        when(aiServiceClient.assistantStep(any())).thenReturn(
+                propose("schedule_interview", Map.of("applicationCode", code(revealed), "scheduledAt", at), null, null),
+                propose("schedule_interview", Map.of("applicationCode", code(revealed), "scheduledAt", at,
+                        "interviewer", "INTERVIEWER@a.test", "durationMinutes", 30), null, null));
+        long id = createConversation("manager@a.test", "HR_MANAGER");
+        JsonNode byDefault = actionBlock(send(id, "manager@a.test", "HR_MANAGER", "Schedule " + code(revealed), null));
+        assertEquals(manager.getUser().getId().longValue(), byDefault.path("preview").path("interviewerUserId").asLong(),
+                "without an interviewer the user interviews");
+
+        JsonNode named = actionBlock(send(id, "manager@a.test", "HR_MANAGER", "With the interviewer", null));
+        User interviewer = users.findByEmail("interviewer@a.test").orElseThrow();
+        assertEquals(interviewer.getId().longValue(), named.path("preview").path("interviewerUserId").asLong());
+        assertEquals("Rahul Verstappen", named.path("preview").path("revealedName").asText());
+        mvc.perform(post(BASE + "/actions/{id}/confirm", named.path("actionId").asLong())
+                        .with(staff("manager@a.test", "HR_MANAGER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.action.status", is("CONFIRMED")))
+                .andExpect(jsonPath("$.data.result.kind", is("interview")));
+        assertEquals(ApplicationStatus.INTERVIEWING, applications.findById(revealed.getId()).orElseThrow().getStatus());
+
+        // The interviewer now sees that applicant (and only through their interview).
+        when(aiServiceClient.assistantStep(any())).thenReturn(
+                toolCall("applicant_insights", Map.of("applicationCode", code(revealed))), answer("ok", List.of()));
+        long mine = createConversation("interviewer@a.test", "INTERVIEWER");
+        send(mine, "interviewer@a.test", "INTERVIEWER", "Tell me about " + code(revealed), null);
+        Map<String, Object> observation = lastRequest().observations().get(0);
+        assertEquals(true, observation.get("ok"), String.valueOf(observation));
+        assertEquals(30, ((Number) ((Map<?, ?>) observation.get("data")).get("durationMinutes")).intValue());
+        assertFalse(mapper.writeValueAsString(lastRequest()).contains("Verstappen"));
     }
 
     @Test
@@ -668,6 +742,15 @@ class AssistantIntegrationTest {
             if ("action".equals(block.path("kind").asText())) {
                 assertEquals("PENDING", block.path("status").asText());
                 return block.path("actionId").asLong();
+            }
+        }
+        throw new AssertionError("No action block in " + data);
+    }
+
+    private static JsonNode actionBlock(JsonNode data) {
+        for (JsonNode block : data.path("messages").get(1).path("blocks")) {
+            if ("action".equals(block.path("kind").asText())) {
+                return block;
             }
         }
         throw new AssertionError("No action block in " + data);

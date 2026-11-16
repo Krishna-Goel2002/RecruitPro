@@ -24,6 +24,8 @@ describe('textarea scrolling (owner bug: long work-sample instructions could not
     expect(base).toMatch(/overflow-y:\s*auto/)
     expect(base).toMatch(/resize:\s*vertical/)
     expect(base).toMatch(/max-height:/)
+    // The thumb is drawn in the stronger scrollbar colour, so a field that scrolls looks scrollable.
+    expect(base).toMatch(/scrollbar-color:\s*var\(--scrollbar-hover\)/)
   })
 
   it('auto-growing textareas are not clipped either', () => {

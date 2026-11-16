@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -56,16 +57,18 @@ public class ScheduleInterviewTool implements WriteTool {
 
     @Override
     public String description() {
-        return "Schedule an interview for a shortlisted or interviewing applicant with a staff member (interviewerUserId) "
-                + "at a future time; moves a shortlisted application to interviewing.";
+        return "Schedule an interview for a shortlisted or interviewing applicant at a future time with a staff member "
+                + "(interviewer: name or e-mail, or interviewerUserId; default: me); moves a shortlisted application to "
+                + "interviewing.";
     }
 
     @Override
     public List<ArgSpec> args() {
         return List.of(
                 ArgSpec.required("applicationCode", ArgType.APPLICATION_CODE),
-                ArgSpec.required("interviewerUserId", ArgType.INTEGER).range(1, Long.MAX_VALUE),
                 ArgSpec.required("scheduledAt", ArgType.DATE_TIME).hint("in the future"),
+                ArgSpec.optional("interviewerUserId", ArgType.INTEGER).range(1, Long.MAX_VALUE),
+                ArgSpec.optional("interviewer", ArgType.STRING).maxLength(200).hint("staff name or e-mail; default: me"),
                 ArgSpec.optional("durationMinutes", ArgType.INTEGER).range(5, 480).hint("default 45"),
                 ArgSpec.optional("location", ArgType.STRING).maxLength(500));
     }
@@ -87,11 +90,10 @@ public class ScheduleInterviewTool implements WriteTool {
             throw new AssistantToolException("The interview time must be in the future");
         }
         List<InterviewerResponse> staff = staffDirectoryService.interviewers();
-        InterviewerResponse interviewer = staff.stream()
-                .filter(member -> Objects.equals(member.userId(), args.getLong("interviewerUserId")))
-                .findFirst().orElseThrow(() -> new AssistantToolException("User #" + args.getLong("interviewerUserId")
-                        + " is not an active staff member of your organisation" + options(staff)));
+        InterviewerResponse interviewer = interviewer(context, args, staff);
         Map<String, Object> normalised = new LinkedHashMap<>(args.values());
+        normalised.remove("interviewer");
+        normalised.put("interviewerUserId", interviewer.userId());
         normalised.putIfAbsent("durationMinutes", (long) DEFAULT_DURATION);
         Map<String, Object> preview = new LinkedHashMap<>();
         preview.put("applicationId", info.applicationId());
@@ -116,13 +118,51 @@ public class ScheduleInterviewTool implements WriteTool {
     public ActionOutcome execute(ToolContext context, ToolArgs args) {
         AppInfo info = access.requireManageable(context, args.getApplicationId("applicationCode"));
         Integer duration = args.has("durationMinutes") ? args.getInt("durationMinutes") : DEFAULT_DURATION;
+        Long interviewerUserId = args.getLong("interviewerUserId");
+        if (interviewerUserId == null) {
+            throw new AssistantToolException("The interviewer is missing; ask the assistant again");
+        }
         InterviewResponse interview = interviewService.schedule(info.jobId(), info.applicationId(),
-                new ScheduleInterviewRequest(args.getLong("interviewerUserId"), args.getDateTime("scheduledAt"), duration,
+                new ScheduleInterviewRequest(interviewerUserId, args.getDateTime("scheduledAt"), duration,
                         args.getString("location")));
         return new ActionOutcome("interview", interview.id(), Tools.interviewLink(interview.id()),
                 "Scheduled the interview with " + info.code() + " for " + Tools.time(interview.scheduledAt()) + ".",
                 "INTERVIEW", String.valueOf(interview.id()), "Interview #" + interview.id() + " scheduled for application #"
                         + info.applicationId());
+    }
+
+    /**
+     * The interviewer: interviewerUserId, else the staff member named by {@code interviewer} (e-mail, full name, or the
+     * only name containing the text), else the user themselves. Always an active staff member of the organisation.
+     */
+    static InterviewerResponse interviewer(ToolContext context, ToolArgs args, List<InterviewerResponse> staff) {
+        Long userId = args.getLong("interviewerUserId");
+        String wanted = args.getString("interviewer");
+        if (userId == null && (wanted == null || wanted.isBlank())) {
+            userId = context.user().userId();
+        }
+        if (userId != null) {
+            Long id = userId;
+            return staff.stream().filter(member -> Objects.equals(member.userId(), id)).findFirst()
+                    .orElseThrow(() -> new AssistantToolException("User #" + id
+                            + " is not an active staff member of your organisation" + options(staff)));
+        }
+        String text = wanted.trim().toLowerCase(Locale.ROOT);
+        List<InterviewerResponse> exact = staff.stream()
+                .filter(member -> text.equals(lower(member.email())) || text.equals(lower(member.name()))).toList();
+        if (exact.size() == 1) {
+            return exact.get(0);
+        }
+        List<InterviewerResponse> partial = staff.stream().filter(member -> lower(member.name()).contains(text)).toList();
+        if (partial.size() == 1) {
+            return partial.get(0);
+        }
+        throw new AssistantToolException((partial.isEmpty() ? "No active staff member matches \"" : "Several staff members "
+                + "match \"") + wanted.trim() + "\"; choose one" + options(partial.isEmpty() ? staff : partial));
+    }
+
+    private static String lower(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private static String options(List<InterviewerResponse> staff) {
