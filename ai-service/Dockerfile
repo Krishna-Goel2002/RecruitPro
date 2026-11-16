@@ -16,6 +16,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=180 \
+    PIP_RETRIES=10 \
     OCR_ENABLED=false
 # SOFFICE_PATH is deliberately not set: the service finds `soffice` on PATH (/usr/bin/soffice with LibreOffice), and
 # an image built with WITH_LIBREOFFICE=false then reports .doc conversion as unavailable instead of failing each call.

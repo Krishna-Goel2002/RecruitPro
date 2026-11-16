@@ -3,9 +3,11 @@
 
 FROM node:22-alpine AS build
 WORKDIR /app
+# Slow or flaky networks: long fetch time-outs and retries.
+ENV npm_config_fetch_retries=6 npm_config_fetch_timeout=300000 npm_config_fetch_retry_maxtimeout=180000
 RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --network-concurrency=4
 COPY . .
 # The API base URL is compiled into the bundle by Vite.
 ARG VITE_API_BASE_URL=http://localhost:8080/api/v1
