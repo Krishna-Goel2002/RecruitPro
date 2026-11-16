@@ -1,194 +1,217 @@
-import { FormEvent, useEffect, useId, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useId, useState, type FormEvent } from 'react'
+import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { qk } from '../../api/queryKeys'
-import type { EvidenceTier, ReviewDecision, StaffClaim, StaffVerdict, StaffVerification } from '../../api/types'
-import { EVIDENCE_TIERS } from '../../api/types'
+import type { ReviewDecision, StaffClaim, StaffVerdict, StaffVerification } from '../../api/types'
 import { verificationApi } from '../../api/verification'
 import { useAuth } from '../../auth/AuthContext'
-import { TierBadge } from '../../components/Badges'
-import { Dialog } from '../../components/Dialog'
-import { useNotices } from '../../components/Notices'
-import { EmptyPanel, ErrorPanel, FormError, LoadingPanel } from '../../components/States'
-import { OwnershipIndicator, VerdictBody, VerdictChip } from '../../components/Verification'
-import { formatDateTime, humanize } from '../../lib/format'
-import { DECISION_LABELS, reviewProblem, sourceKindLabel, verdictInfo } from '../../lib/verification'
+import { QueryError, InlineError } from '../../components/QueryError'
+import { DomainTrustChip, OwnershipLine, SOURCE_ICON, VerdictDetails } from '../../components/VerdictParts'
+import {
+  Alert, Button, EmptyState, EvidenceLadder, Field, LoadingRegion, ProvenanceLine, SegmentedControl, Skeleton, SkeletonText, Textarea, VerdictChip, buttonProps, useToast,
+} from '../../design/components'
+import { BadgeCheck, ChevronDown, CircleCheck, Icon, TriangleAlert } from '../../design/icons'
+import { plural, relativeTime } from '../../design/lib/format'
+import type { Verdict } from '../../design/lib/labels'
+import { humanize } from '../../lib/format'
+import { reviewProblem, sourceKindLabel } from '../../lib/verification'
+import { asTier } from './model'
 
 export const SHADOW_MESSAGE = 'Verification is in shadow mode for your organisation; results are hidden until an admin switches it on.'
 
+const needsReview = (c: StaffClaim) => c.verdicts.some(v => !v.myOrgReview)
+
 /**
- * Applicant "Verification" tab (WP-VBE `GET /hr/applications/{id}/verification`): verdicts the candidate chose to
- * share, with de-identified reasons, integrity notes, a suggested interview question, evidence after reveal, and this
- * organisation's Confirm / Overrule review.
+ * Applicant Verification tab (FLOWS-HR-B §4): verdicts the candidate chose to share, one row per claim with this
+ * organisation's tier ladder and the verdict chips; expanding a row shows the proof and an inline Confirm / Overrule.
+ * Blind-first: before reveal only `evidenceCount` is shown.
  */
-export function VerificationTab({ jobId, applicationId }: { jobId: number; applicationId: number }) {
-  const view = useQuery({
-    queryKey: qk.applicantVerification(applicationId),
-    queryFn: ({ signal }) => verificationApi.forApplication(applicationId, signal),
-  })
-  if (view.isPending) return <LoadingPanel label="Loading verification results…" />
-  if (view.isError) return <ErrorPanel error={view.error} title="We couldn’t load verification results" onRetry={() => void view.refetch()} />
-  return <VerificationView jobId={jobId} applicationId={applicationId} data={view.data} />
+export function VerificationTab({ jobId, applicationId, query }: { jobId: number; applicationId: number; query: UseQueryResult<StaffVerification> }) {
+  if (query.isPending) {
+    return (
+      <LoadingRegion label="Loading verification results">
+        <div className="vt-skel">{Array.from({ length: 3 }, (_, i) => <div key={i} className="ap-skel-row"><SkeletonText lines={2} /><Skeleton width={90} height={14} /><Skeleton width={120} height={22} /></div>)}</div>
+      </LoadingRegion>
+    )
+  }
+  if (query.isError) return <QueryError error={query.error} title="We couldn’t load verification results" onRetry={() => void query.refetch()} retrying={query.isFetching} />
+  return <VerificationView jobId={jobId} applicationId={applicationId} data={query.data} />
 }
 
 export function VerificationView({ jobId, applicationId, data }: { jobId: number; applicationId: number; data: StaffVerification }) {
+  const { can } = useAuth()
+  const [filter, setFilter] = useState<'all' | 'review'>('all')
+  const [open, setOpen] = useState<Set<string>>(() => {
+    const first = data.claims.find(needsReview) ?? data.claims[0]
+    return new Set(first ? [`${first.subjectType}-${first.subjectId}`] : [])
+  })
+
   if (data.mode === 'SHADOW') {
     return (
-      <section className="detail-card section-card" aria-labelledby="verification-heading">
-        <h2 id="verification-heading">Verification</h2>
-        <p className="mode-banner shadow" role="note"><strong>Shadow mode.</strong> {SHADOW_MESSAGE}</p>
-      </section>
+      <div className="vt">
+        <Alert
+          tone="neutral"
+          title="Shadow mode"
+          action={can('verification.queue') ? <Link {...buttonProps('secondary', 'sm')} to="/admin/verification">Verification settings</Link> : undefined}
+        >
+          {SHADOW_MESSAGE} Agents still check shared sources in the background; nothing here affects the ranking.
+        </Alert>
+      </div>
     )
   }
+
+  if (data.claims.length === 0) {
+    return (
+      <EmptyState
+        icon={BadgeCheck}
+        title="No shared verification results"
+        description="The candidate has not shared results, or none came from a connector your organisation enabled. This says nothing for or against the candidate."
+      />
+    )
+  }
+
+  const pending = data.claims.filter(needsReview)
+  const shown = filter === 'review' ? pending : data.claims
+  const verdictCount = data.claims.reduce((n, c) => n + c.verdicts.length, 0)
+
   return (
-    <section className="detail-card section-card" aria-labelledby="verification-heading">
-      <div className="section-head">
-        <div>
-          <h2 id="verification-heading">Verification</h2>
-          <p>
-            Results from sources the candidate connected and chose to share. Reasons are de-identified.
-            {data.revealed ? ' Evidence sources are shown because the identity is revealed.' : ' Sources stay hidden until the candidate is revealed.'}
-          </p>
+    <div className="vt">
+      <div className="ap-tab-head">
+        <p className="ap-tab-intro">
+          {plural(verdictCount, 'result')} the candidate chose to share, on {plural(data.claims.length, 'claim')}. Reasons are de-identified.
+          {data.revealed ? ' Sources are shown because the identity is revealed.' : ' Sources stay hidden until the identity is revealed.'}
+        </p>
+        <div className="ap-tab-actions">
+          <SegmentedControl
+            label="Show"
+            size="sm"
+            value={filter}
+            onChange={v => setFilter(v as 'all' | 'review')}
+            options={[{ value: 'all', label: 'All' }, { value: 'review', label: `Needs review · ${pending.length}` }]}
+          />
         </div>
       </div>
-      {data.claims.length === 0 ? (
-        <EmptyPanel compact title="No shared verification results">
-          The candidate has not shared any verification results, or none of the connectors enabled for your organisation produced one.
-          This says nothing for or against the candidate.
-        </EmptyPanel>
+
+      {shown.length === 0 ? (
+        <EmptyState compact icon={CircleCheck} title="Everything here is reviewed" description="Your organisation has confirmed or overruled every shared result." action={<Button size="sm" variant="secondary" onClick={() => setFilter('all')}>Show all</Button>} />
       ) : (
-        <ul className="card-list verification-claims">
-          {data.claims.map(claim => (
-            <ClaimCard key={`${claim.subjectType}-${claim.subjectId}`} claim={claim} jobId={jobId} applicationId={applicationId} revealed={data.revealed} />
-          ))}
+        <ul className="vt-claims">
+          {shown.map(claim => {
+            const key = `${claim.subjectType}-${claim.subjectId}`
+            return (
+              <ClaimRow
+                key={key}
+                claim={claim}
+                open={open.has(key)}
+                onToggle={() => setOpen(cur => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n })}
+                jobId={jobId}
+                applicationId={applicationId}
+                revealed={data.revealed}
+              />
+            )
+          })}
         </ul>
       )}
-    </section>
+    </div>
   )
 }
 
-function asTier(value: string | null): EvidenceTier | null {
-  return value && (EVIDENCE_TIERS as string[]).includes(value) ? (value as EvidenceTier) : null
-}
-
-function ClaimCard({ claim, jobId, applicationId, revealed }: { claim: StaffClaim; jobId: number; applicationId: number; revealed: boolean }) {
-  const headingId = useId()
-  return (
-    <li className="item-card claim-card" aria-labelledby={headingId}>
-      <div className="item-card-head">
-        <div>
-          <p className="eyebrow">{humanize(claim.claimType)} · {claim.subjectType === 'CANDIDATE_CLAIM' ? 'Candidate claim' : 'From the resume'}</p>
-          <h3 id={headingId}>{claim.value}</h3>
-        </div>
-        <TierBadge tier={asTier(claim.tier)} />
-      </div>
-      <ul className="verdict-list">
-        {claim.verdicts.map(verdict => (
-          <VerdictCard key={verdict.id} verdict={verdict} claim={claim} jobId={jobId} applicationId={applicationId} revealed={revealed} />
-        ))}
-      </ul>
-    </li>
-  )
-}
-
-function VerdictCard({ verdict, claim, jobId, applicationId, revealed }: {
-  verdict: StaffVerdict
+function ClaimRow({ claim, open, onToggle, jobId, applicationId, revealed }: {
   claim: StaffClaim
+  open: boolean
+  onToggle: () => void
   jobId: number
   applicationId: number
   revealed: boolean
 }) {
-  const { can } = useAuth()
-  const [decision, setDecision] = useState<ReviewDecision | null>(null)
-  const review = verdict.myOrgReview
+  const bodyId = useId()
+  const reviewed = claim.verdicts.filter(v => v.myOrgReview)
+  const state = reviewed.length === claim.verdicts.length
+    ? (claim.verdicts.every(v => v.myOrgReview?.decision === 'CONFIRM') ? 'Confirmed' : claim.verdicts.some(v => v.myOrgReview?.decision === 'OVERRULE') ? 'Overruled' : 'Reviewed')
+    : 'Needs review'
   return (
-    <li className="verdict-card">
-      <div className="verdict-head">
-        <VerdictChip verdict={verdict.verdict} />
-        <OwnershipIndicator proven={verdict.ownershipProven} />
-        <span className="item-meta">{sourceKindLabel(verdict.sourceKind)} · {verdict.verifier} · {formatDateTime(verdict.createdAt)}</span>
-      </div>
-      <VerdictBody
-        reasons={verdict.reasons}
-        integrityNotes={verdict.integrityNotes}
-        probeQuestion={verdict.probeQuestion}
-        evidence={verdict.evidence}
-        evidenceCount={verdict.evidenceCount}
-        hiddenEvidenceText={revealed ? 'The sources are not available.' : 'Reveal the candidate to see sources.'}
-      />
-      {verdict.candidateNote && (
-        <div className="verdict-block">
-          <h5>Candidate’s note</h5>
-          <p className="description-text">{verdict.candidateNote}</p>
+    <li className="vt-claim" data-open={open || undefined}>
+      <div className="vt-claim-head">
+        <div className="vt-claim-name">
+          <span className="vt-claim-kind">{humanize(claim.claimType)} · {claim.subjectType === 'CANDIDATE_CLAIM' ? 'candidate claim' : 'from the resume'}</span>
+          <button type="button" className="ap-req-toggle" aria-expanded={open} aria-controls={bodyId} onClick={onToggle}>{claim.value}</button>
         </div>
-      )}
-      <div className="verdict-review" aria-label="Your organisation’s review">
-        {review ? (
-          <p>
-            <strong>{DECISION_LABELS[review.decision] ?? humanize(review.decision)}</strong> by {review.reviewerName ?? 'a former team member'} on {formatDateTime(review.at)}
-            {review.note && <><br /><span className="description-text">“{review.note}”</span></>}
-          </p>
-        ) : (
-          <p className="muted-copy">Not reviewed by your organisation yet. Only a confirmed, verified result with proven ownership raises the evidence tier.</p>
-        )}
-        {can('verification.review') && (
-          <div className="item-actions">
-            <button type="button" className="outline-button" onClick={() => setDecision('CONFIRM')}>{review ? 'Review again: confirm' : 'Confirm'}</button>
-            <button type="button" className="outline-button" onClick={() => setDecision('OVERRULE')}>{review ? 'Review again: overrule' : 'Overrule'}</button>
-          </div>
-        )}
+        <div className="vt-claim-tier"><EvidenceLadder tier={asTier(claim.tier)} audience="staff" /></div>
+        <div className="vt-claim-verdicts">
+          {claim.verdicts.map(v => <VerdictChip key={v.id} verdict={v.verdict as Verdict} size="sm" shortLabel={v.verdict === 'NOT_FOUND' ? 'Not found' : v.verdict === 'NOT_CHECKABLE' ? 'Not checkable' : undefined} />)}
+        </div>
+        <div className="vt-claim-state" data-state={state}>
+          {state === 'Needs review' ? <span className="vt-dot" aria-hidden="true" /> : <Icon icon={state === 'Overruled' ? TriangleAlert : CircleCheck} size={14} />}
+          {state}
+        </div>
+        <Icon icon={ChevronDown} size={16} className="ap-req-chevron" />
       </div>
-      <ReviewDialog
-        open={decision != null}
-        initialDecision={decision ?? 'CONFIRM'}
-        verdict={verdict}
-        claimLabel={`${humanize(claim.claimType)}: ${claim.value}`}
-        jobId={jobId}
-        applicationId={applicationId}
-        onClose={() => setDecision(null)}
-      />
+      <div className="ap-req-body" id={bodyId} aria-hidden={!open || undefined} {...(open ? {} : ({ inert: '' } as Record<string, string>))}>
+        <div><div className="vt-verdicts">
+          {claim.verdicts.map(v => <VerdictBlock key={v.id} verdict={v} claim={claim} jobId={jobId} applicationId={applicationId} revealed={revealed} />)}
+        </div></div>
+      </div>
     </li>
   )
 }
 
+function VerdictBlock({ verdict, claim, jobId, applicationId, revealed }: { verdict: StaffVerdict; claim: StaffClaim; jobId: number; applicationId: number; revealed: boolean }) {
+  return (
+    <section className="vt-verdict" aria-label={`${sourceKindLabel(verdict.sourceKind)} result`}>
+      <header className="vt-verdict-head">
+        <VerdictChip verdict={verdict.verdict as Verdict} />
+        <OwnershipLine proven={verdict.ownershipProven} />
+        {verdict.domainTrust && <DomainTrustChip trust={verdict.domainTrust} />}
+        <ProvenanceLine
+          className="vt-prov"
+          icon={verdict.sourceKind ? SOURCE_ICON[verdict.sourceKind] : undefined}
+          source={sourceKindLabel(verdict.sourceKind)}
+          actor={verdict.verifier}
+          at={verdict.createdAt}
+        />
+      </header>
+      <VerdictDetails verdict={verdict} revealed={revealed} />
+      <ReviewPanel verdict={verdict} claim={claim} jobId={jobId} applicationId={applicationId} />
+    </section>
+  )
+}
+
 /**
- * Confirm / Overrule with a note (required for Overrule; the backend answers 400 otherwise). After a review the backend
- * re-matches the candidate in this organisation, so the applicant detail and lists are refreshed too.
+ * Confirm / Overrule inline (no dialog). The note is optional for Confirm and required for Overrule (the server answers
+ * 400 otherwise). After a save the server re-matches; when the tier lifts, the ladder above animates in place.
  */
-export function ReviewDialog({ open, initialDecision, verdict, claimLabel, jobId, applicationId, onClose }: {
-  open: boolean
-  initialDecision: ReviewDecision
-  verdict: StaffVerdict
-  claimLabel: string
-  jobId: number
-  applicationId: number
-  onClose: () => void
-}) {
+function ReviewPanel({ verdict, claim, jobId, applicationId }: { verdict: StaffVerdict; claim: StaffClaim; jobId: number; applicationId: number }) {
+  const { can } = useAuth()
   const queryClient = useQueryClient()
-  const notices = useNotices()
-  const baseId = useId()
-  const noteRef = useRef<HTMLTextAreaElement>(null)
-  const [decision, setDecision] = useState<ReviewDecision>(initialDecision)
+  const { toast } = useToast()
+  const review = verdict.myOrgReview
+  const [editing, setEditing] = useState(!review)
+  const [decision, setDecision] = useState<ReviewDecision | null>(null)
   const [note, setNote] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (open) {
-      setDecision(initialDecision)
-      setNote('')
-      setProblem(null)
-    }
-  }, [open, initialDecision])
+  const noteId = useId()
+  const lifts = verdict.verdict === 'VERIFIED' && verdict.ownershipProven
 
   const save = useMutation({
-    mutationFn: () => verificationApi.review(verdict.id, { decision, note: note.trim() || undefined }),
-    onSuccess: () => {
-      notices.success(decision === 'CONFIRM'
-        ? 'Result confirmed. Matching is recalculated for this candidate.'
-        : 'Result overruled. Matching is recalculated for this candidate.')
+    mutationFn: () => verificationApi.review(verdict.id, { decision: decision!, note: note.trim() || undefined }),
+    onSuccess: updated => {
+      queryClient.setQueryData<StaffVerification>(qk.applicantVerification(applicationId), current => current && {
+        ...current,
+        claims: current.claims.map(c => c !== claim && !(c.subjectId === claim.subjectId && c.subjectType === claim.subjectType) ? c : {
+          ...c,
+          verdicts: c.verdicts.map(v => (v.id === verdict.id ? { ...v, ...updated } : v)),
+        }),
+      })
+      setEditing(false)
+      setNote('')
+      toast({
+        tone: 'success',
+        title: decision === 'CONFIRM' ? 'Result confirmed' : 'Result overruled',
+        body: decision === 'CONFIRM' && lifts ? 'The claim rises to Corroborated for your organisation once matching finishes.' : 'Matching is recalculated for this candidate.',
+      })
       void queryClient.invalidateQueries({ queryKey: qk.applicantVerification(applicationId) })
       void queryClient.invalidateQueries({ queryKey: qk.applicant(jobId, applicationId) })
       void queryClient.invalidateQueries({ queryKey: qk.applicants(jobId) })
-      onClose()
     },
   })
 
@@ -197,63 +220,67 @@ export function ReviewDialog({ open, initialDecision, verdict, claimLabel, jobId
     const found = reviewProblem(decision, note)
     setProblem(found)
     if (found) {
-      noteRef.current?.focus()
+      document.getElementById(decision ? noteId : `${noteId}-seg`)?.querySelector<HTMLElement>('input, textarea')?.focus()
+      if (decision) document.getElementById(noteId)?.focus()
       return
     }
     save.mutate()
   }
 
-  const noteRequired = decision === 'OVERRULE'
-
   return (
-    <Dialog
-      open={open}
-      title="Review this verification result"
-      description={<>
-        <strong>{claimLabel}</strong>. The agent’s result: {verdictInfo(verdict.verdict).label}. Confirming a verified result with
-        proven ownership raises the claim to Corroborated for your organisation only; overruling keeps it where it was.
-      </>}
-      onClose={onClose}
-      busy={save.isPending}
-    >
-      <form className="dialog-form" onSubmit={submit} noValidate>
-        <fieldset className="decision-picker">
-          <legend>Your decision</legend>
-          <label className={`recommendation-option${decision === 'CONFIRM' ? ' selected rec-yes' : ''}`}>
-            <input type="radio" name={`${baseId}-decision`} value="CONFIRM" checked={decision === 'CONFIRM'} onChange={() => { setDecision('CONFIRM'); setProblem(null) }} data-autofocus={initialDecision === 'CONFIRM' || undefined} />
-            Confirm: the result matches what I see
-          </label>
-          <label className={`recommendation-option${decision === 'OVERRULE' ? ' selected rec-no' : ''}`}>
-            <input type="radio" name={`${baseId}-decision`} value="OVERRULE" checked={decision === 'OVERRULE'} onChange={() => { setDecision('OVERRULE'); setProblem(null) }} data-autofocus={initialDecision === 'OVERRULE' || undefined} />
-            Overrule: I disagree with the result
-          </label>
-        </fieldset>
-        <div className="field">
-          <label htmlFor={`${baseId}-note`}>
-            Note {noteRequired ? <span className="required-mark">* (required to overrule)</span> : <span className="optional-mark">(optional)</span>}
-          </label>
-          <textarea
-            ref={noteRef}
-            id={`${baseId}-note`}
-            rows={4}
-            maxLength={1000}
-            value={note}
-            onChange={event => setNote(event.target.value)}
-            required={noteRequired}
-            aria-invalid={Boolean(problem)}
-            aria-describedby={problem ? `${baseId}-note-error` : undefined}
-            placeholder={noteRequired ? 'Why do you disagree? This is kept with the review.' : 'Optional context for your team'}
-          />
-          {problem && <small className="field-error" id={`${baseId}-note-error`} role="alert">{problem}</small>}
+    <div className="vt-review">
+      <h4 className="t-label">Your organisation’s review</h4>
+      {review && !editing ? (
+        <div className="vt-review-done" data-decision={review.decision}>
+          <p>
+            <Icon icon={review.decision === 'CONFIRM' ? CircleCheck : TriangleAlert} size={16} />
+            <strong>{review.decision === 'CONFIRM' ? 'Confirmed' : 'Overruled'}</strong>
+            <span className="ap-muted"> by {review.reviewerName ?? 'a former team member'} · {relativeTime(review.at)}</span>
+          </p>
+          {review.note && <p className="vt-review-note">“{review.note}”</p>}
+          {can('verification.review') && <Button size="sm" variant="ghost" onClick={() => { setDecision(review.decision); setEditing(true) }}>Change review</Button>}
         </div>
-        <FormError error={save.error} />
-        <div className="dialog-actions">
-          <button type="button" className="outline-button" onClick={onClose} disabled={save.isPending}>Cancel</button>
-          <button type="submit" className="primary-button workspace-primary" disabled={save.isPending}>
-            {save.isPending ? 'Saving…' : decision === 'CONFIRM' ? 'Confirm result' : 'Overrule result'}
-          </button>
-        </div>
-      </form>
-    </Dialog>
+      ) : can('verification.review') ? (
+        <form className="vt-review-form" onSubmit={submit} noValidate>
+          <div id={`${noteId}-seg`}>
+            <SegmentedControl
+              label="Decision"
+              value={decision}
+              onChange={v => { setDecision(v as ReviewDecision); setProblem(null) }}
+              options={[
+                { value: 'CONFIRM', label: 'Confirm', icon: CircleCheck },
+                { value: 'OVERRULE', label: 'Overrule', icon: TriangleAlert },
+              ]}
+            />
+          </div>
+          <p className="vt-review-hint">
+            {decision === 'OVERRULE' ? 'Overruling keeps the tier where it was. Say what you see differently.'
+              : lifts ? 'Confirming lifts this claim to Corroborated for your organisation only.'
+                : 'Confirming records your agreement. Only a verified result with proven ownership lifts the tier.'}
+          </p>
+          {decision && (
+            <Field label="Note" optional={decision !== 'OVERRULE'} error={decision ? problem : null}>
+              <Textarea
+                id={noteId}
+                rows={2}
+                maxRows={6}
+                maxLength={1000}
+                value={note}
+                placeholder={decision === 'OVERRULE' ? 'Why do you disagree? Kept with the review.' : 'Optional context for your team'}
+                onChange={e => { setNote(e.target.value); if (problem) setProblem(null) }}
+              />
+            </Field>
+          )}
+          {!decision && problem && <InlineError error={problem} />}
+          <InlineError error={save.error} />
+          <div className="vt-review-actions">
+            {review && <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setProblem(null) }} disabled={save.isPending}>Cancel</Button>}
+            <Button size="sm" type="submit" variant="primary" loading={save.isPending}>Save review</Button>
+          </div>
+        </form>
+      ) : (
+        <p className="ap-muted">Not reviewed by your organisation yet.</p>
+      )}
+    </div>
   )
 }

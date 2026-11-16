@@ -1,0 +1,57 @@
+/* Get started (first run for a new organisation's administrator). Tokens only. */
+@layer pages {
+  .hra-welcome-progress { max-width: 420px; margin: var(--s-2) 0 var(--s-8); }
+  .hra-setup { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border-default); counter-reset: none; }
+  .hra-setup-step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--s-5);
+    padding: var(--s-6) 0;
+    border-bottom: 1px solid var(--border-hairline);
+    animation: ui-enter var(--dur-base) var(--ease-standard) both;
+    animation-delay: calc(var(--i, 0) * var(--stagger-step));
+  }
+  .hra-setup-step + .hra-setup-step::before {
+    content: '';
+    position: absolute;
+    left: 13.5px;
+    top: -1px;
+    height: 18px;
+    width: 1px;
+    background: var(--border-default);
+  }
+  .hra-setup-mark {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-full);
+    background: var(--bg-surface);
+    color: var(--fg-muted);
+    font: 600 var(--text-caption) / 1 var(--font-sans);
+    transition: background-color var(--dur-base) var(--ease-standard), border-color var(--dur-base) var(--ease-standard);
+  }
+  .hra-setup-step[data-state='done'] .hra-setup-mark { border-color: var(--fg-default); background: var(--fg-default); color: var(--bg-surface); }
+  .hra-setup-step[data-next] .hra-setup-mark { border-color: var(--accent); color: var(--accent-text); box-shadow: 0 0 0 4px var(--accent-subtle); }
+  .hra-setup-text { min-width: 0; padding-top: 3px; }
+  .hra-setup-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-4); margin: 0; color: var(--fg-default); font: 600 var(--text-h3) / var(--lh-h3) var(--font-sans); }
+  .hra-setup-step[data-state='done'] .hra-setup-title { color: var(--fg-muted); font-weight: 500; }
+  .hra-setup-next { color: var(--accent-text); font: 500 var(--text-caption) / var(--lh-caption) var(--font-sans); }
+  .hra-setup-why { margin: var(--s-2) 0 0; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .hra-setup-why strong { color: var(--fg-default); font-weight: 500; }
+  .hra-setup-action { display: flex; align-items: center; min-height: 28px; padding-top: 2px; }
+  .hra-setup-step[data-next] .hra-setup-action .ui-btn[data-variant='secondary'] { border-color: var(--accent); background: var(--accent); color: var(--fg-on-accent); box-shadow: none; }
+  .hra-setup-step[data-next] .hra-setup-action .ui-btn[data-variant='secondary']:hover { border-color: var(--accent-hover); background: var(--accent-hover); }
+  .hra-welcome-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-4); margin-top: var(--s-8); }
+  @media (max-width: 599px) {
+    .hra-setup-step { grid-template-columns: 28px minmax(0, 1fr); }
+    .hra-setup-action { grid-column: 2; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hra-setup-step { animation: none; }
+    .hra-setup-mark { transition: none; }
+  }
+}

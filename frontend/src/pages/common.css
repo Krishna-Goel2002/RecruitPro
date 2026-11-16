@@ -1,0 +1,50 @@
+/* Page patterns shared by several candidate screens (rows, rails, meta lines). Candidate for the shared system. */
+@layer pages {
+  .c-muted { color: var(--fg-muted); }
+  .c-meta { color: var(--fg-subtle); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .c-meta-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .c-meta-line > * + *::before { content: '·'; margin-right: 6px; color: var(--fg-subtle); }
+  .c-break { overflow-wrap: anywhere; min-width: 0; }
+  .c-prose { max-width: var(--w-read); color: var(--fg-default); font: 400 var(--text-body-lg) / var(--lh-body-lg) var(--font-sans); white-space: pre-line; }
+
+  /* Hairline-separated rows (no boxes). */
+  .c-rows { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border-hairline); }
+  .c-rows > li { border-bottom: 1px solid var(--border-hairline); }
+  .c-rows > li:last-child { border-bottom: 0; }
+  .c-rows[data-closed] > li:last-child { border-bottom: 1px solid var(--border-hairline); }
+
+  /* A whole-row link: the title's ::after covers the row, so the row is one tab stop. */
+  .c-linkrow { position: relative; isolation: isolate; }
+  /* The hover wash bleeds 12 px past the text, so hairlines stay aligned with the page edge. */
+  .c-linkrow::before {
+    content: '';
+    position: absolute;
+    inset: 0 -12px;
+    z-index: -1;
+    border-radius: var(--r-sm);
+    transition: background-color var(--dur-fast) var(--ease-standard);
+  }
+  .c-linkrow:hover::before { background: var(--bg-hover); }
+  .c-linkrow-link { color: var(--fg-default); text-decoration: none; }
+  .c-linkrow-link::after { content: ''; position: absolute; inset: 0; }
+  .c-linkrow-link:hover { text-decoration: none; }
+  .c-linkrow-link:focus-visible { outline: none; }
+  .c-linkrow:has(.c-linkrow-link:focus-visible)::before { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .c-linkrow .c-above { position: relative; z-index: 1; }
+
+  /* Main column + sticky right rail (≥ 1100 px); one column below. */
+  .c-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  @media (min-width: 1100px) {
+    .c-split { grid-template-columns: minmax(0, 1fr) 320px; gap: 48px; align-items: start; }
+    .c-split > .c-rail { position: sticky; top: calc(var(--topbar) + 24px); }
+  }
+  .c-rail { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+  .c-rail-block + .c-rail-block { padding-top: 24px; border-top: 1px solid var(--border-hairline); }
+  .c-rail-title { margin-bottom: 12px; color: var(--fg-default); font: 600 var(--text-h3) / var(--lh-h3) var(--font-sans); }
+
+  .c-skel-row { display: flex; flex-direction: column; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--border-hairline); }
+  .c-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+  .c-status-line { display: inline-flex; align-items: center; gap: 8px; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .c-dim { opacity: .55; transition: opacity var(--dur-fast) var(--ease-standard); }
+  .c-back { margin-bottom: 4px; }
+}

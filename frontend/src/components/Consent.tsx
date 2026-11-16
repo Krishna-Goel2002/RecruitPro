@@ -1,8 +1,10 @@
 import { useId, type ReactNode } from 'react'
+import { Checkbox } from '../design/components'
+import { CircleAlert, Icon } from '../design/icons'
 
 /**
- * Required consent checkbox with plain-language text. The error is tied to the box with aria-describedby and
- * announced when it appears.
+ * Required consent checkbox. The sentence passed as children is versioned server-side (handbook 03 §7.5): never
+ * reword it here. The error is tied to the box with aria-describedby and announced when it appears.
  */
 export function ConsentCheckbox({
   checked,
@@ -18,22 +20,19 @@ export function ConsentCheckbox({
   const id = useId()
   const errorId = `${id}-error`
   return (
-    <div>
-      <div className="consent">
-        <input
-          id={id}
-          type="checkbox"
-          checked={checked}
-          required
-          aria-invalid={error ? true : undefined}
-          aria-describedby={error ? errorId : undefined}
-          onChange={event => onChange(event.target.checked)}
-        />
-        <label htmlFor={id}>{children}</label>
-      </div>
+    <div className="c-consent" data-invalid={error ? true : undefined}>
+      <Checkbox
+        id={id}
+        checked={checked}
+        label={children}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        onChange={event => onChange(event.target.checked)}
+      />
       {error && (
-        <p id={errorId} className="field-error" role="alert">
-          {error}
+        <p id={errorId} className="ui-field-error" role="alert">
+          <Icon icon={CircleAlert} size={14} />
+          <span>{error}</span>
         </p>
       )}
     </div>

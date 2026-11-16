@@ -1,0 +1,41 @@
+@layer pages {
+  .c-error-state { margin-block: 4px 16px; }
+  .c-form-error { margin-top: 4px; }
+
+  .c-fullpage {
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: var(--bg-canvas);
+  }
+  .c-fullpage-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    color: var(--fg-default);
+    animation: ui-fade-in var(--dur-base) var(--ease-standard) 150ms both;
+  }
+  .c-fullpage-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg-muted);
+    font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans);
+  }
+
+  /* Definition list: label above value on phones, label column on wider rails. */
+  .c-facts { display: flex; flex-direction: column; margin: 0; }
+  .c-facts-row {
+    display: grid;
+    grid-template-columns: minmax(96px, 40%) minmax(0, 1fr);
+    gap: 12px;
+    padding: 9px 0;
+    border-top: 1px solid var(--border-hairline);
+  }
+  .c-facts-row:first-child { border-top: 0; padding-top: 0; }
+  .c-facts-row:last-child { padding-bottom: 0; }
+  .c-facts dt { color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-body) var(--font-sans); }
+  .c-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--fg-default); font: 500 var(--text-body) / var(--lh-body) var(--font-sans); }
+}

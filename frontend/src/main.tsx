@@ -1,7 +1,6 @@
 // Design system first: it declares the cascade-layer order every later stylesheet slots into.
 import './design/fonts'
 import './design/index.css'
-import './styles/legacy.css'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'

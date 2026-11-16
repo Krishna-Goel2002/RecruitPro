@@ -1,0 +1,137 @@
+/*
+ * Generic HR components added by the part-A redesign (OtpInput, PasswordChecklist, Kbd/ShortcutSheet, SaveIndicator).
+ * Tokens only; appended to the design system's `components` layer so page CSS can still refine them.
+ */
+@layer components {
+  /* ---------------------------------------------------------------- OtpInput */
+  .hra-otp { position: relative; display: inline-block; max-width: 100%; }
+  .hra-otp-boxes { display: flex; gap: var(--s-4); }
+  .hra-otp-box {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 52px;
+    border: 1px solid var(--border-control);
+    border-radius: var(--r-sm);
+    background: var(--bg-surface);
+    color: var(--fg-default);
+    font: 500 var(--text-h1) / 1 var(--font-mono);
+    transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+  }
+  .hra-otp-box[data-gap] { margin-left: var(--s-4); }
+  .hra-otp-box[data-filled] { border-color: var(--fg-muted); }
+  .hra-otp-box[data-active] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-subtle); }
+  .hra-otp-box[data-active]::after {
+    content: '';
+    width: 1.5px;
+    height: 22px;
+    background: var(--accent);
+    animation: hra-caret 1s steps(2, jump-none) infinite;
+  }
+  .hra-otp[data-invalid] .hra-otp-box { border-color: var(--danger-fg); }
+  .hra-otp[data-disabled] .hra-otp-box { background: var(--bg-sunken); color: var(--fg-muted); }
+  .hra-otp-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: transparent;
+    caret-color: transparent;
+    font-size: 1rem;
+    letter-spacing: 2em;
+    outline: none;
+    cursor: text;
+  }
+  .hra-otp-input::selection { background: transparent; }
+  .hra-otp-boxes[data-shake] { animation: hra-shake var(--dur-slow) var(--ease-standard); }
+  @media (max-width: 380px) {
+    .hra-otp-boxes { gap: 6px; }
+    .hra-otp-box { width: 40px; height: 48px; }
+    .hra-otp-box[data-gap] { margin-left: 6px; }
+  }
+
+  @keyframes hra-caret { 50% { opacity: 0; } }
+  @keyframes hra-shake {
+    20% { transform: translateX(-4px); }
+    40% { transform: translateX(4px); }
+    60% { transform: translateX(-2px); }
+    80% { transform: translateX(2px); }
+  }
+
+  /* ---------------------------------------------------------------- PasswordChecklist */
+  .hra-pw-rules {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-6);
+    margin: var(--s-3) 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--fg-muted);
+    font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans);
+  }
+  .hra-pw-rules li { display: inline-flex; align-items: center; gap: var(--s-3); }
+  .hra-pw-rules li svg { color: var(--fg-subtle); transition: color var(--dur-fast) var(--ease-standard); }
+  .hra-pw-rules li[data-met] { color: var(--fg-default); }
+  .hra-pw-rules li[data-met] svg { color: var(--success-fg); }
+
+  /* ---------------------------------------------------------------- Kbd + shortcut sheet */
+  .hra-kbd {
+    display: inline-grid;
+    place-items: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 var(--s-2);
+    border: 1px solid var(--border-default);
+    border-bottom-width: 2px;
+    border-radius: var(--r-xs);
+    background: var(--bg-surface);
+    color: var(--fg-muted);
+    font: 500 var(--text-caption) / 1 var(--font-mono);
+  }
+  .hra-shortcut-sheet { display: grid; gap: var(--s-7); }
+  .hra-shortcut-sheet h3 { margin: 0 0 var(--s-4); color: var(--fg-muted); }
+  .hra-shortcut-sheet dl { margin: 0; }
+  .hra-shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-6);
+    padding: var(--s-3) 0;
+    border-top: 1px solid var(--border-hairline);
+  }
+  .hra-shortcut-row dt { color: var(--fg-default); }
+  .hra-shortcut-row dd { display: flex; align-items: center; gap: var(--s-2); margin: 0; }
+  .hra-shortcut-or { margin: 0 var(--s-3); color: var(--fg-subtle); font-size: var(--text-caption); }
+
+  /* ---------------------------------------------------------------- SaveIndicator */
+  .hra-save {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: 20px;
+    margin: 0;
+    color: var(--fg-muted);
+    font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans);
+  }
+  .hra-save[data-kind='saved'] svg { color: var(--success-fg); }
+  .hra-save[data-kind='error'] { color: var(--danger-fg); }
+  .hra-save-retry {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-text);
+    font: inherit;
+    font-weight: 500;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hra-otp-boxes[data-shake],
+    .hra-otp-box[data-active]::after { animation: none; }
+  }
+}

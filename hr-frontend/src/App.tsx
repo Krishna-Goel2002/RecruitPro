@@ -2,30 +2,18 @@ import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { HomeRedirect, PublicOnly, RequireAuth } from './auth/guards'
 import { AppLayout } from './components/Layout'
-import { AdminAuditPage } from './pages/admin/AdminAuditPage'
-import { AdminDashboardPage } from './pages/admin/AdminDashboardPage'
-import { AdminFairnessPage } from './pages/admin/AdminFairnessPage'
-import { AdminInvitationsPage } from './pages/admin/AdminInvitationsPage'
-import { AdminJobsPage } from './pages/admin/AdminJobsPage'
-import { AdminOrganizationPage } from './pages/admin/AdminOrganizationPage'
-import { AdminUsersPage } from './pages/admin/AdminUsersPage'
-import { AdminVerificationPage } from './pages/admin/AdminVerificationPage'
 import { ApplicantDetailPage } from './pages/applicants/ApplicantDetailPage'
-import { ChangePasswordPage } from './pages/account/ChangePasswordPage'
 import { NotificationsPage } from './pages/account/NotificationsPage'
-import { SecurityPage } from './pages/account/SecurityPage'
-import { AcceptInvitePage } from './pages/auth/AcceptInvitePage'
 import { LoginPage } from './pages/auth/LoginPage'
-import { ForgotPasswordPage, ResetPasswordPage } from './pages/auth/PasswordPages'
-import { SignupPage } from './pages/auth/SignupPage'
-import { SsoCompletePage } from './pages/auth/SsoCompletePage'
-import { VerifyEmailPage } from './pages/auth/VerifyEmailPage'
 import { InterviewDetailPage } from './pages/interviews/InterviewDetailPage'
 import { InterviewsPage } from './pages/interviews/InterviewsPage'
 import { JobDetailPage } from './pages/jobs/JobDetailPage'
-import { JobFormPage } from './pages/jobs/JobFormPage'
 import { JobsListPage } from './pages/jobs/JobsListPage'
 import { NotFoundPage } from './pages/StatusPages'
+// Part A: code-split routes (wizard, first run, secondary account-entry pages).
+import { AcceptInvitePage, ForgotPasswordPage, JobFormPage, ResetPasswordPage, SignupPage, SsoCompletePage, VerifyEmailPage, WelcomePage } from './pages/lazyRoutes'
+// Admin and account-settings screens are code-split too (bundle budget).
+import { AdminAuditPage, AdminDashboardPage, AdminFairnessPage, AdminInvitationsPage, AdminJobsPage, AdminOrganizationPage, AdminUsersPage, AdminVerificationPage, ChangePasswordPage, SecurityPage } from './pages/lazyRoutes'
 
 // Living style guide (hidden route, not linked from navigation). Lazy, so it never weighs on the app bundle.
 const DesignGallery = lazy(() => import('./design/gallery/DesignGallery'))
@@ -50,6 +38,7 @@ export default function App() {
       <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
         <Route index element={<HomeRedirect />} />
 
+        <Route path="welcome" element={<RequireAuth capability="admin"><WelcomePage /></RequireAuth>} />
         <Route path="jobs" element={<RequireAuth capability="jobs.view"><JobsListPage /></RequireAuth>} />
         <Route path="jobs/new" element={<RequireAuth capability="jobs.manage"><JobFormPage /></RequireAuth>} />
         <Route path="jobs/:jobId" element={<RequireAuth capability="jobs.view"><JobDetailPage /></RequireAuth>} />

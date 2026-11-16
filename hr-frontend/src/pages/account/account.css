@@ -1,0 +1,58 @@
+/* Inbox, change password, two-step verification (HR Part B). Tokens only. */
+@layer pages {
+  .acc { min-width: 0; }
+  .acc-toolbar { display: flex; justify-content: flex-start; margin: var(--s-6) 0 var(--s-4); }
+  .acc-lead { margin: 0; color: var(--fg-muted); font: var(--text-body) / var(--lh-body) var(--font-sans); }
+  .acc-fine { margin: 0; color: var(--fg-muted); font: var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .acc-form { display: flex; flex-direction: column; gap: var(--s-6); margin-top: var(--s-7); }
+  .acc-form .hra-pw-rules { margin-top: var(--s-4); }
+  .acc-actions { display: flex; flex-wrap: wrap; gap: var(--s-4); }
+  .acc > .ui-alert { margin-top: var(--s-6); }
+  .acc-section { display: flex; flex-direction: column; gap: var(--s-6); margin-top: var(--s-8); padding-top: var(--s-8); border-top: 1px solid var(--border-hairline); }
+  .acc-section h2 { margin: 0; }
+  .acc-state { display: flex; gap: var(--s-5); align-items: flex-start; }
+  .acc-state > svg { flex: none; margin-top: 2px; color: var(--fg-subtle); }
+  .acc-state[data-state='on'] > svg { color: var(--success-fg); }
+  .acc-state h2 { margin: 0 0 var(--s-2); }
+  .acc-off { display: flex; flex-direction: column; gap: var(--s-6); }
+  .acc-enrol { display: flex; flex-direction: column; gap: var(--s-7); }
+  .acc-qr-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-7); align-items: start; }
+  @media (min-width: 600px) { .acc-qr-row { grid-template-columns: auto minmax(0, 1fr); } }
+  .acc-qr-side { display: flex; flex-direction: column; gap: var(--s-5); min-width: 0; }
+  .acc-confirm { display: flex; flex-direction: column; gap: var(--s-6); padding-top: var(--s-7); border-top: 1px dashed var(--border-default); }
+  .acc-codes { display: flex; flex-direction: column; gap: var(--s-6); max-width: 420px; }
+  .acc-danger { margin-top: 0; }
+
+  /* inbox */
+  .nt { display: flex; flex-direction: column; gap: var(--s-7); transition: opacity var(--dur-fast) var(--ease-standard); }
+  .nt[data-stale] { opacity: .6; }
+  .nt-day-label { margin: 0 0 var(--s-3); color: var(--fg-muted); font: 500 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .nt-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border-hairline); }
+  .nt-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    gap: var(--s-5);
+    align-items: start;
+    padding: var(--s-5) var(--s-4);
+    border-bottom: 1px solid var(--border-hairline);
+    transition: background-color var(--dur-fast) var(--ease-standard);
+    animation: nt-in var(--dur-base) var(--ease-decelerate) both;
+    animation-delay: calc(var(--i, 0) * var(--stagger-step));
+  }
+  @keyframes nt-in { from { opacity: 0; transform: translateY(var(--travel)); } }
+  .nt-row:hover { background: var(--bg-hover); }
+  .nt-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--r-full); background: var(--bg-active); color: var(--fg-muted); }
+  .nt-row[data-unread] .nt-icon { background: var(--accent-subtle); color: var(--accent-text); }
+  .nt-text { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+  .nt-subject { padding: 0; border: 0; background: none; color: var(--fg-muted); font: 400 var(--text-body) / var(--lh-body) var(--font-sans); text-align: left; cursor: pointer; }
+  .nt-row[data-unread] .nt-subject { color: var(--fg-default); font-weight: 600; }
+  .nt-subject::after { content: ''; position: absolute; inset: 0; }
+  .nt-subject:focus-visible { outline: none; }
+  .nt-subject:focus-visible::after { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: var(--r-xs); }
+  .nt-body { margin: 0; color: var(--fg-muted); font: var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .nt-meta { margin: var(--s-2) 0 0; color: var(--fg-subtle); font: var(--text-caption) / var(--lh-caption) var(--font-sans); }
+  .nt-end { display: inline-flex; align-items: center; gap: var(--s-4); padding-top: 4px; color: var(--fg-subtle); }
+  .nt-dot { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { .nt-row { animation: none; } }
+}

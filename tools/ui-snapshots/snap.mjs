@@ -53,7 +53,21 @@ const fullPage = !args.viewport
 const apiPrefix = args['api-prefix'] ?? '/api/v1'
 const THEME_KEY = 'theme-preference' // must match src/design/theme.ts in both portals
 
-const fixtures = await import(path.join(here, 'fixtures', `${portal}.mjs`))
+const baseFixtures = await import(path.join(here, 'fixtures', `${portal}.mjs`))
+// Extension fixture files (fixtures/<portal>-<part>.mjs, e.g. hr-b.mjs) add screens and routes without editing the
+// shared file. Their `routes({ role })` answers are tried before the base routes.
+const extensions = []
+for (const file of fs.readdirSync(path.join(here, 'fixtures')).sort()) {
+  if (file.startsWith(`${portal}-`) && file.endsWith('.mjs')) extensions.push(await import(path.join(here, 'fixtures', file)))
+}
+const fixtures = {
+  ...baseFixtures,
+  screens: [...baseFixtures.screens, ...extensions.flatMap((e) => e.screens ?? [])],
+  routes: (opts) => [
+    ...extensions.flatMap((e) => (typeof e.routes === 'function' ? e.routes(opts) : e.routes ?? [])),
+    ...(typeof baseFixtures.routes === 'function' ? baseFixtures.routes(opts) : baseFixtures.routes),
+  ],
+}
 fs.mkdirSync(outDir, { recursive: true })
 
 // ---------------------------------------------------------------- static server with SPA fallback

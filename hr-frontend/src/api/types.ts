@@ -123,7 +123,16 @@ export type ResetPasswordRequest = { token: string; newPassword: string }
 export type ChangePasswordRequest = { currentPassword: string; newPassword: string }
 
 /** In-app inbox item (`GET /me/notifications`). `readAt` is absent while unread (non_null serialisation). */
-export type AppNotification = { id: number; template: string; subject: string; body: string; createdAt: string; readAt?: string | null }
+export type AppNotification = {
+  id: number
+  template: string
+  subject: string
+  body: string
+  createdAt: string
+  readAt?: string | null
+  /** Optional in-app path to the subject (e.g. "/interviews/601"); older servers omit it and the UI routes by template. */
+  link?: string | null
+}
 export type UnreadCount = { count: number }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -628,6 +637,24 @@ export type StaffVerdict = {
   evidenceCount: number
   sourceKind: VerificationSourceKind | string | null
   createdAt: string
+  /** Trust fixes (WP-AG-NOTES): employer-domain / badge-issuer check for the viewer's organisation; null when none applied. */
+  domainTrust?: DomainTrust | null
+}
+
+export type DomainTrustStatus = 'TRUSTED' | 'WEAK' | 'UNTRUSTED'
+
+export type DomainTrust = {
+  check: 'EMPLOYER_DOMAIN' | 'BADGE_ISSUER' | string
+  /** null until the identity is revealed. */
+  domain: string | null
+  /** For the viewer's organisation. */
+  status: DomainTrustStatus | string
+  trustedBy: 'AGENT' | 'ORGANIZATION' | null
+  agentStatus?: DomainTrustStatus | string | null
+  reasons: string[]
+  candidateControlled?: boolean
+  /** The verdict shows VERIFIED only because this organisation trusts the domain. */
+  liftedByOrganization?: boolean
 }
 
 export type StaffClaim = {
@@ -650,10 +677,21 @@ export type VerificationSettings = {
   connectors: Record<VerificationSourceKind, boolean>
   updatedAt: string | null
   updatedByName: string | null
+  /** Trust fixes: never null on new servers ([] when none); optional for older payloads. */
+  trustedEmployerDomains?: string[]
+  trustedBadgeIssuers?: string[]
 }
 
-/** `mode` is always sent; connectors left out keep their value. */
-export type VerificationSettingsUpdate = { mode: VerificationMode; connectors?: Partial<Record<VerificationSourceKind, boolean>> }
+/**
+ * `mode` is always sent; connectors left out keep their value. A trusted list replaces the stored one ([] clears it);
+ * omitted or null keeps it. The server normalises entries ("https://www.globex.example/" → "globex.example").
+ */
+export type VerificationSettingsUpdate = {
+  mode: VerificationMode
+  connectors?: Partial<Record<VerificationSourceKind, boolean>>
+  trustedEmployerDomains?: string[]
+  trustedBadgeIssuers?: string[]
+}
 
 export type VerdictLabel = { verdictId: number; labelVerdict: Verdict; note: string | null; at: string }
 export type VerdictLabelRequest = { labelVerdict: Verdict; note?: string }

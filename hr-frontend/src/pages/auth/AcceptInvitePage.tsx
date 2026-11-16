@@ -5,15 +5,15 @@ import { authApi } from '../../api/auth'
 import { errorMessage, isApiError } from '../../api/client'
 import { useAuth } from '../../auth/AuthContext'
 import { homePath } from '../../auth/permissions'
-import { ArrowIcon, LockIcon, UserIcon } from '../../components/Icons'
-import { LoadingPanel } from '../../components/States'
-import { formatDateTime, passwordProblem, roleLabel } from '../../lib/format'
-import { usePageTitle } from '../../lib/hooks'
-import { AuthError, AuthInput, AuthLayout } from './AuthLayout'
+import { passwordError } from '../../components/PasswordChecklist'
+import { Button, Field, Input, Skeleton, buttonProps } from '../../design/components'
+import { formatDate, relativeTime } from '../../design/lib/format'
+import { roleLabel } from '../../lib/format'
+import { AuthLayout, AuthNotice } from './AuthLayout'
+import { NewPasswordField } from './PasswordPages'
 
-/** /accept-invite?token=… : preview the invitation, then set name and password. */
+/** /accept-invite?token=… : the invitation as facts, then name and password; lands on the role's home screen. */
 export function AcceptInvitePage() {
-  usePageTitle('Accept invitation')
   const [params] = useSearchParams()
   const token = params.get('token') ?? ''
   const navigate = useNavigate()
@@ -27,22 +27,23 @@ export function AcceptInvitePage() {
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [password, setPassword] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [errors, setErrors] = useState<Record<string, string | null>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     setError(null)
-    const next: Record<string, string> = {}
-    if (!firstName.trim()) next.firstName = 'Enter your first name.'
-    if (!lastName.trim()) next.lastName = 'Enter your last name.'
-    const problem = passwordProblem(password)
-    if (problem) next.password = problem
-    if (confirm !== password) next.confirm = 'The passwords do not match.'
+    const next: Record<string, string | null> = {
+      firstName: firstName.trim() ? null : 'Enter your first name.',
+      lastName: lastName.trim() ? null : 'Enter your last name.',
+      password: passwordError(password),
+    }
     setErrors(next)
-    if (Object.keys(next).length) return
+    if (Object.values(next).some(Boolean)) {
+      window.setTimeout(() => document.querySelector<HTMLElement>('.hra-auth-form [aria-invalid="true"]')?.focus(), 0)
+      return
+    }
     setBusy(true)
     try {
       const auth = await authApi.acceptInvite({ token, firstName: firstName.trim(), lastName: lastName.trim(), password })
@@ -55,33 +56,58 @@ export function AcceptInvitePage() {
     }
   }
 
-  const invalid = !token || isApiError(preview.error, 404)
+  const invalid = !token || isApiError(preview.error, 404) || isApiError(preview.error, 410) || isApiError(preview.error, 400)
+  const data = preview.data
+
+  if (invalid) {
+    return (
+      <AuthLayout title="This invitation cannot be used" intro="It may have expired (links last 7 days), already been used, or been revoked by your administrator.">
+        <div className="hra-auth-actions">
+          <Link {...buttonProps('secondary', 'lg')} to="/login">Go to sign in</Link>
+        </div>
+        <p className="hra-auth-intro">Ask your administrator to send a new invitation.</p>
+      </AuthLayout>
+    )
+  }
 
   return (
     <AuthLayout
-      eyebrow="INVITATION"
-      title={preview.data ? `Join ${preview.data.organizationName}` : 'Accept your invitation'}
-      intro={preview.data
-        ? <>You were invited as <strong>{roleLabel(preview.data.role)}</strong> with <strong>{preview.data.email}</strong>. The invitation expires {formatDateTime(preview.data.expiresAt)}.</>
-        : 'Set your name and password to join your organisation’s workspace.'}
+      title={data ? `Join ${data.organizationName}` : 'Accept your invitation'}
+      intro="Choose your name and a password to finish setting up your account."
       footer={<span>Already have an account? <Link to="/login">Sign in</Link></span>}
     >
-      {preview.isLoading && <LoadingPanel label="Checking your invitation…" compact />}
-      {invalid && <AuthError message="This invitation link is invalid, expired, already used or revoked. Ask your administrator for a new one." />}
-      {preview.error && !invalid && <AuthError message={errorMessage(preview.error)} />}
-      {preview.data && (
-        <form className="sign-in-form" onSubmit={event => void submit(event)} noValidate>
-          <div className="auth-two-col">
-            <AuthInput label="First name" icon={<UserIcon className="input-icon" />} autoComplete="given-name" maxLength={100} value={firstName} onChange={event => setFirstName(event.target.value)} error={errors.firstName} disabled={busy} required />
-            <AuthInput label="Last name" autoComplete="family-name" maxLength={100} value={lastName} onChange={event => setLastName(event.target.value)} error={errors.lastName} disabled={busy} required />
-          </div>
-          <AuthInput label="Password" icon={<LockIcon className="input-icon" />} type="password" revealable autoComplete="new-password" maxLength={72} value={password} onChange={event => setPassword(event.target.value)} error={errors.password} hint="10–72 characters with at least one letter and one digit." disabled={busy} required />
-          <AuthInput label="Confirm password" icon={<LockIcon className="input-icon" />} type="password" autoComplete="new-password" maxLength={72} value={confirm} onChange={event => setConfirm(event.target.value)} error={errors.confirm} disabled={busy} required />
-          <AuthError message={error} />
-          <button className="primary-button" type="submit" disabled={busy}>
-            {busy ? <><span className="spinner" aria-hidden="true" />Joining…</> : <>Join workspace <ArrowIcon /></>}
-          </button>
-        </form>
+      {preview.isLoading ? (
+        <div className="hra-invite-facts" aria-busy="true">
+          {[0, 1, 2].map(i => <Skeleton key={i} width="100%" height={12} style={{ gridColumn: '1 / -1' }} />)}
+          <span className="sr-only" role="status">Checking your invitation…</span>
+        </div>
+      ) : preview.error ? (
+        <AuthNotice tone="danger">{errorMessage(preview.error)}</AuthNotice>
+      ) : data ? (
+        <dl className="hra-invite-facts">
+          <dt>Organisation</dt><dd>{data.organizationName}</dd>
+          <dt>Your role</dt><dd>{roleLabel(data.role)}</dd>
+          <dt>Email</dt><dd>{data.email}</dd>
+          <dt>Expires</dt><dd><time dateTime={data.expiresAt} title={formatDate(data.expiresAt)}>{relativeTime(data.expiresAt)}</time></dd>
+        </dl>
+      ) : null}
+      {data && (
+        <>
+          {error && <AuthNotice tone="danger">{error}</AuthNotice>}
+          <form className="hra-auth-form" onSubmit={event => void submit(event)} noValidate>
+            <input type="email" autoComplete="username" value={data.email} readOnly hidden />
+            <div className="hra-auth-row">
+              <Field label="First name" error={errors.firstName}>
+                <Input autoComplete="given-name" maxLength={100} controlSize="lg" value={firstName} onChange={e => setFirstName(e.target.value)} disabled={busy} autoFocus />
+              </Field>
+              <Field label="Last name" error={errors.lastName}>
+                <Input autoComplete="family-name" maxLength={100} controlSize="lg" value={lastName} onChange={e => setLastName(e.target.value)} disabled={busy} />
+              </Field>
+            </div>
+            <NewPasswordField label="Password" value={password} onChange={setPassword} error={errors.password} disabled={busy} />
+            <Button type="submit" variant="primary" size="lg" block loading={busy}>{busy ? 'Joining…' : 'Join workspace'}</Button>
+          </form>
+        </>
       )}
     </AuthLayout>
   )

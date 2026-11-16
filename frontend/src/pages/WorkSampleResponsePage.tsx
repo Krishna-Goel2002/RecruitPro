@@ -1,22 +1,30 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../api/client'
 import { workSamplesApi } from '../api/endpoints'
 import { queryKeys } from '../api/queryKeys'
 import type { CandidateWorkSample } from '../api/types'
-import { isHttpUrl } from '../lib/url'
 import { ConfirmDialog } from '../components/Dialog'
-import { EmptyState, ErrorBlock, FormError, LoadingBlock } from '../components/Feedback'
-import { Field } from '../components/Form'
+import { ErrorState, Facts, FormError } from '../components/Feedback'
+import { focusFirstInvalid } from '../components/Form'
 import { useNotify } from '../components/Notices'
-import { PageHeader } from '../components/PageHeader'
-import { focusPageHeading } from '../lib/focus'
+import {
+  Alert, Button, CodeField, EmptyState, Field, FileDropzone, IconButton, Input, LoadingRegion, PageHeader, Skeleton, SkeletonText, Textarea, buttonProps,
+} from '../design/components'
+import { ArrowRight, Check, CircleCheck, Clock, Download, Icon, ListChecks } from '../design/icons'
+import { formatDate, formatFileSize } from '../design/lib/format'
+import { useDraft } from '../lib/drafts'
 import { saveBlob, safeFilename } from '../lib/download'
-import { WORK_SAMPLE_ACCEPT, WORK_SAMPLE_MAX_FILES, validateWorkSampleFiles } from '../lib/files'
-import { describeDuration, formatDuration, formatFileSize, formatLongDateTime, formatTime } from '../lib/format'
+import { WORK_SAMPLE_ACCEPT, WORK_SAMPLE_MAX_BYTES, WORK_SAMPLE_MAX_FILES, validateWorkSampleFiles } from '../lib/files'
+import { describeDuration, formatDuration, formatLongDateTime, formatTime } from '../lib/format'
 import { useBeforeUnload, useNow } from '../lib/hooks'
-import { workSampleStatusLabel } from '../lib/labels'
+import { readStored } from '../lib/storage'
+import { isHttpUrl } from '../lib/url'
+import { workSamplesQuery } from '../lib/queries'
+import { WorkSampleBadge } from './WorkSamplesPage'
+import './common.css'
+import './tasks/tasks.css'
 
 /** Plan 5.6: submissions are accepted until startedAt + time limit + 5 minutes. */
 const GRACE_SECONDS = 5 * 60
@@ -24,82 +32,98 @@ const RESPONSE_MAX = 20000
 const URL_MAX = 500
 const ANNOUNCE_AT_SECONDS = [600, 300, 60]
 
+const draftKey = (id: number) => `draft-work-sample-${id}`
+
 function deadlineOf(sample: CandidateWorkSample): number | null {
   if (sample.deadlineAt) return new Date(sample.deadlineAt).getTime()
   if (sample.startedAt) return new Date(sample.startedAt).getTime() + sample.timeLimitMinutes * 60_000
   return null
 }
 
-/**
- * The server refuses a start after the start-by time and a submission after the time limit + grace with 400, and
- * marks the assignment EXPIRED (that change is committed). Refetch so the page shows the server's current state.
- */
+/** A refused start/submit (400/409) means the window closed and the server marked the task EXPIRED: refetch. */
 function isWindowClosedError(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 400 || error.status === 409)
 }
 
+/**
+ * One work sample (REDESIGN_PLAN A9): rules as a checklist and an honest Start button; while it runs, a sticky timer
+ * (warning from 5 minutes, pulse in the last minute), the instructions and a response that autosaves as a draft.
+ */
 export function WorkSampleResponsePage() {
   const { assignmentId } = useParams()
   const id = Number(assignmentId)
-  const samples = useQuery({ queryKey: queryKeys.workSamples, queryFn: workSamplesApi.list })
+  const samples = useQuery(workSamplesQuery)
   const sample = samples.data?.find(item => item.assignmentId === id)
-  // Text the candidate wrote but could not submit because the window closed; shown read-only so it can be copied.
-  const [unsent, setUnsent] = useState<string | null>(null)
+  const crumbs = [{ label: 'Work samples', to: '/work-samples' }]
 
-  const backLink = (
-    <Link className="back-link" to="/work-samples">
-      ← All work samples
-    </Link>
-  )
-
-  if (samples.isPending) return <LoadingBlock label="Loading work sample…" />
-  if (samples.isError) return <ErrorBlock error={samples.error} onRetry={() => void samples.refetch()} />
+  if (samples.isPending) {
+    return (
+      <LoadingRegion label="Loading work sample">
+        <Skeleton width={160} height={10} />
+        <Skeleton width={360} height={24} style={{ marginTop: 12 }} />
+        <div style={{ marginTop: 32 }}>
+          <SkeletonText lines={5} />
+        </div>
+      </LoadingRegion>
+    )
+  }
+  if (samples.isError) return <ErrorState error={samples.error} onRetry={() => void samples.refetch()} title="This work sample could not be loaded" />
   if (!sample) {
     return (
       <>
-        {backLink}
-        <PageHeader title="Work sample not found" />
-        <EmptyState icon="✎" title="This work sample is not available">It may have been cancelled, or the link is wrong.</EmptyState>
+        <PageHeader title="Work sample not found" breadcrumb={[...crumbs, { label: 'Not found' }]} />
+        <EmptyState
+          icon={ListChecks}
+          title="This work sample is not available"
+          description="It may have been cancelled, or the link is wrong."
+          action={
+            <Link {...buttonProps('secondary')} to="/work-samples">
+              All work samples
+            </Link>
+          }
+        />
       </>
     )
   }
 
   return (
-    <>
-      {backLink}
+    <div className="t-page">
       <PageHeader
-        eyebrow={sample.jobTitle.toUpperCase()}
+        breadcrumb={[...crumbs, { label: sample.title }]}
         title={sample.title}
         documentTitle={`Work sample: ${sample.title}`}
-        description={`${sample.timeLimitMinutes} minutes · ${workSampleStatusLabel(sample.status)}`}
+        status={<WorkSampleBadge status={sample.status} />}
+        meta={[sample.jobTitle, `${sample.timeLimitMinutes} minutes`]}
       />
       {sample.status === 'ASSIGNED' && <StartPanel sample={sample} />}
-      {sample.status === 'STARTED' && <ResponsePanel sample={sample} onWindowClosed={setUnsent} />}
+      {sample.status === 'STARTED' && <ResponsePanel sample={sample} />}
       {(sample.status === 'SUBMITTED' || sample.status === 'SCORED') && (
-        <div className="panel">
-          <p className="alert success">
-            Submitted {sample.submittedAt ? formatLongDateTime(sample.submittedAt) : ''}. The employer reviews every response
-            against the same scoring guide.
-          </p>
+        <div className="t-block">
+          <div className="t-done">
+            <span className="t-done-icon">
+              <Icon icon={CircleCheck} size={20} />
+            </span>
+            <div>
+              <p className="t-h3">Submitted{sample.submittedAt ? ` ${formatLongDateTime(sample.submittedAt)}` : ''}</p>
+              <p className="c-muted">The employer reviews every response against the same scoring guide. Nothing more is needed from you.</p>
+            </div>
+          </div>
           <SubmittedFiles sample={sample} />
         </div>
       )}
-      {sample.status === 'EXPIRED' && <ExpiredPanel sample={sample} unsent={unsent} />}
+      {sample.status === 'EXPIRED' && <ExpiredPanel sample={sample} />}
       {sample.status === 'CANCELLED' && (
-        <div className="panel">
-          <p className="alert info">
-            The employer cancelled this work sample{sample.cancelledAt ? ` on ${formatLongDateTime(sample.cancelledAt)}` : ''}. Nothing more is
-            needed from you.
-          </p>
-          {sample.cancelReason && <p className="muted">Reason given: {sample.cancelReason}</p>}
-        </div>
+        <Alert tone="neutral" title="The employer cancelled this work sample">
+          {sample.cancelledAt ? `On ${formatLongDateTime(sample.cancelledAt)}. ` : ''}Nothing more is needed from you.
+          {sample.cancelReason ? ` Reason given: ${sample.cancelReason}` : ''}
+        </Alert>
       )}
-    </>
+    </div>
   )
 }
 
-/** Files attached to a submitted response, downloadable by the candidate (raw bytes, server file name). */
-export function SubmittedFiles({ sample }: { sample: CandidateWorkSample }) {
+/** Files attached to a submitted response, downloadable by the candidate. */
+function SubmittedFiles({ sample }: { sample: CandidateWorkSample }) {
   const download = useMutation({
     mutationFn: (fileId: number) => workSamplesApi.downloadFile(sample.assignmentId, fileId),
     onSuccess: (file, fileId) => {
@@ -110,22 +134,20 @@ export function SubmittedFiles({ sample }: { sample: CandidateWorkSample }) {
   if (sample.files.length === 0) return null
   return (
     <div>
-      <h3 className="subheading">Attached files</h3>
-      <ul className="plain-list compact-list">
+      <p className="t-subhead">Attached files</p>
+      <ul className="c-rows" data-closed="">
         {sample.files.map(file => (
-          <li key={file.id} className="file-row">
-            <span className="break-anywhere">
-              {file.originalName} <span className="muted">· {formatFileSize(file.sizeBytes)}</span>
+          <li key={file.id} className="t-file">
+            <span className="c-break">
+              {file.originalName} <span className="c-meta">· {formatFileSize(file.sizeBytes)}</span>
             </span>
-            <button
-              type="button"
-              className="quiet-button"
+            <IconButton
+              label={`Download ${file.originalName}`}
+              icon={Download}
+              size="sm"
+              loading={download.isPending && download.variables === file.id}
               onClick={() => download.mutate(file.id)}
-              disabled={download.isPending && download.variables === file.id}
-              aria-label={`Download ${file.originalName}`}
-            >
-              {download.isPending && download.variables === file.id ? 'Downloading…' : 'Download'}
-            </button>
+            />
           </li>
         ))}
       </ul>
@@ -134,20 +156,23 @@ export function SubmittedFiles({ sample }: { sample: CandidateWorkSample }) {
   )
 }
 
-function ExpiredPanel({ sample, unsent }: { sample: CandidateWorkSample; unsent: string | null }) {
-  const unsentId = useId()
+function ExpiredPanel({ sample }: { sample: CandidateWorkSample }) {
+  const unsent = readStored(draftKey(sample.assignmentId))
   return (
-    <div className="panel">
-      <p className="alert warning" role="alert">
+    <div className="t-block">
+      <Alert tone="warning" title={sample.startedAt ? 'The time ran out' : 'The start-by time has passed'}>
         {sample.startedAt
-          ? 'The time for this work sample ran out (time limit plus 5 minutes), so no more responses are accepted.'
-          : 'The start-by time for this work sample has passed, so it can no longer be started.'}{' '}
+          ? 'The time limit plus 5 minutes has passed, so no more responses are accepted.'
+          : 'This work sample can no longer be started.'}{' '}
         Contact the employer if something went wrong.
-      </p>
+      </Alert>
       {unsent && (
-        <div className="field">
-          <label htmlFor={unsentId}>Your unsent response (copy it if you want to keep it)</label>
-          <textarea id={unsentId} rows={10} readOnly value={unsent} />
+        <div>
+          <p className="t-subhead">Your unsent response</p>
+          <p className="c-meta" style={{ marginBottom: 8 }}>
+            Saved in this browser. Copy it if you want to keep it.
+          </p>
+          <CodeField value={unsent} label="Response text" />
         </div>
       )}
     </div>
@@ -162,7 +187,6 @@ function StartPanel({ sample }: { sample: CandidateWorkSample }) {
   const start = useMutation({
     mutationFn: () => workSamplesApi.start(sample.assignmentId),
     onError: error => {
-      // Past the start-by time the server refuses and the sweep marks the assignment EXPIRED: show the current state.
       if (isWindowClosedError(error)) void queryClient.invalidateQueries({ queryKey: queryKeys.workSamples })
     },
     onSuccess: started => {
@@ -171,67 +195,83 @@ function StartPanel({ sample }: { sample: CandidateWorkSample }) {
         current?.map(item => (item.assignmentId === started.assignmentId ? started : item)),
       )
       void queryClient.invalidateQueries({ queryKey: queryKeys.workSamples })
-      // The start panel is replaced by the timer and instructions; move focus to the instructions.
       window.setTimeout(() => document.getElementById('instructions-title')?.focus(), 0)
     },
   })
 
+  const rules = [
+    'The instructions appear only after you press Start.',
+    `You then have ${sample.timeLimitMinutes} minutes. The timer cannot be paused and keeps running if you close the page.`,
+    'You can attach up to 3 files (PDF, ZIP, DOCX, PPTX, PNG or JPG, 20 MB each), add a link, or both.',
+    'Responses sent more than 5 minutes after the time limit are not accepted.',
+    'Your answer is saved as a draft in this browser while you type.',
+  ]
+
   return (
-    <section className="panel" aria-labelledby="before-start">
-      <h2 id="before-start" className="panel-title">
+    <section className="t-block" aria-labelledby="before-start">
+      <h2 id="before-start" className="t-h2">
         Before you start
       </h2>
-      <ul className="rules">
-        <li>The instructions appear only after you press Start.</li>
-        <li>
-          You then have <strong>{sample.timeLimitMinutes} minutes</strong>. The timer cannot be paused.
-        </li>
-        <li>Responses sent more than 5 minutes after the time limit are not accepted.</li>
-        <li>Keep this page open while you work. Write your answer here, and add a link if the task asks for a file.</li>
-        {sample.dueAt && <li>Start by {formatLongDateTime(sample.dueAt)}.</li>}
+      <ul className="t-rules">
+        {rules.map(rule => (
+          <li key={rule}>
+            <Icon icon={Check} size={14} />
+            <span>{rule}</span>
+          </li>
+        ))}
       </ul>
-      {pastDue && <p className="alert warning">The start-by date has passed. The employer may no longer accept a response.</p>}
-      <button type="button" className="primary" onClick={() => setConfirming(true)}>
-        Start the work sample
-      </button>
+      {sample.dueAt && (
+        <Facts
+          items={[
+            { label: 'Start by', value: formatLongDateTime(sample.dueAt) },
+            { label: 'Time limit', value: `${sample.timeLimitMinutes} minutes, plus 5 minutes to submit` },
+          ]}
+        />
+      )}
+      {pastDue && <Alert tone="warning">The start-by time has passed. The employer may no longer accept a response.</Alert>}
+      <div>
+        <Button variant="primary" size="lg" trailingIcon={ArrowRight} onClick={() => setConfirming(true)}>
+          Start, {sample.timeLimitMinutes}-minute timer begins
+        </Button>
+      </div>
       <ConfirmDialog
         open={confirming}
-        title="Start now?"
+        title="Start the timer now?"
         confirmLabel={`Start ${sample.timeLimitMinutes}-minute timer`}
         tone="primary"
         busy={start.isPending}
+        error={start.error}
         onCancel={() => {
           setConfirming(false)
           start.reset()
         }}
         onConfirm={() => start.mutate()}
-        error={<FormError error={start.error} />}
       >
-        <p>The timer starts as soon as you confirm and runs even if you close this page.</p>
+        <p>The timer starts as soon as you confirm and keeps running even if you close this page. Make sure you have {sample.timeLimitMinutes} minutes free.</p>
       </ConfirmDialog>
     </section>
   )
 }
 
-function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample; onWindowClosed: (unsentText: string | null) => void }) {
+function ResponsePanel({ sample }: { sample: CandidateWorkSample }) {
   const queryClient = useQueryClient()
   const notify = useNotify()
+  const formRef = useRef<HTMLFormElement>(null)
   const now = useNow(1000)
   const deadline = deadlineOf(sample)
   const remaining = deadline === null ? null : Math.round((deadline - now) / 1000)
-  const [responseText, setResponseText] = useState('')
+  const total = sample.timeLimitMinutes * 60
+  const draft = useDraft(draftKey(sample.assignmentId), 600)
   const [responseUrl, setResponseUrl] = useState('')
   const [files, setFiles] = useState<File[]>([])
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [confirming, setConfirming] = useState(false)
   const [announcement, setAnnouncement] = useState('')
   const lastThreshold = useRef<number | null>(null)
 
-  useBeforeUnload(responseText.trim().length > 0)
+  useBeforeUnload(files.length > 0)
 
-  // Announce only at a few milestones; a per-second live region would be unusable with a screen reader.
-  // "Time is up" and "window closed" are announced by their role="alert" messages below.
+  // Announce only at 10, 5 and 1 minutes; a per-second live region would be unusable with a screen reader.
   useEffect(() => {
     if (remaining === null) return
     const passed = ANNOUNCE_AT_SECONDS.filter(threshold => remaining <= threshold)
@@ -244,32 +284,27 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
   }, [remaining])
 
   const submit = useMutation({
-    mutationFn: () =>
-      workSamplesApi.submit(sample.assignmentId, { responseText: responseText.trim(), responseUrl: responseUrl.trim() || null, files }),
+    mutationFn: () => workSamplesApi.submit(sample.assignmentId, { responseText: draft.value.trim(), responseUrl: responseUrl.trim() || null, files }),
     onSuccess: submitted => {
       setConfirming(false)
-      setResponseText('')
+      draft.clear()
       setFiles([])
-      notify('success', 'Your response was submitted.')
+      notify('success', 'Response submitted', { body: 'The employer reviews it against the same scoring guide as everyone else.' })
       queryClient.setQueryData<CandidateWorkSample[]>(queryKeys.workSamples, current =>
         current?.map(item => (item.assignmentId === submitted.assignmentId ? submitted : item)),
       )
       void queryClient.invalidateQueries({ queryKey: queryKeys.workSamples })
       void queryClient.invalidateQueries({ queryKey: ['application'] })
-      focusPageHeading()
+      window.setTimeout(() => document.querySelector<HTMLElement>('[data-page-heading]')?.focus(), 0)
     },
     onError: error => {
       if (!isWindowClosedError(error)) return
-      // WP-BE-C: a late submission is refused (400) and the assignment is now EXPIRED (also 400 when the application
-      // is no longer active). Keep the text for copying in case the page switches state, and refetch the server state.
-      onWindowClosed(responseText.trim() || null)
       void queryClient.invalidateQueries({ queryKey: queryKeys.workSamples })
       void queryClient.invalidateQueries({ queryKey: ['application'] })
       if (remaining !== null && remaining <= 0) {
         setConfirming(false)
-        notify('error', 'Your response was not accepted: the submission window has closed and this work sample has expired.')
+        notify('error', 'Your response was not accepted', { body: 'The submission window closed and this work sample has expired. Your text is still saved here.' })
       }
-      // Otherwise the dialog shows the server's reason.
     },
   })
 
@@ -279,144 +314,111 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
   useEffect(() => {
     if (!closedNow || checkedClosed.current) return
     checkedClosed.current = true
-    onWindowClosed(responseText.trim() || null)
     void queryClient.invalidateQueries({ queryKey: queryKeys.workSamples })
-    // responseText is read at the moment the window closes on purpose.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [closedNow, onWindowClosed, queryClient])
+  }, [closedNow, queryClient])
 
   function review(event: FormEvent) {
     event.preventDefault()
     const next: Record<string, string> = {}
-    if (!responseText.trim() && files.length === 0) next.responseText = 'Write your response or attach a file before submitting.'
+    if (!draft.value.trim() && files.length === 0) next.responseText = 'Write your response or attach a file before submitting.'
     const fileProblems = validateWorkSampleFiles(files)
     if (fileProblems.length > 0) next.files = fileProblems.join(' ')
     if (responseUrl.trim() && !isHttpUrl(responseUrl.trim())) next.responseUrl = 'Enter a full link starting with https:// or http://.'
     setErrors(next)
     if (Object.keys(next).length === 0) setConfirming(true)
+    else focusFirstInvalid(formRef.current)
   }
 
   const timeUp = remaining !== null && remaining <= 0
   const closed = remaining !== null && remaining <= -GRACE_SECONDS
   const low = remaining !== null && remaining > 0 && remaining <= 300
+  const urgent = remaining !== null && remaining > 0 && remaining <= 60
+  const elapsed = remaining === null ? 0 : Math.min(total, Math.max(0, total - remaining))
 
   return (
     <>
-      <div className={`timer-bar${low ? ' low' : ''}${timeUp ? ' up' : ''}`}>
-        <div>
-          <span className="eyebrow">TIME LEFT</span>
-          <span className="timer" role="timer" aria-label={remaining === null ? 'Time left unknown' : `${describeDuration(Math.max(0, remaining))} left`}>
+      <div className="t-timer" data-tone={timeUp ? 'danger' : low ? 'warning' : undefined}>
+        <Icon icon={Clock} size={16} className="t-timer-icon" />
+        <div className="t-timer-text">
+          <span className={`t-timer-num numeric${urgent ? ' is-urgent' : ''}`} role="timer" aria-label={remaining === null ? 'Time left unknown' : `${describeDuration(Math.max(0, remaining))} left`}>
             {remaining === null ? '—' : formatDuration(Math.max(0, remaining))}
           </span>
+          <span className="c-meta">{timeUp ? (closed ? 'Window closed' : 'Time is up, submit now') : 'left'}</span>
         </div>
-        {deadline !== null && <span className="muted">Ends at {formatTime(new Date(deadline))}</span>}
-        <span className="visually-hidden" aria-live="assertive">
+        <div className="t-timer-bar" aria-hidden="true">
+          <span style={{ ['--v' as string]: total ? elapsed / total : 0 }} />
+        </div>
+        {deadline !== null && <span className="c-meta t-timer-end">Ends {formatTime(new Date(deadline))}</span>}
+        <span className="sr-only" aria-live="assertive">
           {announcement}
         </span>
       </div>
       {timeUp && !closed && (
-        <p className="alert warning" role="alert">
+        <Alert tone="warning" live>
           Time is up. Submit now: responses are accepted for up to 5 minutes after the time limit.
-        </p>
+        </Alert>
       )}
       {closed && (
-        <p className="alert error" role="alert">
+        <Alert tone="danger" live>
           The submission window has closed. A response sent now will be refused and the work sample marked as expired.
-        </p>
+        </Alert>
       )}
 
-      <section className="panel" aria-labelledby="instructions-title">
-        <h2 id="instructions-title" className="panel-title" tabIndex={-1}>
+      <section className="t-block" aria-labelledby="instructions-title">
+        <h2 id="instructions-title" className="t-h2" tabIndex={-1}>
           Instructions
         </h2>
         {sample.instructions ? (
-          <div className="prose">{sample.instructions}</div>
+          <div className="c-prose">{sample.instructions}</div>
         ) : (
-          <p className="muted">The instructions could not be loaded. Refresh the page; the timer keeps running.</p>
+          <p className="c-muted">The instructions could not be loaded. Refresh the page; the timer keeps running and your draft is saved.</p>
         )}
       </section>
 
-      <section className="panel" aria-labelledby="response-title">
-        <h2 id="response-title" className="panel-title">
+      <section className="t-block" aria-labelledby="response-title">
+        <h2 id="response-title" className="t-h2">
           Your response
         </h2>
-        <form className="stack-form" onSubmit={review} noValidate>
+        <form ref={formRef} className="t-form" onSubmit={review} noValidate>
           <Field
             label="Response"
-            required={files.length === 0}
+            optional={files.length > 0}
             error={errors.responseText}
-            hint={`${responseText.length.toLocaleString()} / ${RESPONSE_MAX.toLocaleString()} characters. Leaving or reloading the page loses unsaved text.`}
+            hint={draft.savedAt ? `Draft saved in this browser at ${formatDate(draft.savedAt, { hour: 'numeric', minute: '2-digit' })}.` : 'Saved as a draft in this browser while you type.'}
           >
-            {control => (
-              <textarea {...control} rows={14} maxLength={RESPONSE_MAX} value={responseText} onChange={event => setResponseText(event.target.value)} />
-            )}
+            <Textarea rows={10} maxRows={30} maxLength={RESPONSE_MAX} showCount value={draft.value} onChange={e => draft.setValue(e.target.value)} />
           </Field>
           <Field label="Link to your work" optional error={errors.responseUrl} hint="For example a shared document, spreadsheet or repository.">
-            {control => (
-              <input
-                {...control}
-                type="url"
-                inputMode="url"
-                maxLength={URL_MAX}
-                placeholder="https://"
-                value={responseUrl}
-                onChange={event => setResponseUrl(event.target.value)}
-              />
-            )}
+            <Input type="url" inputMode="url" maxLength={URL_MAX} placeholder="https://" value={responseUrl} onChange={e => setResponseUrl(e.target.value)} />
           </Field>
-          <Field
-            label="Attach files"
-            optional
-            error={errors.files}
-            hint={`Up to ${WORK_SAMPLE_MAX_FILES} files: PDF, ZIP, DOCX, PPTX, PNG or JPG, at most 20 MB each.`}
-          >
-            {control => (
-              <input
-                {...control}
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept={WORK_SAMPLE_ACCEPT}
-                disabled={files.length >= WORK_SAMPLE_MAX_FILES}
-                onChange={event => {
-                  const chosen = Array.from(event.target.files ?? [])
-                  const next = [...files, ...chosen].slice(0, WORK_SAMPLE_MAX_FILES + 2)
-                  setFiles(next)
-                  const problems = validateWorkSampleFiles(next)
-                  setErrors(current => ({ ...current, files: problems.join(' ') }))
-                  if (fileInputRef.current) fileInputRef.current.value = ''
-                }}
-              />
-            )}
-          </Field>
-          {files.length > 0 && (
-            <ul className="plain-list compact-list" aria-label="Files to attach">
-              {files.map((file, index) => (
-                <li key={`${file.name}-${index}`} className="file-row">
-                  <span className="break-anywhere">
-                    {file.name} <span className="muted">· {formatFileSize(file.size)}</span>
-                  </span>
-                  <button
-                    type="button"
-                    className="text-button"
-                    aria-label={`Remove ${file.name}`}
-                    onClick={() => {
-                      const next = files.filter((_, position) => position !== index)
-                      setFiles(next)
-                      setErrors(current => ({ ...current, files: validateWorkSampleFiles(next).join(' ') }))
-                    }}
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="form-actions">
-            <span className="muted">You cannot change your response after submitting.</span>
-            <button type="submit" className="primary" disabled={submit.isPending}>
+          <div>
+            <p className="ui-field-label">
+              Attach files <span className="ui-field-optional">(optional)</span>
+            </p>
+            <FileDropzone
+              compact
+              multiple
+              maxFiles={WORK_SAMPLE_MAX_FILES - files.length}
+              disabled={files.length >= WORK_SAMPLE_MAX_FILES}
+              accept={WORK_SAMPLE_ACCEPT}
+              maxSize={WORK_SAMPLE_MAX_BYTES}
+              prompt={files.length >= WORK_SAMPLE_MAX_FILES ? 'Three files attached.' : 'Drop files here, or'}
+              hint="Up to 3 files: PDF, ZIP, DOCX, PPTX, PNG or JPG, 20 MB each."
+              onFiles={chosen => {
+                const next = [...files, ...chosen].slice(0, WORK_SAMPLE_MAX_FILES)
+                setFiles(next)
+                setErrors(current => ({ ...current, files: validateWorkSampleFiles(next).join(' ') }))
+              }}
+              files={files.map((file, i) => ({ id: i, name: file.name, size: file.size }))}
+              onRemove={i => setFiles(current => current.filter((_, position) => position !== i))}
+              error={errors.files || undefined}
+            />
+          </div>
+          <div className="t-submit">
+            <span className="c-meta">You cannot change your response after submitting.</span>
+            <Button type="submit" variant="primary">
               Submit response
-            </button>
+            </Button>
           </div>
         </form>
       </section>
@@ -427,12 +429,12 @@ function ResponsePanel({ sample, onWindowClosed }: { sample: CandidateWorkSample
         confirmLabel="Submit response"
         tone="primary"
         busy={submit.isPending}
+        error={submit.error}
         onCancel={() => {
           setConfirming(false)
           submit.reset()
         }}
         onConfirm={() => submit.mutate()}
-        error={<FormError error={submit.error} />}
       >
         <p>
           You cannot edit it afterwards.

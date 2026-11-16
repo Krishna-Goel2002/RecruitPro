@@ -1,51 +1,53 @@
 import { useQuery } from '@tanstack/react-query'
-import { interviewsApi } from '../api/endpoints'
-import { queryKeys } from '../api/queryKeys'
 import type { CandidateInterview } from '../api/types'
-import { isHttpUrl } from '../lib/url'
-import { EmptyState, ErrorBlock, LoadingBlock } from '../components/Feedback'
-import { PageHeader, Section } from '../components/PageHeader'
-import { formatLongDateTime, formatTime, localTimeZone } from '../lib/format'
+import { ErrorState } from '../components/Feedback'
+import { Badge, Button, EmptyState, LoadingRegion, PageHeader, Section, Skeleton, buttonProps } from '../design/components'
+import { ArrowUpRight, Calendar, CalendarClock, Icon } from '../design/icons'
+import { relativeTime } from '../design/lib/format'
+import { downloadInterviewIcs, timeRange, timeZoneLabel } from '../lib/calendar'
 import { humanize } from '../lib/labels'
+import { interviewEnd } from '../lib/nextStep'
+import { interviewsQuery } from '../lib/queries'
+import { isHttpUrl } from '../lib/url'
+import './common.css'
+import './tasks/tasks.css'
 
-function endOf(interview: CandidateInterview): number {
-  return new Date(interview.scheduledAt).getTime() + interview.durationMinutes * 60_000
-}
-
+/** Interviews: upcoming first with Join and Add to calendar; times in the viewer's zone, named in plain words. */
 export function InterviewsPage() {
-  const interviews = useQuery({ queryKey: queryKeys.interviews, queryFn: interviewsApi.list })
+  const interviews = useQuery(interviewsQuery)
   const now = Date.now()
   const all = interviews.data ?? []
-  const upcoming = all
-    .filter(interview => interview.status === 'SCHEDULED' && endOf(interview) >= now)
-    .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
-  const past = all
-    .filter(interview => !upcoming.includes(interview))
-    .sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt))
+  const upcoming = all.filter(i => i.status === 'SCHEDULED' && interviewEnd(i) >= now).sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
+  const past = all.filter(i => !upcoming.includes(i)).sort((a, b) => b.scheduledAt.localeCompare(a.scheduledAt))
 
   return (
     <>
-      <PageHeader
-        eyebrow="CANDIDATE PORTAL"
-        title="Interviews"
-        description={`All times are shown in your time zone (${localTimeZone()}).`}
-      />
+      <PageHeader title="Interviews" description={`Times are shown in your time zone, ${timeZoneLabel()}.`} />
       {interviews.isPending ? (
-        <LoadingBlock label="Loading interviews…" />
+        <LoadingRegion label="Loading interviews">
+          {[0, 1].map(i => (
+            <div key={i} className="c-skel-row">
+              <Skeleton width={240} height={12} />
+              <Skeleton width={180} height={10} />
+            </div>
+          ))}
+        </LoadingRegion>
       ) : interviews.isError ? (
-        <ErrorBlock error={interviews.error} onRetry={() => void interviews.refetch()} />
+        <ErrorState error={interviews.error} onRetry={() => void interviews.refetch()} title="Interviews could not be loaded" />
       ) : all.length === 0 ? (
-        <EmptyState icon="◷" title="No interviews scheduled">
-          When an employer schedules an interview, it appears here and you receive a notification.
-        </EmptyState>
+        <EmptyState
+          icon={CalendarClock}
+          title="No interviews yet"
+          description="When an employer schedules one, it appears here and in your overview, with a calendar file and the meeting link."
+        />
       ) : (
         <>
           <Section title="Upcoming" id="upcoming">
-            {upcoming.length === 0 ? <p className="muted">No upcoming interviews.</p> : <InterviewList interviews={upcoming} />}
+            {upcoming.length === 0 ? <p className="c-muted">No upcoming interviews.</p> : <InterviewRows interviews={upcoming} />}
           </Section>
           {past.length > 0 && (
             <Section title="Past and cancelled" id="past">
-              <InterviewList interviews={past} />
+              <InterviewRows interviews={past} past />
             </Section>
           )}
         </>
@@ -54,37 +56,57 @@ export function InterviewsPage() {
   )
 }
 
-function InterviewList({ interviews }: { interviews: CandidateInterview[] }) {
+function InterviewRows({ interviews, past }: { interviews: CandidateInterview[]; past?: boolean }) {
   return (
-    <ul className="plain-list card-list">
-      {interviews.map(interview => (
-        <li key={interview.id} className="list-card interview-card">
-          <div>
-            <span className={`ws-status ws-${interview.status.toLowerCase()}`}>{humanize(interview.status)}</span>
-            <h3 className="card-title">{interview.jobTitle}</h3>
-            <p>
-              <time dateTime={interview.scheduledAt}>{formatLongDateTime(interview.scheduledAt)}</time>
-              <span className="muted">
-                {' '}
-                – {formatTime(new Date(endOf(interview)))} ({interview.durationMinutes} minutes)
-              </span>
-            </p>
-            {interview.location && (
-              <p className="muted break-anywhere">
-                Where:{' '}
-                {isHttpUrl(interview.location) ? (
-                  <a href={interview.location} target="_blank" rel="noopener noreferrer">
-                    {interview.location}
-                    <span className="visually-hidden"> (opens in a new tab)</span>
-                  </a>
-                ) : (
-                  interview.location
-                )}
+    <ul className="c-rows" data-closed="">
+      {interviews.map(i => {
+        const start = new Date(i.scheduledAt)
+        const r = timeRange(i.scheduledAt, i.durationMinutes)
+        const link = i.location && isHttpUrl(i.location) ? i.location : null
+        const live = Date.now() >= start.getTime() - 15 * 60_000 && Date.now() <= interviewEnd(i)
+        return (
+          <li key={i.id} className="iv-row" data-past={past || undefined}>
+            <span className="iv-date" aria-hidden="true">
+              <span className="iv-date-m">{new Intl.DateTimeFormat('en-IN', { month: 'short' }).format(start)}</span>
+              <span className="iv-date-d numeric">{start.getDate()}</span>
+            </span>
+            <div className="iv-main">
+              <p className="t-strong">{i.jobTitle}</p>
+              <p className="c-meta-line">
+                <span>
+                  <time dateTime={i.scheduledAt}>
+                    {r.day}, {r.time}
+                  </time>
+                </span>
+                <span>{i.durationMinutes} minutes</span>
+                {!past && <span>{relativeTime(i.scheduledAt)}</span>}
+                {i.location && !link && <span>{i.location}</span>}
               </p>
+              {(past || i.status !== 'SCHEDULED') && (
+                <span>
+                  <Badge tone="neutral" variant={i.status === 'CANCELLED' ? 'struck' : 'solid'}>
+                    {humanize(i.status)}
+                  </Badge>
+                </span>
+              )}
+            </div>
+            {!past && (
+              <div className="iv-actions">
+                <Button size="sm" icon={Calendar} onClick={() => downloadInterviewIcs(i, i.jobTitle)}>
+                  Add to calendar<span className="sr-only">: {i.jobTitle} interview</span>
+                </Button>
+                {link && (
+                  <a {...buttonProps(live ? 'primary' : 'secondary', 'sm')} href={link} target="_blank" rel="noopener noreferrer">
+                    Join
+                    <Icon icon={ArrowUpRight} size={14} />
+                    <span className="sr-only"> the {i.jobTitle} interview (opens in a new tab)</span>
+                  </a>
+                )}
+              </div>
             )}
-          </div>
-        </li>
-      ))}
+          </li>
+        )
+      })}
     </ul>
   )
 }

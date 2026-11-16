@@ -1,33 +1,39 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, type ComponentType } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ApiError } from './api/client'
 import { AuthProvider } from './auth/AuthProvider'
 import { PublicOnly, RequireAuth } from './auth/guards'
 import { Layout } from './components/Layout'
-import { NoticeProvider } from './components/Notices'
 import { ToastProvider } from './design/components'
-import { ApplicationDetailPage } from './pages/ApplicationDetailPage'
-import { ApplicationsPage } from './pages/ApplicationsPage'
 import { AuthLayout } from './pages/auth/AuthLayout'
-import { ForgotPasswordPage } from './pages/auth/ForgotPasswordPage'
 import { LoginPage } from './pages/auth/LoginPage'
-import { RegisterPage } from './pages/auth/RegisterPage'
-import { ResetPasswordPage } from './pages/auth/ResetPasswordPage'
-import { VerifyEmailPage } from './pages/auth/VerifyEmailPage'
-import { EvidencePage } from './pages/EvidencePage'
-import { InterviewsPage } from './pages/InterviewsPage'
-import { JobDetailPage } from './pages/JobDetailPage'
-import { JobsPage } from './pages/JobsPage'
-import { NotFoundPage } from './pages/NotFoundPage'
-import { NotificationsPage } from './pages/NotificationsPage'
-import { PrivacyPage } from './pages/PrivacyPage'
-import { ProfilePage } from './pages/ProfilePage'
-import { RefereePage } from './pages/RefereePage'
-import { ResumesPage } from './pages/ResumesPage'
-import { VerificationPage } from './pages/VerificationPage'
-import { WorkSampleResponsePage } from './pages/WorkSampleResponsePage'
-import { WorkSamplesPage } from './pages/WorkSamplesPage'
+
+/** Route-level code splitting (DESIGN_SYSTEM §13 budget): each page loads on first visit; the shell stays put. */
+function page<K extends string>(load: () => Promise<Record<K, ComponentType>>, name: K) {
+  return lazy(() => load().then(m => ({ default: m[name] })))
+}
+
+const RegisterPage = page(() => import('./pages/auth/RegisterPage'), 'RegisterPage')
+const ForgotPasswordPage = page(() => import('./pages/auth/ForgotPasswordPage'), 'ForgotPasswordPage')
+const ResetPasswordPage = page(() => import('./pages/auth/ResetPasswordPage'), 'ResetPasswordPage')
+const VerifyEmailPage = page(() => import('./pages/auth/VerifyEmailPage'), 'VerifyEmailPage')
+const HomePage = page(() => import('./pages/HomePage'), 'HomePage')
+const JobsPage = page(() => import('./pages/JobsPage'), 'JobsPage')
+const JobDetailPage = page(() => import('./pages/JobDetailPage'), 'JobDetailPage')
+const ApplicationsPage = page(() => import('./pages/ApplicationsPage'), 'ApplicationsPage')
+const ApplicationDetailPage = page(() => import('./pages/ApplicationDetailPage'), 'ApplicationDetailPage')
+const ResumesPage = page(() => import('./pages/ResumesPage'), 'ResumesPage')
+const EvidencePage = page(() => import('./pages/EvidencePage'), 'EvidencePage')
+const VerificationPage = page(() => import('./pages/VerificationPage'), 'VerificationPage')
+const WorkSamplesPage = page(() => import('./pages/WorkSamplesPage'), 'WorkSamplesPage')
+const WorkSampleResponsePage = page(() => import('./pages/WorkSampleResponsePage'), 'WorkSampleResponsePage')
+const InterviewsPage = page(() => import('./pages/InterviewsPage'), 'InterviewsPage')
+const NotificationsPage = page(() => import('./pages/NotificationsPage'), 'NotificationsPage')
+const ProfilePage = page(() => import('./pages/ProfilePage'), 'ProfilePage')
+const PrivacyPage = page(() => import('./pages/PrivacyPage'), 'PrivacyPage')
+const RefereePage = page(() => import('./pages/RefereePage'), 'RefereePage')
+const NotFoundPage = page(() => import('./pages/NotFoundPage'), 'NotFoundPage')
 
 // Living style guide (hidden route, not linked from navigation). Lazy, so it never weighs on the app bundle.
 const DesignGallery = lazy(() => import('./design/gallery/DesignGallery'))
@@ -50,7 +56,6 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ToastProvider>
-        <NoticeProvider>
           <AuthProvider>
             <Routes>
               <Route
@@ -73,11 +78,19 @@ export default function App() {
               </Route>
 
               {/* The referee's page: no sign-in, outside the candidate layout. */}
-              <Route path="/reference/:token" element={<RefereePage />} />
+              <Route
+                path="/reference/:token"
+                element={
+                  <Suspense fallback={null}>
+                    <RefereePage />
+                  </Suspense>
+                }
+              />
 
               <Route element={<RequireAuth />}>
                 <Route element={<Layout />}>
-                  <Route path="/" element={<Navigate to="/jobs" replace />} />
+                  <Route path="/" element={<Navigate to="/home" replace />} />
+                  <Route path="/home" element={<HomePage />} />
                   <Route path="/jobs" element={<JobsPage />} />
                   <Route path="/jobs/:id" element={<JobDetailPage />} />
                   <Route path="/applications" element={<ApplicationsPage />} />
@@ -96,7 +109,6 @@ export default function App() {
               </Route>
             </Routes>
           </AuthProvider>
-        </NoticeProvider>
         </ToastProvider>
       </BrowserRouter>
     </QueryClientProvider>

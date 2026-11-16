@@ -108,3 +108,13 @@ export function describeDuration(totalSeconds: number): string {
 export function initials(firstName?: string | null, lastName?: string | null): string {
   return `${firstName?.trim()[0] ?? ''}${lastName?.trim()[0] ?? ''}`.toUpperCase() || 'C'
 }
+
+/** "Closes today" / "Closes in 3 days" / "Closes in 2 weeks" (long words, unlike the compact relative time). */
+export function closesIn(deadline: string | Date, now = Date.now()): string {
+  const days = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000)
+  if (days < 0) return 'Closed'
+  if (days === 0) return 'Closes today'
+  if (days === 1) return 'Closes tomorrow'
+  if (days < 14) return `Closes in ${days} days`
+  return `Closes in ${Math.round(days / 7)} weeks`
+}

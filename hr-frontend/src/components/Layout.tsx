@@ -8,10 +8,12 @@ import { Capability } from '../auth/permissions'
 import brand from '../design/brand/active'
 import { AccountMenu, AppShell, Tooltip, type NavGroup, type NavItem } from '../design/components'
 import {
-  BadgeCheck, Bell, BriefcaseBusiness, Building2, CalendarClock, Icon, Inbox, KeyRound, LadderMark, LayoutGrid, MailPlus,
+  BadgeCheck, Bell, BriefcaseBusiness, Building2, CalendarClock, Icon, Inbox, KeyRound, LadderMark, LayoutGrid, ListChecks, MailPlus,
   Scale, ScrollText, ShieldCheck, Users,
 } from '../design/icons'
 import { fullName, roleLabel } from '../lib/format'
+import { readFlag } from '../lib/lastSeen'
+import { SETUP_HIDDEN_FLAG, useSetupProgress } from '../pages/home/setup'
 
 type StaffNavItem = NavItem & { capability: Capability }
 
@@ -65,6 +67,12 @@ export function AppLayout() {
 
   const allowed = (items: StaffNavItem[]) => items.filter(item => can(item.capability))
   const workspace = allowed(WORKSPACE_NAV)
+  // First run (admins): "Get started" with the number of open set-up steps, until done or hidden.
+  const setupVisible = can('admin') && !readFlag(SETUP_HIDDEN_FLAG)
+  const setup = useSetupProgress(setupVisible)
+  if (setupVisible && setup.open > 0) {
+    workspace.unshift({ to: '/welcome', label: 'Get started', icon: ListChecks, capability: 'admin', count: setup.open, countLabel: 'steps left' })
+  }
   if (can('account')) workspace.push({ to: '/notifications', label: 'Inbox', icon: Inbox, capability: 'account', count: unread, countLabel: 'unread' })
   const admin = allowed(ADMIN_NAV)
   const nav: NavGroup[] = [

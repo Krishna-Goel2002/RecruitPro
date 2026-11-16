@@ -127,9 +127,9 @@ const references = [
 ]
 
 const notifications = [
-  { id: 1, template: 'APPLICATION_UPDATE', subject: 'You were shortlisted for Senior Backend Engineer', body: 'Northwind Labs moved your application forward. Next: a work sample.', createdAt: ago(20), readAt: null },
-  { id: 2, template: 'WORK_SAMPLE_ASSIGNED', subject: 'New work sample: Design an idempotent refunds endpoint', body: 'Start by ' + new Date(Date.now() + 52 * 3600e3).toDateString() + '. 90 minutes once started.', createdAt: ago(19), readAt: null },
-  { id: 3, template: 'VERIFICATION_READY', subject: 'Your GitHub check finished', body: '4 results are waiting for your review.', createdAt: ago(26), readAt: ago(25) },
+  { id: 1, template: 'APPLICATION_STATUS_CHANGED', subject: 'Update on your application for Senior Backend Engineer', body: 'Northwind Labs moved your application forward. Next: a work sample.', createdAt: ago(20), readAt: null },
+  { id: 2, template: 'WORK_SAMPLE_ASSIGNED', subject: 'A work sample is waiting for you: Design an idempotent refunds endpoint', body: 'Start by ' + new Date(Date.now() + 52 * 3600e3).toDateString() + '. 90 minutes once started.', createdAt: ago(19), readAt: null },
+  { id: 3, template: 'VERIFICATION_READY', subject: 'Your verification results are ready', body: '4 results are waiting for your review.', createdAt: ago(26), readAt: ago(25) },
 ]
 
 const profile = {
@@ -162,6 +162,10 @@ export const routes = [
   route('GET', '/candidates/me/verification/ledger', ledger),
   route('GET', '/candidates/me/verification/verdicts/(\\d+)', verdictDetail),
   route('GET', '/candidates/me/verification/references', references),
+  route('POST', '/jobs/(\\d+)/applications', ({ match }) => ({ ...applications[1], id: 3100, jobId: Number(match[1]), jobTitle: jobs.find((j) => j.id === Number(match[1]))?.title ?? 'Job', status: 'SUBMITTED', appliedAt: ago(0) })),
+  route('POST', '/candidates/me/resumes', { ...resumes[0], id: 72, uploadedAt: ago(0) }),
+  route('PATCH', '/me/notifications/(\\d+)/read', null),
+  route('POST', '/me/notifications/read-all', null),
   route('GET', '/public/references/([^/]+)', ({ match }) => (match[1] === 'expired'
     ? fail(410, 'This request is closed.')
     : { candidateFirstName: 'Meera', relationship: 'MANAGER', employerName: 'Finlytic', expiresAt: ahead(24 * 13), claims: [
@@ -182,6 +186,34 @@ const clickText = (text) => async (p) => {
   await new Promise((r) => setTimeout(r, 700))
 }
 
+const clickSel = (sel) => async (p) => {
+  await p.evaluate((q) => document.querySelector(q)?.click(), sel)
+  await new Promise((r) => setTimeout(r, 500))
+}
+
+
+const typeInto = (sel, text) => async (p) => {
+  await p.focus(sel)
+  await p.keyboard.type(text)
+  await new Promise((r) => setTimeout(r, 500))
+}
+
+// A brand-new account: nothing uploaded, nothing applied, email not confirmed.
+const freshUser = [
+  route('GET', '/candidates/me/resumes', []),
+  route('GET', '/candidates/me/applications', page([], { size: 10 })),
+  route('GET', '/candidates/me/verification/sources', []),
+  route('GET', '/candidates/me/verification/ledger', []),
+  route('GET', '/candidates/me/verification/references', []),
+  route('GET', '/candidates/me/work-samples', []),
+  route('GET', '/candidates/me/interviews', []),
+  route('GET', '/candidates/me/claims', []),
+  route('GET', '/me/notifications', page([], { size: 20 })),
+  route('GET', '/me/notifications/unread-count', { count: 0 }),
+]
+const started = (minutesLeft) => [route('GET', '/candidates/me/work-samples', [{ ...workSamples[0], status: 'STARTED', startedAt: ago((90 - minutesLeft) / 60), deadlineAt: ahead(minutesLeft / 60), instructions: 'Design a POST /refunds endpoint that is safe to retry.\n\n1. Describe the request and response shapes.\n2. Explain how you make it idempotent (keys, storage, expiry).\n3. List the failure cases you would test.\n\nA short design note is enough; diagrams are welcome as attachments.' }])]
+const runningSources = [route('GET', '/candidates/me/verification/sources', [{ ...sources[0], lastRun: { id: 9002, status: 'RUNNING', finishedAt: null, errorCode: null } }, sources[1]])]
+
 export const screens = [
   // Living style guide (src/design/gallery): every design-system component in the current theme.
   { name: 'design-system', path: '/__design', anonymous: true, settle: 900 },
@@ -191,13 +223,23 @@ export const screens = [
   { name: 'jobs-empty', path: '/jobs?search=zzzz' },
   { name: 'jobs-loading', path: '/jobs', waitUntil: 'domcontentloaded', settle: 1200, override: [route('GET', '/jobs', delayed(20000, page([], { size: 10 })))] },
   { name: 'job-detail', path: '/jobs/101' },
-  { name: 'apply-dialog', path: '/jobs/101', action: clickText('Apply now') },
+  { name: 'apply-dialog', path: '/jobs/102', action: clickText('Apply for this role') },
+  { name: 'apply-review', path: '/jobs/102', action: async (p) => { await clickText('Apply for this role')(p); await clickText('Review application')(p) } },
+  { name: 'apply-sent', path: '/jobs/102', action: async (p) => { await clickText('Apply for this role')(p); await clickText('Review application')(p); await clickText('Submit application')(p) } },
+  { name: 'apply-no-resume', path: '/jobs/102', override: [route('GET', '/candidates/me/resumes', [])], action: clickText('Apply for this role') },
+  { name: 'job-detail-new', path: '/jobs/102' },
+  { name: 'job-detail-closed', path: '/jobs/999' },
+  { name: 'jobs-filters-sheet', path: '/jobs', action: clickText('Filters') },
+  { name: 'applications-empty', path: '/applications', override: [route('GET', '/candidates/me/applications', page([], { size: 10 })), route('GET', '/candidates/me/resumes', [])] },
+  { name: 'application-interview', path: '/applications/3002', override: [route('GET', '/candidates/me/applications/(\\d+)', { ...applicationDetail, id: 3002, status: 'INTERVIEWING', workSamples: [{ ...workSamples[0], status: 'SUBMITTED', submittedAt: ago(30) }] })] },
+  { name: 'application-withdrawn', path: '/applications/2990', override: [route('GET', '/candidates/me/applications/(\\d+)', { ...applicationDetail, id: 2990, status: 'WITHDRAWN', requirements: null, workSamples: [], interviews: [], timeline: [{ status: 'SUBMITTED', at: ago(24 * 40) }, { status: 'WITHDRAWN', at: ago(24 * 30) }] })] },
+  { name: 'application-withdraw-confirm', path: '/applications/3001', action: async (p) => { await clickSel('[aria-label="More actions"]')(p); await clickSel('[role="menuitem"]')(p) } },
   { name: 'applications', path: '/applications' },
   { name: 'application-detail', path: '/applications/3001' },
   { name: 'resumes', path: '/resumes' },
   { name: 'evidence', path: '/evidence' },
   { name: 'verification', path: '/verification' },
-  { name: 'verdict-detail', path: '/verification', action: clickText('Partly verified') },
+  { name: 'verdict-detail', path: '/verification?review=7002', settle: 900 },
   { name: 'work-samples', path: '/work-samples' },
   { name: 'work-sample-start', path: '/work-samples/801' },
   { name: 'interviews', path: '/interviews' },
@@ -206,5 +248,52 @@ export const screens = [
   { name: 'privacy', path: '/privacy' },
   { name: 'referee', path: '/reference/tok-demo', anonymous: true },
   { name: 'referee-closed', path: '/reference/expired', anonymous: true },
+  // Overview
+  { name: 'home', path: '/home', settle: 800 },
+  { name: 'home-new', path: '/home', override: freshUser, settle: 800 },
+  { name: 'home-reading', path: '/home', override: [route('GET', '/candidates/me/applications', page([], { size: 10 })), route('GET', '/candidates/me/verification/sources', []), route('GET', '/candidates/me/resumes/(\\d+)/analysis', { ...analysis, status: 'PROCESSING', facts: [] })], settle: 800 },
+  // Strengthen
+  { name: 'verification-empty', path: '/verification', override: freshUser },
+  { name: 'verification-running', path: '/verification', override: runningSources },
+  { name: 'add-source-choose', path: '/verification?add=source&step=choose', settle: 800 },
+  { name: 'add-source-connect', path: '/verification?add=source&step=connect&kind=GITHUB', settle: 800 },
+  { name: 'add-source-connect-website', path: '/verification?add=source&step=connect&kind=WEBSITE', action: clickText('Connect'), settle: 800 },
+  { name: 'add-source-prove', path: '/verification?add=source&step=prove&kind=WEBSITE&source=42', settle: 800 },
+  { name: 'add-source-check', path: '/verification?add=source&step=check&kind=GITHUB&source=41', settle: 800 },
+  { name: 'add-source-running', path: '/verification?add=source&step=check&kind=GITHUB&source=41', override: runningSources, settle: 800 },
+  { name: 'reference-drawer', path: '/verification?ask=reference', settle: 800 },
+  // Resume
+  { name: 'resumes-reading', path: '/resumes', override: [route('GET', '/candidates/me/resumes/(\\d+)/analysis', { ...analysis, status: 'PROCESSING', facts: [], flags: [] })] },
+  { name: 'resumes-failed', path: '/resumes', override: [route('GET', '/candidates/me/resumes/(\\d+)/analysis', { ...analysis, status: 'FAILED', errorCode: 'ENCRYPTED_PDF', facts: [], flags: [] })] },
+  { name: 'resumes-empty', path: '/resumes', override: [route('GET', '/candidates/me/resumes', [])] },
+  { name: 'resume-correction', path: '/resumes', action: clickText('Suggest a correction') },
+  // Claims
+  { name: 'evidence-empty', path: '/evidence', override: [route('GET', '/candidates/me/claims', [])] },
+  { name: 'evidence-add', path: '/evidence', action: clickText('Add a claim'), settle: 600 },
+  // Work samples
+  { name: 'work-sample-started', path: '/work-samples/801', override: started(42) },
+  { name: 'work-sample-final', path: '/work-samples/801', override: started(0.8) },
+  { name: 'work-sample-submitted', path: '/work-samples/801', override: [route('GET', '/candidates/me/work-samples', [{ ...workSamples[0], status: 'SUBMITTED', startedAt: ago(3), submittedAt: ago(2), files: [{ id: 1, originalName: 'refunds-design.pdf', contentType: 'application/pdf', sizeBytes: 248000, sha256: 'ab', uploadedAt: ago(2) }] }])] },
+  { name: 'work-sample-expired', path: '/work-samples/801', override: [route('GET', '/candidates/me/work-samples', [{ ...workSamples[0], status: 'EXPIRED', dueAt: ago(5) }])] },
+  { name: 'work-samples-empty', path: '/work-samples', override: [route('GET', '/candidates/me/work-samples', [])] },
+  // Interviews, inbox, profile
+  { name: 'interviews-empty', path: '/interviews', override: [route('GET', '/candidates/me/interviews', [])] },
+  { name: 'notifications-empty', path: '/notifications', override: freshUser },
+  { name: 'profile-dirty', path: '/profile', action: typeInto('input[autocomplete="address-level2"]', ' East') },
+  { name: 'not-found', path: '/no-such-page' },
+  // Referee
+  { name: 'referee-invalid', path: '/reference/unknown-token', anonymous: true, override: [route('GET', '/public/references/unknown-token', fail(404, 'Not found.'))] },
+  { name: 'referee-missing', path: '/reference/tok-demo', anonymous: true, action: clickText('Send answers') },
+  // Auth states
+  { name: 'login-validation', path: '/login', anonymous: true, action: async (p) => { await clickText('Sign in')(p) } },
+  { name: 'forgot-password', path: '/forgot-password', anonymous: true },
+  { name: 'reset-password', path: '/reset-password?token=abc', anonymous: true },
+  { name: 'verify-email-failed', path: '/verify-email?token=used', anonymous: true, override: [route('POST', '/auth/verify-email', fail(400, 'This link has already been used.'))] },
+  // Loading skeletons (answers held back)
+  { name: 'home-loading', path: '/home', waitUntil: 'domcontentloaded', settle: 1400, override: [route('GET', '/candidates/me/verification/ledger', delayed(20000, []))] },
+  { name: 'verification-loading', path: '/verification', waitUntil: 'domcontentloaded', settle: 1400, override: [route('GET', '/candidates/me/verification/ledger', delayed(20000, []))] },
+  { name: 'application-loading', path: '/applications/3001', waitUntil: 'domcontentloaded', settle: 1400, override: [route('GET', '/candidates/me/applications/(\\d+)', delayed(20000, applicationDetail))] },
+  { name: 'resumes-loading', path: '/resumes', waitUntil: 'domcontentloaded', settle: 1400, override: [route('GET', '/candidates/me/resumes', delayed(20000, resumes))] },
+  { name: 'error-verification', path: '/verification', override: [route('GET', '/candidates/me/verification/ledger', fail(503, 'The service is unavailable.'))] },
   { name: 'error-jobs', path: '/jobs', override: [route('GET', '/jobs', fail(503, 'The service is unavailable.'))] },
 ]

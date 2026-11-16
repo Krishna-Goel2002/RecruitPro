@@ -1,178 +1,147 @@
-import { useId, useState, type FormEvent } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { errorMessage } from '../../api/client'
 import { resumesApi } from '../../api/endpoints'
 import { queryKeys } from '../../api/queryKeys'
 import type { Resume, ResumeAnalysis, ResumeFact } from '../../api/types'
-import { TierBadge } from '../../components/Badges'
-import { ErrorBlock, FormError, LoadingBlock, Spinner } from '../../components/Feedback'
+import { ErrorState, FormError } from '../../components/Feedback'
 import { useNotify } from '../../components/Notices'
-import { formatDateTime } from '../../lib/format'
-import { CLAIM_LABEL, FACT_GROUPS, analysisErrorText, explainFlag, humanize } from '../../lib/labels'
+import { Alert, Button, EvidenceLadder, Field, LoadingRegion, ProvenanceLine, Quote, Skeleton, SkeletonText, Textarea } from '../../design/components'
+import { Pencil, RefreshCw, ScrollText } from '../../design/icons'
+import { formatDate } from '../../design/lib/format'
+import { stagger } from '../../design/motion'
+import { FACT_GROUPS, analysisErrorText, explainFlag, humanize } from '../../lib/labels'
 import type { useResumeAnalysis } from './useResumeAnalysis'
 
 type AnalysisHook = ReturnType<typeof useResumeAnalysis>
 
 const FACT_MAX = 1000
 
+/** The analysis of one resume: a status line, notes about the file, and "What we read" grouped by kind. */
 export function AnalysisPanel({ resume, analysis }: { resume: Resume; analysis: AnalysisHook }) {
   const { query, stalled, checkAgain } = analysis
   const notify = useNotify()
-
   const retry = useMutation({
     mutationFn: () => resumesApi.retryAnalysis(resume.id),
     onSuccess: () => {
-      notify('success', 'Analysis queued again. This page will update when it finishes.')
+      notify('success', 'Analysis queued again', { body: 'This page updates when it finishes.' })
       checkAgain()
     },
   })
 
-  if (query.isPending) return <LoadingBlock label="Loading analysis…" />
-  if (query.isError) return <ErrorBlock error={query.error} title="Analysis unavailable" onRetry={() => void query.refetch()} />
+  if (query.isPending) {
+    return (
+      <LoadingRegion label="Loading the analysis">
+        <Skeleton width="100%" height={44} style={{ borderRadius: 6 }} />
+        <div style={{ marginTop: 24 }}>
+          <SkeletonText lines={4} />
+        </div>
+      </LoadingRegion>
+    )
+  }
+  if (query.isError) return <ErrorState error={query.error} title="The analysis could not be loaded" onRetry={() => void query.refetch()} />
 
   const data = query.data
+  const done = data.status === 'COMPLETED' || data.status === 'PARTIAL'
   return (
-    <div className="analysis">
-      <StatusBanner
-        analysis={data}
-        stalled={stalled}
-        checking={query.isFetching}
-        onCheckAgain={checkAgain}
-        onRetry={() => retry.mutate()}
-        retrying={retry.isPending}
-      />
+    <div className="r-panel">
+      <StatusLine analysis={data} stalled={stalled} checking={query.isFetching} onCheckAgain={checkAgain} onRetry={() => retry.mutate()} retrying={retry.isPending} />
       <FormError error={retry.error} />
       {data.flags && data.flags.length > 0 && (
-        <section className="flag-list" aria-label="Notes about this file">
-          <h3 className="subheading">Notes about this file</h3>
-          <ul className="plain-list">
+        <details className="r-flags">
+          <summary>
+            Notes about this file <span className="numeric">({data.flags.length})</span>
+          </summary>
+          <ul>
             {data.flags.map((flag, index) => {
               const explanation = explainFlag(flag.code, flag.detail)
               return (
-                <li key={`${flag.code}-${index}`} className="flag-item">
-                  <strong>{explanation.title}</strong>
-                  <p>{explanation.text}</p>
-                  {flag.detail && explanation.text !== flag.detail && <p className="muted">Detail: {flag.detail}</p>}
+                <li key={`${flag.code}-${index}`}>
+                  <p className="t-strong">{explanation.title}</p>
+                  <p className="c-muted">{explanation.text}</p>
                 </li>
               )
             })}
           </ul>
-        </section>
+        </details>
       )}
-      {(data.status === 'COMPLETED' || data.status === 'PARTIAL') && <FactGroups resumeId={resume.id} facts={data.facts} />}
+      {(data.status === 'PENDING' || data.status === 'PROCESSING') && !stalled && (
+        <div className="r-reading" aria-hidden="true">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="c-skel-row">
+              <Skeleton width={[160, 220, 120][i]} height={12} />
+              <Skeleton width="80%" height={10} />
+            </div>
+          ))}
+        </div>
+      )}
+      {done && <FactGroups resumeId={resume.id} facts={data.facts} />}
     </div>
   )
 }
 
-function StatusBanner({
-  analysis,
-  stalled,
-  checking,
-  onCheckAgain,
-  onRetry,
-  retrying,
-}: {
-  analysis: ResumeAnalysis
-  stalled: boolean
-  checking: boolean
-  onCheckAgain: () => void
-  onRetry: () => void
-  retrying: boolean
-}) {
+function StatusLine({
+  analysis, stalled, checking, onCheckAgain, onRetry, retrying,
+}: { analysis: ResumeAnalysis; stalled: boolean; checking: boolean; onCheckAgain: () => void; onRetry: () => void; retrying: boolean }) {
   switch (analysis.status) {
     case 'PENDING':
     case 'PROCESSING':
-      return (
-        <div className="state-banner state-pending">
-          <div className="state-banner-icon" aria-hidden="true">
-            {stalled ? '◷' : <Spinner small />}
-          </div>
-          <div>
-            <strong>{analysis.status === 'PENDING' ? 'Queued for analysis' : 'Reading your resume'}</strong>
-            {stalled ? (
-              <>
-                <p>
-                  This is taking longer than usual. The queue may be busy or the analysis service may be restarting; it
-                  retries automatically. Check again in a minute.
-                </p>
-                <button type="button" className="quiet-button" onClick={onCheckAgain} disabled={checking}>
-                  {checking ? 'Checking…' : 'Check again'}
-                </button>
-              </>
-            ) : (
-              <p>This usually takes a few seconds. The page updates by itself.</p>
-            )}
-          </div>
-        </div>
+      return stalled ? (
+        <Alert
+          tone="info"
+          title="This is taking longer than usual"
+          action={
+            <Button size="sm" icon={RefreshCw} loading={checking} onClick={onCheckAgain}>
+              Check again
+            </Button>
+          }
+        >
+          The queue may be busy or the analysis service restarting; it retries by itself. Check again in a minute.
+        </Alert>
+      ) : (
+        <Alert tone="info" title={analysis.status === 'PENDING' ? 'Queued for analysis' : 'Reading your resume'}>
+          This usually takes a few seconds. The page updates by itself.
+        </Alert>
       )
     case 'COMPLETED':
       return (
-        <div className="state-banner state-completed">
-          <div className="state-banner-icon" aria-hidden="true">
-            ✓
-          </div>
-          <div>
-            <strong>Analysis ready</strong>
-            <p>
-              Check what was read from your resume{analysis.analyzedAt ? ` (${formatDateTime(analysis.analyzedAt)})` : ''}. If
-              something is wrong, suggest a correction.
-            </p>
-          </div>
-        </div>
+        <Alert tone="success" title="Analysis ready">
+          Read {analysis.analyzedAt ? formatDate(analysis.analyzedAt, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : 'just now'}. If
+          something is wrong, suggest a correction on that line.
+        </Alert>
       )
     case 'PARTIAL':
       return (
-        <div className="state-banner state-partial">
-          <div className="state-banner-icon" aria-hidden="true">
-            ℹ
-          </div>
-          <div>
-            <strong>Some details were read</strong>
-            <p>Not everything could be structured automatically. Add anything missing on the Evidence page.</p>
-          </div>
-        </div>
+        <Alert tone="warning" title="Some details were read">
+          Not everything could be structured automatically. Add anything missing as a claim.
+        </Alert>
       )
     case 'NEEDS_OCR':
       return (
-        <div className="state-banner state-warning">
-          <div className="state-banner-icon" aria-hidden="true">
-            ▧
-          </div>
-          <div>
-            <strong>This looks like a scanned document</strong>
-            <p>
-              The file has no selectable text, so details could not be read automatically. Recruiters can still open the
-              file. For automatic matching, upload a PDF exported from a word processor, or a .docx file.
-            </p>
-          </div>
-        </div>
+        <Alert tone="warning" title="This looks like a scanned document">
+          The file has no selectable text, so details could not be read automatically. Recruiters can still open it. For automatic matching, upload a PDF
+          exported from a word processor, or a .docx file.
+        </Alert>
       )
     case 'UNSUPPORTED_FORMAT':
       return (
-        <div className="state-banner state-warning">
-          <div className="state-banner-icon" aria-hidden="true">
-            !
-          </div>
-          <div>
-            <strong>This format cannot be analysed</strong>
-            <p>The file is stored and attached to your applications. Upload a PDF or .docx copy for automatic matching.</p>
-          </div>
-        </div>
+        <Alert tone="warning" title="This format cannot be analysed">
+          The file is stored and attached to your applications. Upload a PDF or .docx copy for automatic matching.
+        </Alert>
       )
     case 'FAILED':
       return (
-        <div className="state-banner state-failed">
-          <div className="state-banner-icon" aria-hidden="true">
-            ✕
-          </div>
-          <div>
-            <strong>Analysis failed</strong>
-            <p>{analysisErrorText(analysis.errorCode)} Your file is stored safely; you can try the analysis again.</p>
-            <button type="button" className="primary small" onClick={onRetry} disabled={retrying}>
-              {retrying ? 'Queuing…' : 'Retry analysis'}
-            </button>
-          </div>
-        </div>
+        <Alert
+          tone="danger"
+          title="Analysis failed"
+          action={
+            <Button size="sm" variant="primary" icon={RefreshCw} loading={retrying} onClick={onRetry}>
+              Retry analysis
+            </Button>
+          }
+        >
+          {analysisErrorText(analysis.errorCode)} Your file is stored safely.
+        </Alert>
       )
     default:
       return null
@@ -180,19 +149,24 @@ function StatusBanner({
 }
 
 function FactGroups({ resumeId, facts }: { resumeId: number; facts: ResumeFact[] }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (ref.current) stagger(ref.current.querySelectorAll<HTMLElement>('.r-fact'))
+    // First render of this resume's facts only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   if (facts.length === 0) {
-    return <p className="muted">No structured details were found in this resume. You can add them as claims on the Evidence page.</p>
+    return <p className="c-muted">No structured details were found in this resume. You can add them as claims.</p>
   }
   const known = new Set(FACT_GROUPS.flatMap(group => group.types))
   const other = facts.filter(fact => !known.has(fact.type))
   return (
-    <div className="fact-groups">
+    <div className="r-groups" ref={ref}>
       {FACT_GROUPS.map(group => {
         const groupFacts = facts.filter(fact => group.types.includes(fact.type))
         if (groupFacts.length === 0) return null
-        return (
-          <FactGroup key={group.key} title={group.label} resumeId={resumeId} facts={groupFacts} correctable={group.correctable} />
-        )
+        return <FactGroup key={group.key} title={group.label} resumeId={resumeId} facts={groupFacts} correctable={group.correctable} />
       })}
       {other.length > 0 && <FactGroup title="Other details" resumeId={resumeId} facts={other} correctable={false} />}
     </div>
@@ -202,48 +176,44 @@ function FactGroups({ resumeId, facts }: { resumeId: number; facts: ResumeFact[]
 function FactGroup({ title, resumeId, facts, correctable }: { title: string; resumeId: number; facts: ResumeFact[]; correctable: boolean }) {
   const headingId = useId()
   return (
-    <section className="fact-group" aria-labelledby={headingId}>
-      <h3 id={headingId} className="subheading">
-        {title} <span className="tab-count">{facts.length}</span>
+    <section className="r-group" aria-labelledby={headingId}>
+      <h3 id={headingId} className="r-group-title">
+        {title} <span className="numeric">· {facts.length}</span>
       </h3>
-      <ul className="fact-cards-grid plain-list">
+      <ul className="c-rows" role="list">
         {facts.map(fact => (
-          <li key={fact.id}>
-            <FactCard resumeId={resumeId} fact={fact} correctable={correctable} />
-          </li>
+          <FactRow key={fact.id} resumeId={resumeId} fact={fact} correctable={correctable} />
         ))}
       </ul>
     </section>
   )
 }
 
-/**
- * The candidate's claimed value, shown only when it differs from what the parser read. `claimedValue` is the
- * reviewed value, which equals the extracted value when a fact was merely confirmed; older responses only carry
- * a `value` that differs from `extractedValue`.
- */
+/** The candidate's claimed value, shown only when it differs from what the parser read. */
 function claimedValueOf(fact: ResumeFact): string | null {
   const candidate = fact.claimedValue ?? (fact.value !== fact.extractedValue ? fact.value : null)
   return candidate && candidate !== fact.extractedValue ? candidate : null
 }
 
-function FactCard({ resumeId, fact, correctable }: { resumeId: number; fact: ResumeFact; correctable: boolean }) {
+function FactRow({ resumeId, fact, correctable }: { resumeId: number; fact: ResumeFact; correctable: boolean }) {
   const queryClient = useQueryClient()
   const notify = useNotify()
-  const inputId = useId()
   const [editing, setEditing] = useState(false)
   const claimed = claimedValueOf(fact)
   const extracted = fact.extractedValue || fact.value
   const [draft, setDraft] = useState(claimed ?? extracted)
   const [validation, setValidation] = useState<string | null>(null)
+  const editRef = useRef<HTMLButtonElement>(null)
 
   const save = useMutation({
     mutationFn: (value: string) => resumesApi.suggestCorrection(resumeId, fact.id, { value }),
     onSuccess: () => {
       setEditing(false)
-      notify('success', 'Saved as your claim. Recruiters see it as unverified until they check it.')
+      notify('success', 'Saved as your claim', { body: 'Recruiters see it as unverified until it is checked. The text from your resume is kept.' })
       void queryClient.invalidateQueries({ queryKey: queryKeys.resumeAnalysis(resumeId) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.claims })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.verificationLedger })
+      window.setTimeout(() => editRef.current?.focus(), 0)
     },
   })
 
@@ -258,89 +228,86 @@ function FactCard({ resumeId, fact, correctable }: { resumeId: number; fact: Res
   }
 
   return (
-    <article className={`fact-card${claimed ? ' has-claim' : ''}`}>
-      <div className="fact-card-head">
-        <span className="fact-type-badge">{humanize(fact.type)}</span>
-        <TierBadge tier={fact.tier ?? 'RESUME_STATED'} />
-      </div>
-      <p className="fact-value">
-        <span className="visually-hidden">From your resume: </span>
-        {extracted}
-      </p>
-      {fact.evidence && (
-        <blockquote className="fact-evidence-quote">
-          <span className="visually-hidden">Text found{fact.sourceSection ? ` in the ${fact.sourceSection} section` : ''}: </span>
-          {fact.evidence}
-        </blockquote>
-      )}
-      {fact.sourceSection && <p className="fact-section-tag">Section: {humanize(fact.sourceSection)}</p>}
-
-      {claimed && !editing && (
-        <div className="fact-claim">
-          <span className="diff-label">{CLAIM_LABEL}</span>
-          <span className="claim-text">{claimed}</span>
-        </div>
-      )}
-
-      {editing ? (
-        <form className="fact-edit-panel" onSubmit={submit} noValidate>
-          <label htmlFor={inputId} className="fact-edit-label">
-            Your correction
-          </label>
-          <textarea
-            id={inputId}
-            className="fact-textarea"
-            rows={2}
-            maxLength={FACT_MAX}
-            value={draft}
-            aria-describedby={`${inputId}-hint`}
-            aria-invalid={validation ? true : undefined}
-            onChange={event => {
-              setDraft(event.target.value)
-              setValidation(null)
-            }}
-          />
-          <p id={`${inputId}-hint`} className="field-hint">
-            {CLAIM_LABEL}. The text read from your resume is kept as it is.
+    <li className="r-fact" data-editing={editing || undefined}>
+      <div className="r-fact-main">
+        <p className="r-fact-value">
+          <span className="sr-only">From your resume: </span>
+          {extracted}
+        </p>
+        {claimed && (
+          <p className="r-fact-claim">
+            <EvidenceLadder tier="SELF_CLAIMED" audience="candidate" animate={false} />
+            <span>{claimed}</span>
           </p>
-          {validation && (
-            <p className="field-error" role="alert">
-              {validation}
-            </p>
-          )}
-          {save.isError && <p className="field-error" role="alert">{errorMessage(save.error)}</p>}
-          <div className="fact-edit-actions">
-            <button type="submit" className="primary small" disabled={save.isPending}>
-              {save.isPending ? 'Saving…' : 'Save claim'}
-            </button>
-            <button
-              type="button"
-              className="quiet-button"
-              onClick={() => {
-                setEditing(false)
-                setValidation(null)
-                save.reset()
-              }}
-              disabled={save.isPending}
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : (
-        correctable && (
-          <button
-            type="button"
-            className="text-button inline"
+        )}
+        {fact.evidence && <Quote className="r-fact-quote">{fact.evidence}</Quote>}
+        <ProvenanceLine icon={ScrollText} source="Your resume" actor={fact.sourceSection ? `${humanize(fact.sourceSection)} section` : undefined} />
+      </div>
+      <div className="r-fact-side">
+        <EvidenceLadder tier={fact.tier ?? 'RESUME_STATED'} audience="candidate" />
+        {correctable && !editing && (
+          <Button
+            ref={editRef}
+            size="sm"
+            variant="ghost"
+            icon={Pencil}
             onClick={() => {
               setDraft(claimed ?? extracted)
               setEditing(true)
             }}
           >
-            Suggest a correction<span className="visually-hidden"> for {extracted}</span>
-          </button>
-        )
-      )}
-    </article>
+            Suggest a correction<span className="sr-only"> for {extracted}</span>
+          </Button>
+        )}
+      </div>
+      <div className="r-fact-edit" aria-hidden={!editing}>
+        <div>
+          {editing && (
+            <form onSubmit={submit} noValidate className="r-fact-form">
+              <Field label="Your correction" error={validation ?? undefined} hint="Saved as your claim. Recruiters see it as unverified until it is checked; the text read from your resume is kept as it is.">
+                <Textarea
+                  rows={2}
+                  maxLength={FACT_MAX}
+                  value={draft}
+                  autoFocus
+                  onChange={event => {
+                    setDraft(event.target.value)
+                    setValidation(null)
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      e.currentTarget.form?.requestSubmit()
+                    }
+                    if (e.key === 'Escape') {
+                      e.stopPropagation()
+                      setEditing(false)
+                    }
+                  }}
+                />
+              </Field>
+              {save.isError && <FormError error={errorMessage(save.error)} />}
+              <div className="r-fact-actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={save.isPending}
+                  onClick={() => {
+                    setEditing(false)
+                    setValidation(null)
+                    save.reset()
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" size="sm" loading={save.isPending}>
+                  Save as my claim
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </li>
   )
 }

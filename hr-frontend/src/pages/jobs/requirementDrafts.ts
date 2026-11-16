@@ -72,6 +72,50 @@ export function validateDrafts(drafts: RequirementDraft[]): Record<string, strin
       const years = Number(draft.minimumYears)
       if (!Number.isInteger(years) || years < 0 || years > 50) errors[draft.key] = 'Minimum years must be a whole number from 0 to 50.'
     }
+    if (!errors[draft.key] && draft.alternatives.some(alt => alt.length > 200)) errors[draft.key] = 'Keep each alternative under 200 characters.'
   })
   return errors
+}
+
+export const MAX_REQUIREMENTS = 100
+
+/** A gate on an "Other" requirement can never be verified (the engine never scores OTHER): it is switched off. */
+export function gateAllowed(draft: Pick<RequirementDraft, 'mandatory' | 'type'>): boolean {
+  return draft.mandatory && draft.type !== 'OTHER'
+}
+
+export type Check = { id: string; ok: boolean; text: string; step: 'basics' | 'requirements' }
+
+/** Pre-publish checks shown on the review step (each links back to the step that fixes it). */
+export function requirementChecks(drafts: RequirementDraft[], experienceLevel: string, deadline: string | null, warnings: number): Check[] {
+  const scored = drafts.filter(d => d.type !== 'OTHER')
+  const gates = drafts.filter(d => d.mandatory && d.knockout && gateAllowed(d))
+  const tooMany = drafts.filter(d => d.minimumYears !== '' && Number(d.minimumYears) > 10)
+  const juniorRole = experienceLevel === 'ENTRY' || experienceLevel === 'MID'
+  const checks: Check[] = [
+    {
+      id: 'reqs',
+      ok: scored.length > 0,
+      step: 'requirements',
+      text: scored.length > 0 ? `${scored.length} scored requirement${scored.length === 1 ? '' : 's'}` : 'No scored requirements: applicants cannot be ranked until you add some.',
+    },
+    {
+      id: 'must',
+      ok: drafts.some(d => d.mandatory),
+      step: 'requirements',
+      text: drafts.some(d => d.mandatory) ? 'At least one must-have' : 'No must-haves: every requirement counts the same.',
+    },
+    {
+      id: 'gates',
+      ok: true,
+      step: 'requirements',
+      text: gates.length ? `${gates.length} ranking gate${gates.length === 1 ? '' : 's'}: applicants stay in “Must-haves not yet verified” until each is verified. Nobody is rejected automatically.` : 'No ranking gates: everyone with a match result is ranked.',
+    },
+  ]
+  if (juniorRole && tooMany.length) {
+    checks.push({ id: 'years', ok: false, step: 'requirements', text: `More than 10 years asked on an ${experienceLevel === 'ENTRY' ? 'entry-level' : 'mid-level'} role (${tooMany.map(d => d.description || 'untitled').join(', ')}). This often excludes good candidates.` })
+  }
+  if (warnings > 0) checks.push({ id: 'wording', ok: false, step: 'basics', text: `${warnings} wording suggestion${warnings === 1 ? '' : 's'} from the description check are still open.` })
+  if (deadline && new Date(deadline).getTime() <= Date.now()) checks.push({ id: 'deadline', ok: false, step: 'basics', text: 'The deadline is in the past. Publishing needs a future deadline.' })
+  return checks
 }

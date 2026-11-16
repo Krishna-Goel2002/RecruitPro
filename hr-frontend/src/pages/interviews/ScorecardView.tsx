@@ -1,30 +1,41 @@
 import type { InterviewQuestion, Scorecard } from '../../api/types'
-import { formatDateTime, humanize } from '../../lib/format'
+import { relativeTime } from '../../design/lib/format'
+import './interviews.css'
 
-/** Read-only scorecard: recommendation, summary and each rating with its question text when the kit is known. */
+const REC: Record<string, string> = { STRONG_NO: 'Strong no', NO: 'No', YES: 'Yes', STRONG_YES: 'Strong yes' }
+
+/** Read-only scorecard: recommendation, summary, then each question with its rating and the anchor it matched. */
 export function ScorecardView({ scorecard, questions }: { scorecard: Scorecard; questions: InterviewQuestion[] }) {
   return (
-    <div className="scorecard-view">
-      <p className="scorecard-head">
-        <span className={`recommendation rec-${scorecard.recommendation.toLowerCase()}`}>{humanize(scorecard.recommendation)}</span>
-        <span className="item-meta">Submitted {formatDateTime(scorecard.submittedAt)}</span>
-      </p>
-      {scorecard.summary && <p className="description-text">{scorecard.summary}</p>}
-      <ol className="rating-list">
-        {scorecard.ratings.map(rating => {
-          const question = questions.find(item => item.id === rating.questionId)
-          return (
-            <li key={rating.questionId}>
-              <span className="rating-number" aria-label={`Rating ${rating.rating} of 4`}>{rating.rating}</span>
-              <span>
-                <strong>{question?.question ?? `Question ${rating.questionId}`}</strong>
-                {question && <span className="item-meta">Anchor: {question.anchors[String(rating.rating) as '1' | '2' | '3' | '4']}</span>}
-                {rating.notes && <span className="rating-notes">{rating.notes}</span>}
-              </span>
-            </li>
-          )
-        })}
-      </ol>
+    <div className="sc-view">
+      <div className="sc-view-head">
+        <span className="sc-rec" data-rec={scorecard.recommendation}>{REC[scorecard.recommendation] ?? scorecard.recommendation}</span>
+        <span className="sc-muted">
+          Submitted <time dateTime={scorecard.submittedAt}>{relativeTime(scorecard.submittedAt)}</time>
+          {(scorecard.revisionCount ?? 0) > 0 && <> · edited {scorecard.revisionCount} {scorecard.revisionCount === 1 ? 'time' : 'times'}</>}
+        </span>
+      </div>
+      {scorecard.summary && <p className="sc-summary">{scorecard.summary}</p>}
+      {scorecard.ratings.length > 0 && (
+        <ol className="sc-ratings">
+          {scorecard.ratings.map((r, i) => {
+            const q = questions.find(x => x.id === r.questionId)
+            return (
+              <li key={r.questionId}>
+                <span className="sc-pips" role="img" aria-label={`Rating ${r.rating} of 4`}>
+                  {[1, 2, 3, 4].map(n => <i key={n} data-on={n <= r.rating || undefined} />)}
+                  <b className="numeric">{r.rating}</b>
+                </span>
+                <div className="sc-rating-text">
+                  <p className="sc-q">{q?.question ?? `Question ${i + 1}`}</p>
+                  {q && <p className="sc-muted">Anchor: {q.anchors[String(r.rating) as '1' | '2' | '3' | '4']}</p>}
+                  {r.notes && <p className="sc-notes">{r.notes}</p>}
+                </div>
+              </li>
+            )
+          })}
+        </ol>
+      )}
     </div>
   )
 }

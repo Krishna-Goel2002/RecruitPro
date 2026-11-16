@@ -1,16 +1,19 @@
-import { FormEvent, useId, useState } from 'react'
+import { FormEvent, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { interviewsApi } from '../../api/assessments'
 import { errorMessage, isApiError } from '../../api/client'
 import { qk } from '../../api/queryKeys'
 import { ANCHOR_LEVELS, InterviewKit, InterviewQuestion, JobStaff, Requirement } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
-import { ConfirmDialog } from '../../components/Dialog'
-import { CloseIcon, PlusIcon, SparkIcon } from '../../components/Icons'
-import { useNotices } from '../../components/Notices'
-import { AnchorList } from '../../components/RatingScale'
-import { EmptyPanel, ErrorPanel, FormError, LoadingPanel } from '../../components/States'
-import { formatDateTime, humanize } from '../../lib/format'
+import { ActionDialog } from '../../components/ActionDialog'
+import { QueryError } from '../../components/QueryError'
+import {
+  Alert, Button, EmptyState, Field, IconButton, Input, LoadingRegion, ReqMarker, Section, Select, Skeleton, Textarea, Tooltip, useToast,
+} from '../../design/components'
+import { plural, relativeTime } from '../../design/lib/format'
+import { ArrowDown, ArrowUp, CalendarClock, Plus, RefreshCw, Trash2, X } from '../../design/icons'
+import { humanize } from '../../lib/format'
+import { AnchorGrid } from './WorkSamplesTab'
 
 /** Loads the kit; a 404 means "no kit yet". */
 export async function fetchKit(jobId: number, signal?: AbortSignal): Promise<InterviewKit | null> {
@@ -22,12 +25,18 @@ export async function fetchKit(jobId: number, signal?: AbortSignal): Promise<Int
   }
 }
 
-/** Structured interview kit: generate, then edit questions, follow-ups and the four rating anchors. */
+export function requirementName(requirements: Requirement[], id: number | null): string | null {
+  if (id == null) return null
+  const requirement = requirements.find(item => item.id === id)
+  return requirement ? requirement.description : `Requirement #${id}`
+}
+
+/** Structured interview kit: generate, read (anchors in a 1–4 grid, coverage of the must-haves), edit with a sticky bar. */
 export function InterviewKitTab({ job }: { job: JobStaff }) {
   const { can } = useAuth()
   const canManage = can('interviewKit.manage')
   const queryClient = useQueryClient()
-  const notices = useNotices()
+  const { toast } = useToast()
   const kit = useQuery({ queryKey: qk.interviewKit(job.id), queryFn: ({ signal }) => fetchKit(job.id, signal) })
   const [editing, setEditing] = useState(false)
   const [confirmRegenerate, setConfirmRegenerate] = useState(false)
@@ -37,89 +46,95 @@ export function InterviewKitTab({ job }: { job: JobStaff }) {
     onSuccess: generated => {
       queryClient.setQueryData(qk.interviewKit(job.id), generated)
       setConfirmRegenerate(false)
-      notices.success('Interview kit generated. Review the questions before interviews start.')
+      toast({ tone: 'success', title: `Interview kit ready: ${plural(generated.questions.length, 'question')}`, body: 'Review the questions before interviews start.' })
     },
-    onError: cause => notices.error(errorMessage(cause, 'The interview kit could not be generated.')),
+    onError: cause => toast({ tone: 'danger', title: 'The interview kit could not be generated', body: errorMessage(cause) }),
   })
 
-  if (kit.isPending) return <LoadingPanel label="Loading interview kit…" />
-  if (kit.isError) return <ErrorPanel error={kit.error} onRetry={() => void kit.refetch()} />
+  if (kit.isPending) {
+    return <LoadingRegion label="Loading the interview kit"><div className="hra-list-skel">{[0, 1, 2].map(i => <Skeleton key={i} width="100%" height={72} />)}</div></LoadingRegion>
+  }
+  if (kit.isError) return <QueryError error={kit.error} title="The interview kit could not be loaded" onRetry={() => void kit.refetch()} />
 
   const data = kit.data
+  const noRequirements = job.requirements.length === 0
+  const generateButton = canManage && (
+    <Tooltip content={noRequirements ? 'Add requirements to the job first.' : 'One or two questions per requirement, each with four rating anchors.'} labelOnly>
+      <Button variant="primary" icon={Plus} loading={generate.isPending} disabled={noRequirements} onClick={() => generate.mutate()}>Generate kit</Button>
+    </Tooltip>
+  )
+
+  if (!data) {
+    return (
+      <Section title="Interview kit" description="Every interviewer asks the same questions and rates answers against the same anchors.">
+        <EmptyState
+          icon={CalendarClock}
+          title="No interview kit yet"
+          description={canManage ? 'Generate questions from the requirements, then adjust them. A rating of 3 or 4 on a question linked to a requirement marks it as interview-verified.' : 'An HR manager can generate the kit from the job’s requirements.'}
+          action={generateButton || undefined}
+        />
+      </Section>
+    )
+  }
+
+  const probed = new Set(data.questions.map(q => q.requirementId).filter((id): id is number => id != null))
+  const unprobedMust = job.requirements.filter(r => r.mandatory && !probed.has(r.id))
+  const unprobedNice = job.requirements.filter(r => !r.mandatory && !probed.has(r.id))
+
+  if (editing) return <KitEditor jobId={job.id} kit={data} requirements={job.requirements} onDone={() => setEditing(false)} />
 
   return (
-    <section className="jobs-card" aria-labelledby="kit-heading">
-      <div className="jobs-card-head">
-        <div>
-          <h2 id="kit-heading">Interview kit</h2>
-          <p>Every interviewer asks the same questions and rates answers against the same anchors. A rating of 3 or 4 on a question linked to a requirement marks it as interview-verified.</p>
-        </div>
-        {canManage && !editing && (
-          <div className="head-actions">
-            {data && <button type="button" className="outline-button" onClick={() => setEditing(true)}>Edit questions</button>}
-            <button
-              type="button"
-              className={data ? 'outline-button' : 'primary-button workspace-primary'}
-              disabled={generate.isPending || job.requirements.length === 0}
-              title={job.requirements.length === 0 ? 'Add requirements first.' : undefined}
-              onClick={() => (data ? setConfirmRegenerate(true) : generate.mutate())}
-            >
-              <SparkIcon /> {generate.isPending ? 'Generating…' : data ? 'Regenerate' : 'Generate kit'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {!data ? (
-        <EmptyPanel title="No interview kit yet" compact>
-          {canManage ? 'Generate questions from the job’s requirements, then adjust them.' : 'An HR manager can generate the kit from the job’s requirements.'}
-        </EmptyPanel>
-      ) : editing ? (
-        <KitEditor jobId={job.id} kit={data} requirements={job.requirements} onDone={() => setEditing(false)} />
+    <Section
+      title="Interview kit"
+      description={`${plural(data.questions.length, 'question')} · ${data.generatedBy === 'manual' ? 'edited by your team' : `drafted by the ${data.generatedBy === 'llm' ? 'assistant' : 'rules engine'}`} · updated ${relativeTime(data.updatedAt)}`}
+      actions={canManage ? (
+        <span className="cluster">
+          <Button variant="ghost" icon={RefreshCw} onClick={() => setConfirmRegenerate(true)} disabled={noRequirements}>Regenerate</Button>
+          <Button onClick={() => setEditing(true)}>Edit questions</Button>
+        </span>
+      ) : undefined}
+    >
+      {unprobedMust.length === 0 ? (
+        <p className="hra-kit-coverage" data-ok="">Every must-have has at least one question.{unprobedNice.length ? ` No question yet for: ${unprobedNice.map(r => r.description).join(', ')}.` : ''}</p>
       ) : (
-        <div className="kit-view">
-          <p className="item-meta kit-meta">Source: {humanize(data.generatedBy)} · updated {formatDateTime(data.updatedAt)} · {data.questions.length} questions</p>
-          <ol className="question-list">
-            {data.questions.map(question => <QuestionView key={question.id} question={question} requirements={job.requirements} />)}
-          </ol>
-        </div>
+        <Alert tone="warning" className="hra-kit-alert">No question probes these must-haves yet: {unprobedMust.map(r => r.description).join(', ')}.</Alert>
       )}
+      <ol className="hra-questions">
+        {data.questions.map((question, index) => {
+          const linked = job.requirements.find(r => r.id === question.requirementId)
+          return (
+            <li key={question.id} className="hra-question">
+              <span className="hra-q-num numeric" aria-hidden="true">{index + 1}</span>
+              <div className="hra-q-body">
+                <p className="hra-q-text">{question.question}</p>
+                <p className="hra-q-probes">
+                  {linked ? <>Probes <strong>{linked.description}</strong> <ReqMarker kind={linked.mandatory && linked.knockout ? 'gate' : linked.mandatory ? 'must' : 'nice'} /></> : <span className="subtle">General question</span>}
+                </p>
+                {question.followUps.length > 0 && (
+                  <ul className="hra-followups" aria-label="Follow-up questions">
+                    {question.followUps.map((followUp, i) => <li key={i}>{followUp}</li>)}
+                  </ul>
+                )}
+                <AnchorGrid anchors={question.anchors} />
+              </div>
+            </li>
+          )
+        })}
+      </ol>
 
-      <ConfirmDialog
+      <ActionDialog
         open={confirmRegenerate}
+        size="sm"
         title="Regenerate the interview kit?"
-        message="The current questions, including your edits, are replaced. Submitted scorecards keep their ratings."
         confirmLabel="Regenerate"
-        danger
+        tone="danger"
         busy={generate.isPending}
         onCancel={() => setConfirmRegenerate(false)}
         onConfirm={() => generate.mutate()}
-      />
-    </section>
-  )
-}
-
-export function requirementName(requirements: Requirement[], id: number | null): string | null {
-  if (id == null) return null
-  const requirement = requirements.find(item => item.id === id)
-  return requirement ? requirement.description : `Requirement #${id}`
-}
-
-function QuestionView({ question, requirements }: { question: InterviewQuestion; requirements: Requirement[] }) {
-  const linked = requirementName(requirements, question.requirementId)
-  return (
-    <li className="question-card">
-      <p className="question-text">{question.question}</p>
-      {linked && <span className="req-tag">Probes: {linked}</span>}
-      {question.followUps.length > 0 && (
-        <>
-          <h4>Follow-ups</h4>
-          <ul className="follow-ups">{question.followUps.map((followUp, index) => <li key={index}>{followUp}</li>)}</ul>
-        </>
-      )}
-      <h4>Rating anchors</h4>
-      <AnchorList anchors={question.anchors} />
-    </li>
+      >
+        <p>The current questions, including your edits, are replaced. Submitted scorecards keep their ratings.</p>
+      </ActionDialog>
+    </Section>
   )
 }
 
@@ -132,8 +147,7 @@ function newQuestion(existing: InterviewQuestion[]): InterviewQuestion {
 
 function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: InterviewKit; requirements: Requirement[]; onDone: () => void }) {
   const queryClient = useQueryClient()
-  const notices = useNotices()
-  const baseId = useId()
+  const { toast } = useToast()
   const [questions, setQuestions] = useState<InterviewQuestion[]>(() => kit.questions.map(question => ({ ...question, followUps: [...question.followUps], anchors: { ...question.anchors } })))
   const [errors, setErrors] = useState<Record<string, string>>({})
 
@@ -141,7 +155,7 @@ function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: I
     mutationFn: (body: InterviewQuestion[]) => interviewsApi.saveKit(jobId, body),
     onSuccess: saved => {
       queryClient.setQueryData(qk.interviewKit(jobId), saved)
-      notices.success('Interview kit saved.')
+      toast({ tone: 'success', title: 'Interview kit saved' })
       onDone()
     },
   })
@@ -155,6 +169,11 @@ function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: I
     next.splice(target, 0, item)
     return next
   })
+  const remove = (index: number) => {
+    const removed = questions[index]
+    setQuestions(current => current.filter((_, i) => i !== index))
+    toast({ tone: 'info', title: `Question ${index + 1} removed`, duration: 6000, action: { label: 'Undo', onClick: () => setQuestions(current => [...current.slice(0, index), removed, ...current.slice(index)]) } })
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -162,11 +181,11 @@ function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: I
     if (questions.length === 0) next.kit = 'Keep at least one question.'
     questions.forEach(question => {
       if (!question.question.trim()) next[question.id] = 'Write the question.'
-      else if (ANCHOR_LEVELS.some(level => !question.anchors[level].trim())) next[question.id] = 'Describe all four rating levels.'
+      ANCHOR_LEVELS.forEach(level => { if (!question.anchors[level].trim()) next[`${question.id}-${level}`] = `Describe rating ${level}.` })
     })
     setErrors(next)
     if (Object.keys(next).length) {
-      window.setTimeout(() => document.querySelector<HTMLElement>('.kit-editor [aria-invalid="true"]')?.focus(), 0)
+      window.setTimeout(() => document.querySelector<HTMLElement>('.hra-kit-editor [aria-invalid="true"]')?.focus(), 0)
       return
     }
     save.mutate(questions.map(question => ({
@@ -178,61 +197,61 @@ function KitEditor({ jobId, kit, requirements, onDone }: { jobId: number; kit: I
   }
 
   return (
-    <form className="kit-editor inline-editor" onSubmit={submit} noValidate>
-      {errors.kit && <small className="field-error">{errors.kit}</small>}
-      <ol className="question-list">
-        {questions.map((question, index) => {
-          const id = `${baseId}-${question.id}`
-          const error = errors[question.id]
-          return (
-            <li key={question.id} className="question-card editing">
-              <div className="rubric-criterion-head">
-                <label className="req-field grow" htmlFor={`${id}-q`}>
-                  <span>Question {index + 1}</span>
-                  <textarea id={`${id}-q`} rows={2} value={question.question} onChange={event => update(index, { question: event.target.value })} aria-invalid={Boolean(error)} aria-describedby={error ? `${id}-error` : undefined} />
-                </label>
-                <div className="req-row-tools">
-                  <button type="button" className="icon-button" onClick={() => move(index, -1)} disabled={index === 0} aria-label={`Move question ${index + 1} up`}>↑</button>
-                  <button type="button" className="icon-button" onClick={() => move(index, 1)} disabled={index === questions.length - 1} aria-label={`Move question ${index + 1} down`}>↓</button>
-                  <button type="button" className="icon-button danger" onClick={() => setQuestions(current => current.filter((_, i) => i !== index))} aria-label={`Remove question ${index + 1}`}><CloseIcon /></button>
-                </div>
+    <form className="hra-kit-editor" onSubmit={submit} noValidate aria-label="Edit interview questions">
+      <header className="hra-kit-editor-head">
+        <h2 className="t-h2">Edit interview questions</h2>
+        <p className="subtle">All four rating anchors are required, so every interviewer scores against the same description.</p>
+      </header>
+      {errors.kit && <p className="ui-field-error" role="alert">{errors.kit}</p>}
+      <ol className="hra-questions" data-editing="">
+        {questions.map((question, index) => (
+          <li key={question.id} className="hra-question">
+            <span className="hra-q-num numeric" aria-hidden="true">{index + 1}</span>
+            <div className="hra-q-body stack-6">
+              <div className="hra-criterion-head">
+                <Field label={`Question ${index + 1}`} error={errors[question.id]} className="grow">
+                  <Textarea rows={2} maxRows={6} value={question.question} onChange={event => update(index, { question: event.target.value })} />
+                </Field>
+                <span className="hra-q-tools">
+                  <IconButton label={`Move question ${index + 1} up`} icon={ArrowUp} size="sm" disabled={index === 0} onClick={() => move(index, -1)} />
+                  <IconButton label={`Move question ${index + 1} down`} icon={ArrowDown} size="sm" disabled={index === questions.length - 1} onClick={() => move(index, 1)} />
+                  <IconButton label={`Remove question ${index + 1}`} icon={Trash2} size="sm" onClick={() => remove(index)} />
+                </span>
               </div>
-              {error && <small className="field-error" id={`${id}-error`}>{error}</small>}
-              <label className="req-field" htmlFor={`${id}-req`}>
-                <span>Probes requirement</span>
-                <select id={`${id}-req`} value={question.requirementId ?? ''} onChange={event => update(index, { requirementId: event.target.value === '' ? null : Number(event.target.value) })}>
+              <Field label="Probes requirement" optional>
+                <Select value={question.requirementId ?? ''} onChange={event => update(index, { requirementId: event.target.value === '' ? null : Number(event.target.value) })}>
                   <option value="">None (general question)</option>
                   {requirements.map(requirement => <option key={requirement.id} value={requirement.id}>{humanize(requirement.type)}: {requirement.description}</option>)}
-                </select>
-              </label>
-              <fieldset className="follow-up-editor">
-                <legend>Follow-up questions</legend>
+                </Select>
+              </Field>
+              <fieldset className="hra-followup-edit">
+                <legend className="ui-field-label">Follow-up questions</legend>
                 {question.followUps.map((followUp, followIndex) => (
-                  <div key={followIndex} className="follow-up-row">
-                    <label className="sr-only" htmlFor={`${id}-f${followIndex}`}>Follow-up {followIndex + 1}</label>
-                    <input id={`${id}-f${followIndex}`} value={followUp} onChange={event => update(index, { followUps: question.followUps.map((item, i) => (i === followIndex ? event.target.value : item)) })} />
-                    <button type="button" className="icon-button danger" onClick={() => update(index, { followUps: question.followUps.filter((_, i) => i !== followIndex) })} aria-label={`Remove follow-up ${followIndex + 1}`}><CloseIcon /></button>
+                  <div key={followIndex} className="hra-followup-row">
+                    <Input aria-label={`Follow-up ${followIndex + 1} for question ${index + 1}`} value={followUp} onChange={event => update(index, { followUps: question.followUps.map((item, i) => (i === followIndex ? event.target.value : item)) })} />
+                    <IconButton label={`Remove follow-up ${followIndex + 1}`} icon={X} size="sm" onClick={() => update(index, { followUps: question.followUps.filter((_, i) => i !== followIndex) })} />
                   </div>
                 ))}
-                <button type="button" className="outline-button" onClick={() => update(index, { followUps: [...question.followUps, ''] })}><PlusIcon /> Add follow-up</button>
+                <Button size="sm" variant="ghost" icon={Plus} onClick={() => update(index, { followUps: [...question.followUps, ''] })}>Add follow-up</Button>
               </fieldset>
-              <div className="anchor-grid">
+              <div className="hra-anchor-edit" data-cols="4">
                 {ANCHOR_LEVELS.map(level => (
-                  <label key={level} className="req-field" htmlFor={`${id}-a${level}`}>
-                    <span>Rating {level}</span>
-                    <textarea id={`${id}-a${level}`} rows={3} value={question.anchors[level]} onChange={event => update(index, { anchors: { ...question.anchors, [level]: event.target.value } })} />
-                  </label>
+                  <Field key={level} label={`Rating ${level}`} error={errors[`${question.id}-${level}`]}>
+                    <Textarea rows={2} maxRows={6} value={question.anchors[level]} onChange={event => update(index, { anchors: { ...question.anchors, [level]: event.target.value } })} />
+                  </Field>
                 ))}
               </div>
-            </li>
-          )
-        })}
+            </div>
+          </li>
+        ))}
       </ol>
-      <button type="button" className="outline-button" onClick={() => setQuestions(current => [...current, newQuestion(current)])}><PlusIcon /> Add question</button>
-      <FormError error={save.error} />
-      <div className="editor-actions">
-        <button type="button" className="outline-button" onClick={onDone} disabled={save.isPending}>Cancel</button>
-        <button type="submit" className="primary-button workspace-primary" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save kit'}</button>
+      <Button icon={Plus} onClick={() => setQuestions(current => [...current, newQuestion(current)])}>Add question</Button>
+      <div className="hra-sticky-bar" role="region" aria-label="Save the interview kit">
+        <p className="subtle">{save.isError ? <span className="ui-field-error">{errorMessage(save.error)}</span> : `${plural(questions.length, 'question')}`}</p>
+        <span className="cluster">
+          <Button variant="ghost" onClick={onDone} disabled={save.isPending}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={save.isPending}>Save kit</Button>
+        </span>
       </div>
     </form>
   )

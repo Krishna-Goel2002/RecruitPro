@@ -1,0 +1,74 @@
+@layer pages {
+  .st-page { max-width: 960px; }
+  .st-identity {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px 16px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border-hairline);
+  }
+  .st-identity-text { flex: 1 1 200px; min-width: 0; }
+
+  /* Settings section: label column on the left from 900 px, fields on the right. */
+  .st-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 48px; padding: 28px 0; border-bottom: 1px solid var(--border-hairline); }
+  @media (min-width: 900px) {
+    .st-section { grid-template-columns: 240px minmax(0, 1fr); }
+  }
+  .st-section-head { display: flex; flex-direction: column; gap: 4px; }
+  .st-fields { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: var(--w-form); }
+  .st-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+  .st-half { max-width: 50%; min-width: 200px; }
+  @media (max-width: 599px) {
+    .st-half { max-width: none; }
+  }
+
+  /* Sticky save bar: slides up only when the form has changes. */
+  /* A zero-height sticky slot: the bar floats above the content without taking space when hidden. */
+  .st-savebar-slot { position: sticky; bottom: 16px; z-index: var(--z-sticky); height: 0; }
+  .st-savebar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 10px 12px 10px 16px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    visibility: hidden;
+    transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-decelerate), visibility 0s linear var(--dur-base);
+  }
+  .st-savebar[data-visible] { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition-delay: 0s; }
+  .st-savebar .c-form-error { flex-basis: 100%; order: 10; margin: 0; }
+  @media (max-width: 599px) {
+    .st-kbd, .st-savebar > .grow { display: none; }
+    .st-savebar { flex-wrap: nowrap; padding: 8px 8px 8px 12px; }
+    .st-savebar > .t-strong { flex: 1 1 auto; min-width: 0; font-size: var(--text-sm); line-height: var(--lh-sm); }
+  }
+  @media (pointer: coarse) {
+    .st-kbd { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .st-savebar { transform: none; }
+  }
+
+  /* Privacy */
+  .pv-why { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .pv-why li { display: flex; gap: 8px; }
+  .pv-why svg { flex: none; margin-top: 2px; color: var(--fg-subtle); }
+  .pv-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .pv-actions > .ui-btn[data-variant='danger-ghost'] { margin-right: auto; }
+  .pv-danger { display: flex; flex-direction: column; gap: 16px; margin-top: 32px; padding: 20px; }
+  .pv-danger ul { margin: 0; padding-left: 18px; color: var(--fg-default); }
+  .pv-danger li + li { margin-top: 4px; }
+  .pv-danger-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+  .pv-danger-form .ui-field { flex: 1 1 240px; max-width: 320px; }
+}

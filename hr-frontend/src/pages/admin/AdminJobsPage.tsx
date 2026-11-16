@@ -1,20 +1,19 @@
-import { useEffect, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { adminApi } from '../../api/admin'
 import { qk } from '../../api/queryKeys'
-import { AdminJob, AdminJobParams, JOB_STATUSES, JobStatus } from '../../api/types'
-import { StatusBadge } from '../../components/Badges'
-import { TextPromptDialog } from '../../components/Dialog'
-import { Field } from '../../components/Field'
-import { SearchIcon } from '../../components/Icons'
-import { PageHeader } from '../../components/Layout'
-import { useNotices } from '../../components/Notices'
-import { Pagination } from '../../components/Pagination'
-import { EmptyPanel, ErrorPanel, LoadingPanel } from '../../components/States'
-import { formatDate, formatNumber, humanize } from '../../lib/format'
-import { useDebouncedValue, usePageTitle } from '../../lib/hooks'
+import { JOB_STATUSES } from '../../api/types'
+import type { AdminJob, AdminJobParams, JobStatus } from '../../api/types'
+import { ActionDialog } from '../../components/ActionDialog'
+import { QueryError } from '../../components/QueryError'
+import { JobStatusBadge, jobStatusLabel } from '../../components/StatusBadges'
+import { Button, DataTable, EmptyState, Input, PageHeader, Pagination, Radio, RadioGroup, Select, useToast, type Column } from '../../design/components'
+import { BriefcaseBusiness, Icon, Search } from '../../design/icons'
+import { formatNumber, plural, relativeTime } from '../../design/lib/format'
 import { useSearchState } from '../../lib/useSearchState'
+import { useUrlSearch } from './shared'
+import './admin.css'
 
 /** Administrative override table (H7). CLOSED and CANCELLED are terminal even for administrators. */
 export const OVERRIDE_TARGETS: Partial<Record<JobStatus, JobStatus[]>> = {
@@ -23,125 +22,92 @@ export const OVERRIDE_TARGETS: Partial<Record<JobStatus, JobStatus[]>> = {
   DRAFT: ['CANCELLED'],
 }
 
-/** /admin/jobs — oversight of every job in the organisation, with reasoned status overrides. */
-export function AdminJobsPage() {
-  usePageTitle('Job oversight')
-  const queryClient = useQueryClient()
-  const notices = useNotices()
-  const state = useSearchState()
-  const status = state.get('status') as JobStatus | ''
-  const search = state.get('q')
-  const page = state.getPage()
-  const [searchInput, setSearchInput] = useState(search)
-  const debounced = useDebouncedValue(searchInput.trim(), 300)
-  useEffect(() => { setSearchInput(search) }, [search])
-  useEffect(() => {
-    if (debounced !== search) state.set({ q: debounced }, { replace: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced])
+const CONSEQUENCE: Partial<Record<JobStatus, string>> = {
+  ON_HOLD: 'Candidates can no longer apply; existing applications stay as they are.',
+  CLOSED: 'Final. The job stops taking applications for good.',
+  CANCELLED: 'Final. The draft is never published.',
+}
 
-  const params: AdminJobParams = { page, size: 20, status: status || undefined, search: search || undefined }
-  const jobs = useQuery({ queryKey: qk.adminJobs(params), queryFn: ({ signal }) => adminApi.jobs(params, signal) })
+/** /admin/jobs: every job in the organisation, with a reasoned status override where one is allowed. */
+export function AdminJobsPage() {
+  const queryClient = useQueryClient()
+  const { toast } = useToast()
+  const state = useSearchState()
+  const search = useUrlSearch(state)
+  const status = state.get('status') as JobStatus | ''
+  const page = state.getPage()
+  const params: AdminJobParams = { page, size: 20, status: status || undefined, search: search.value || undefined }
+  const jobs = useQuery({ queryKey: qk.adminJobs(params), queryFn: ({ signal }) => adminApi.jobs(params, signal), placeholderData: keepPreviousData })
   const [target, setTarget] = useState<AdminJob | null>(null)
-  const [nextStatus, setNextStatus] = useState<JobStatus | ''>('')
+  const [next, setNext] = useState<JobStatus | null>(null)
 
   const override = useMutation({
     mutationFn: ({ job, to, reason }: { job: AdminJob; to: JobStatus; reason: string }) => adminApi.overrideJobStatus(job.id, to, reason),
     onSuccess: updated => {
       setTarget(null)
+      toast({ tone: 'success', title: `“${updated.title}” is now ${jobStatusLabel(updated.status).toLowerCase()}`, body: 'The override and its reason are in the audit log.' })
       void queryClient.invalidateQueries({ queryKey: ['admin', 'jobs'] })
       void queryClient.invalidateQueries({ queryKey: qk.jobs })
-      notices.success(`“${updated.title}” is now ${humanize(updated.status).toLowerCase()}.`)
     },
   })
 
+  const columns: Column<AdminJob>[] = [
+    { key: 'title', header: 'Job', primary: true, sortValue: j => j.title, cell: j => <span className="adm-person-text"><Link className="adm-strong" to={`/jobs/${j.id}`}>{j.title}</Link><span className="adm-faint">{j.department} · {j.location}</span></span> },
+    { key: 'owner', header: 'Owner', hideWhenStacked: true, sortValue: j => j.createdByEmail, cell: j => <span className="adm-faint">{j.createdByEmail}</span> },
+    { key: 'status', header: 'Status', width: '120px', sortValue: j => j.status, cell: j => <JobStatusBadge status={j.status} /> },
+    { key: 'apps', header: 'Applications', numeric: true, width: '120px', sortValue: j => j.applicationCount, cell: j => formatNumber(j.applicationCount) },
+    { key: 'created', header: 'Created', width: '120px', hideWhenStacked: true, sortValue: j => j.createdAt, cell: j => <time className="adm-faint" dateTime={j.createdAt}>{relativeTime(j.createdAt)}</time> },
+    {
+      key: 'act', header: <span className="sr-only">Override</span>, align: 'end', width: '150px',
+      cell: j => (OVERRIDE_TARGETS[j.status]?.length
+        ? <Button size="sm" variant="secondary" onClick={() => { override.reset(); setNext(OVERRIDE_TARGETS[j.status]![0]); setTarget(j) }}>Override status</Button>
+        : <span className="adm-faint">Final</span>),
+    },
+  ]
+
   const targets = target ? OVERRIDE_TARGETS[target.status] ?? [] : []
+  const filtered = Boolean(search.value || status)
 
   return (
-    <>
-      <PageHeader eyebrow="ADMINISTRATION" title="Job oversight" subtitle="Every job in your organisation. Overrides need a reason and are audited; closed and cancelled jobs cannot be changed." />
-      <section className="jobs-card" aria-labelledby="admin-jobs-heading">
-        <div className="jobs-card-head">
-          <div><h2 id="admin-jobs-heading">Jobs</h2></div>
-          <span className="record-count" aria-live="polite">{jobs.data ? `${jobs.data.totalElements} jobs` : '—'}</span>
-        </div>
-        <div className="jobs-toolbar" role="search">
-          <label className="search-field">
-            <SearchIcon />
-            <span className="sr-only">Search jobs</span>
-            <input type="search" placeholder="Search job titles…" value={searchInput} onChange={event => setSearchInput(event.target.value)} />
-          </label>
-          <label className="status-filter">
-            <span>Status</span>
-            <select value={status} onChange={event => state.set({ status: event.target.value })}>
-              <option value="">All statuses</option>
-              {JOB_STATUSES.map(value => <option key={value} value={value}>{humanize(value)}</option>)}
-            </select>
-          </label>
-        </div>
-        {jobs.isPending ? <LoadingPanel label="Loading jobs…" /> : jobs.isError ? (
-          <ErrorPanel error={jobs.error} onRetry={() => void jobs.refetch()} />
-        ) : jobs.data.content.length === 0 ? <EmptyPanel title="No matching jobs" /> : (
-          <>
-            <div className="job-table-wrap">
-              <table className="job-table">
-                <thead>
-                  <tr>
-                    <th scope="col">JOB</th>
-                    <th scope="col">OWNER</th>
-                    <th scope="col">STATUS</th>
-                    <th scope="col">APPLICATIONS</th>
-                    <th scope="col">CREATED</th>
-                    <th scope="col"><span className="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.data.content.map(job => {
-                    const allowed = OVERRIDE_TARGETS[job.status] ?? []
-                    return (
-                      <tr key={job.id}>
-                        <td><Link className="job-title-link" to={`/jobs/${job.id}`}>{job.title}</Link><span className="job-meta">{job.department} · {job.location}</span></td>
-                        <td>{job.createdByEmail}</td>
-                        <td><StatusBadge status={job.status} /></td>
-                        <td>{formatNumber(job.applicationCount)}</td>
-                        <td>{formatDate(job.createdAt)}</td>
-                        <td>
-                          {allowed.length > 0 ? (
-                            <button type="button" className="outline-button" onClick={() => { override.reset(); setNextStatus(allowed[0]); setTarget(job) }}>Override status</button>
-                          ) : <span className="muted-copy">Final</span>}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+    <div className="adm" data-width="wide">
+      <PageHeader title="Job oversight" meta={[jobs.data ? plural(jobs.data.totalElements, 'job') : '…', 'Overrides need a reason and are audited']} />
+      {jobs.isError && !jobs.data ? <QueryError error={jobs.error} title="We couldn’t load jobs" onRetry={() => void jobs.refetch()} retrying={jobs.isFetching} /> : (
+        <DataTable
+          caption="Jobs in the organisation"
+          columns={columns}
+          rows={jobs.data?.content ?? []}
+          rowKey={j => j.id}
+          loading={jobs.isPending}
+          toolbar={
+            <div className="adm-toolbar" role="search">
+              <Input leading={<Icon icon={Search} size={14} />} type="search" aria-label="Search jobs" placeholder="Search jobs" value={search.input} onChange={e => search.setInput(e.target.value)} />
+              <Select aria-label="Status" value={status} onChange={e => state.set({ status: e.target.value })}>
+                <option value="">Any status</option>
+                {JOB_STATUSES.map(s => <option key={s} value={s}>{jobStatusLabel(s)}</option>)}
+              </Select>
             </div>
-            <Pagination page={jobs.data} onPage={next => state.set({ page: next })} label="jobs" />
-          </>
-        )}
-      </section>
+          }
+          empty={<EmptyState compact icon={BriefcaseBusiness} title={filtered ? 'No jobs match these filters' : 'No jobs yet'} action={filtered ? <Button size="sm" variant="secondary" onClick={() => state.set({ q: null, status: null })}>Clear filters</Button> : undefined} />}
+        />
+      )}
+      {jobs.data && jobs.data.totalElements > 20 && <Pagination page={page + 1} pageSize={20} total={jobs.data.totalElements} onPageChange={p => state.set({ page: p - 1 })} />}
 
-      <TextPromptDialog
+      <ActionDialog
         open={target != null}
-        title={target ? `Override status of “${target.title}”` : ''}
-        message={target ? `Currently ${humanize(target.status).toLowerCase()}. The job’s owner is not asked; the reason is stored in the audit log.` : undefined}
-        label="Reason"
-        required
-        maxLength={500}
-        placeholder="e.g. Role frozen by finance on 8 Nov"
-        confirmLabel={nextStatus ? `Set to ${humanize(nextStatus).toLowerCase()}` : 'Apply'}
-        danger={nextStatus === 'CLOSED' || nextStatus === 'CANCELLED'}
+        title={`Override the status of “${target?.title ?? ''}”?`}
+        description={`Currently ${target ? jobStatusLabel(target.status).toLowerCase() : ''}. The job’s owner sees the change and your reason.`}
+        confirmLabel="Override status"
+        tone={next === 'CLOSED' || next === 'CANCELLED' ? 'danger' : 'primary'}
         busy={override.isPending}
         error={override.error}
+        comment={{ label: 'Reason', required: true, maxLength: 500, placeholder: 'Why this override is needed', requiredMessage: 'A reason is required for an override.' }}
         onCancel={() => setTarget(null)}
-        onSubmit={reason => { if (target && nextStatus) override.mutate({ job: target, to: nextStatus, reason }) }}
+        onConfirm={reason => { if (target && next) override.mutate({ job: target, to: next, reason }) }}
       >
-        <Field label="New status" required>
-          <select value={nextStatus} onChange={event => setNextStatus(event.target.value as JobStatus)}>
-            {targets.map(value => <option key={value} value={value}>{humanize(value)}</option>)}
-          </select>
-        </Field>
-      </TextPromptDialog>
-    </>
+        <RadioGroup legend="New status" value={next ?? ''} onChange={v => setNext(v as JobStatus)}>
+          {targets.map(s => <Radio key={s} value={s} label={jobStatusLabel(s)} description={CONSEQUENCE[s]} />)}
+        </RadioGroup>
+      </ActionDialog>
+    </div>
   )
 }

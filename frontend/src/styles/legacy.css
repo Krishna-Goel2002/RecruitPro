@@ -1,8 +1,0 @@
-/*
- * Pre-redesign styles, loaded into the `legacy` cascade layer (declared in src/design/index.css after `base` and
- * before `components`), so new .ui-* components always win. Delete each file's rules as its screens migrate.
- */
-@import './base.css' layer(legacy);
-@import './layout.css' layer(legacy);
-@import './components.css' layer(legacy);
-@import './pages.css' layer(legacy);

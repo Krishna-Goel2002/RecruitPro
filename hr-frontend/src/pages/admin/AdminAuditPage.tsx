@@ -1,124 +1,83 @@
-import { FormEvent, useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { adminApi } from '../../api/admin'
-import { errorMessage } from '../../api/client'
 import { qk } from '../../api/queryKeys'
-import { AUDIT_ACTIONS, AuditParams } from '../../api/types'
-import { Field } from '../../components/Field'
-import { DownloadIcon } from '../../components/Icons'
-import { PageHeader } from '../../components/Layout'
-import { useNotices } from '../../components/Notices'
-import { Pagination } from '../../components/Pagination'
-import { EmptyPanel, ErrorPanel, FormError, LoadingPanel } from '../../components/States'
-import { formatDateTime, humanize, localDayBoundary } from '../../lib/format'
-import { usePageTitle } from '../../lib/hooks'
+import { AUDIT_ACTIONS } from '../../api/types'
+import type { AuditEvent, AuditParams } from '../../api/types'
+import { InlineError, QueryError } from '../../components/QueryError'
+import { Button, DataTable, EmptyState, Field, Input, PageHeader, Pagination, Select, Tooltip, useToast, type Column } from '../../design/components'
+import { Download, ScrollText } from '../../design/icons'
+import { formatNumber, relativeTime } from '../../design/lib/format'
+import { humanize, localDayBoundary } from '../../lib/format'
+import { fullDateTime } from '../../lib/when'
 import { useSearchState } from '../../lib/useSearchState'
+import './admin.css'
 
-function isoDay(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
+const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-/** /admin/audit — the organisation's persistent audit trail, filter by action, CSV export for a date range. */
+/** /admin/audit: the event log (compact, newest first, filter by action) and a CSV export for a date range. */
 export function AdminAuditPage() {
-  usePageTitle('Audit log')
-  const notices = useNotices()
+  const { toast } = useToast()
   const state = useSearchState()
   const action = state.get('action')
   const page = state.getPage()
   const params: AuditParams = { page, size: 25, action: action || undefined }
-  const events = useQuery({ queryKey: qk.adminAudit(params), queryFn: ({ signal }) => adminApi.audit(params, signal) })
-
+  const events = useQuery({ queryKey: qk.adminAudit(params), queryFn: ({ signal }) => adminApi.audit(params, signal), placeholderData: keepPreviousData })
   const today = new Date()
   const [from, setFrom] = useState(isoDay(new Date(today.getTime() - 30 * 86_400_000)))
   const [to, setTo] = useState(isoDay(today))
   const [rangeError, setRangeError] = useState<string | null>(null)
-
-  const exportCsv = useMutation({
+  const exporter = useMutation({
     mutationFn: () => adminApi.exportAudit(localDayBoundary(from, false), localDayBoundary(to, true)),
-    onSuccess: filename => notices.success(`Downloaded ${filename}. The export itself is recorded in the audit log.`),
-    onError: cause => notices.error(errorMessage(cause, 'The export failed.')),
+    onSuccess: name => toast({ tone: 'success', title: `Exported ${name}`, body: 'The export itself is recorded in the audit log.' }),
   })
 
-  function submitExport(event: FormEvent) {
+  function submit(event: FormEvent) {
     event.preventDefault()
-    if (from && to && from > to) {
-      setRangeError('“From” must be on or before “To”.')
-      return
-    }
+    if (from && to && from > to) return setRangeError('“From” must be on or before “To”.')
     setRangeError(null)
-    exportCsv.mutate()
+    exporter.mutate()
   }
 
+  const columns: Column<AuditEvent>[] = [
+    { key: 'when', header: 'When', width: '130px', cell: e => <time dateTime={e.createdAt} title={fullDateTime(e.createdAt)} className="numeric">{relativeTime(e.createdAt)}</time> },
+    { key: 'action', header: 'Action', primary: true, cell: e => <Tooltip content={e.action} labelOnly><span className="adm-strong" tabIndex={0}>{humanize(e.action)}</span></Tooltip> },
+    { key: 'actor', header: 'Actor', cell: e => (e.actorEmail ? <span className="adm-faint">{e.actorEmail}</span> : <span className="adm-faint">System</span>) },
+    { key: 'target', header: 'Target', hideWhenStacked: true, cell: e => (e.targetType ? <span className="mono adm-faint">{humanize(e.targetType).toLowerCase()} #{e.targetId}</span> : '—') },
+    { key: 'details', header: 'Details', cell: e => <span className="adm-details">{e.details ?? '—'}</span> },
+    { key: 'ip', header: 'IP', width: '120px', hideWhenStacked: true, cell: e => <span className="mono adm-faint">{e.ipAddress ?? '—'}</span> },
+  ]
+
   return (
-    <>
-      <PageHeader eyebrow="ADMINISTRATION" title="Audit log" subtitle="Who did what, when and from where. Entries cannot be edited or deleted." />
-
-      <section className="detail-card form-card" aria-labelledby="export-heading">
-        <h2 id="export-heading">Export as CSV</h2>
-        <form className="export-form" onSubmit={submitExport} noValidate>
-          <Field label="From" hint="Start of this day, your local time" error={rangeError}>
-            <input type="date" value={from} max={to || undefined} onChange={event => setFrom(event.target.value)} />
-          </Field>
-          <Field label="To" hint="End of this day, your local time">
-            <input type="date" value={to} min={from || undefined} onChange={event => setTo(event.target.value)} />
-          </Field>
-          <div className="invite-submit">
-            <button type="submit" className="outline-button" disabled={exportCsv.isPending}><DownloadIcon /> {exportCsv.isPending ? 'Exporting…' : 'Download CSV'}</button>
-          </div>
-        </form>
-        <p className="field-hint">Leave both empty for the last 90 days.</p>
-        <FormError error={exportCsv.error} />
-      </section>
-
-      <section className="jobs-card" aria-labelledby="audit-heading">
-        <div className="jobs-card-head">
-          <div><h2 id="audit-heading">Events</h2><p>Newest first.</p></div>
-          <span className="record-count" aria-live="polite">{events.data ? `${events.data.totalElements} events` : '—'}</span>
-        </div>
-        <div className="jobs-toolbar">
-          <label className="status-filter">
-            <span>Action</span>
-            <select value={action} onChange={event => state.set({ action: event.target.value })}>
-              <option value="">All actions</option>
-              {AUDIT_ACTIONS.map(value => <option key={value} value={value}>{humanize(value)}</option>)}
-            </select>
-          </label>
-        </div>
-        {events.isPending ? <LoadingPanel label="Loading audit events…" /> : events.isError ? (
-          <ErrorPanel error={events.error} onRetry={() => void events.refetch()} />
-        ) : events.data.content.length === 0 ? <EmptyPanel title="No events" /> : (
-          <>
-            <div className="job-table-wrap">
-              <table className="job-table audit-table">
-                <thead>
-                  <tr>
-                    <th scope="col">WHEN</th>
-                    <th scope="col">ACTION</th>
-                    <th scope="col">ACTOR</th>
-                    <th scope="col">TARGET</th>
-                    <th scope="col">DETAILS</th>
-                    <th scope="col">IP</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {events.data.content.map(event => (
-                    <tr key={event.id}>
-                      <td>{formatDateTime(event.createdAt)}</td>
-                      <td><span className="audit-action">{humanize(event.action)}</span></td>
-                      <td>{event.actorEmail ?? 'System'}</td>
-                      <td>{event.targetType ? `${humanize(event.targetType)}${event.targetId ? ` #${event.targetId}` : ''}` : '—'}</td>
-                      <td className="wrap-cell">{event.details ?? '—'}</td>
-                      <td>{event.ipAddress ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+    <div className="adm" data-width="wide">
+      <PageHeader title="Audit log" meta={[events.data ? `${formatNumber(events.data.totalElements)} events` : '…', 'Every reveal, decision, verification, download and setting change']} />
+      <form className="adm-export" onSubmit={submit} noValidate aria-label="Export audit log">
+        <Field label="From"><Input type="date" value={from} max={to || undefined} onChange={e => setFrom(e.target.value)} /></Field>
+        <Field label="To" error={rangeError}><Input type="date" value={to} min={from || undefined} onChange={e => setTo(e.target.value)} /></Field>
+        <Button type="submit" icon={Download} loading={exporter.isPending}>Export CSV</Button>
+        <p className="adm-faint adm-export-hint">Your local days. Defaults to the last 30 days. The export is itself audited.</p>
+        <InlineError error={exporter.error} />
+      </form>
+      {events.isError && !events.data ? <QueryError error={events.error} title="We couldn’t load the audit log" onRetry={() => void events.refetch()} retrying={events.isFetching} /> : (
+        <DataTable
+          caption="Audit events, newest first"
+          columns={columns}
+          rows={events.data?.content ?? []}
+          rowKey={e => e.id}
+          density="compact"
+          loading={events.isPending}
+          toolbar={
+            <div className="adm-toolbar">
+              <Select aria-label="Action" value={action} onChange={e => state.set({ action: e.target.value })}>
+                <option value="">All actions</option>
+                {AUDIT_ACTIONS.map(a => <option key={a} value={a}>{humanize(a)}</option>)}
+              </Select>
             </div>
-            <Pagination page={events.data} onPage={next => state.set({ page: next })} label="events" />
-          </>
-        )}
-      </section>
-    </>
+          }
+          empty={<EmptyState compact icon={ScrollText} title={action ? 'No events of this kind' : 'No events yet'} action={action ? <Button size="sm" variant="secondary" onClick={() => state.set({ action: null })}>Show all actions</Button> : undefined} />}
+        />
+      )}
+      {events.data && events.data.totalElements > 25 && <Pagination page={page + 1} pageSize={25} total={events.data.totalElements} onPageChange={p => state.set({ page: p - 1 })} />}
+    </div>
   )
 }

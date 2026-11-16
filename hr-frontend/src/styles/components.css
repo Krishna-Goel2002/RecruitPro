@@ -71,16 +71,6 @@ a.outline-button {
   background: var(--danger-solid);
 }
 
-.outline-button.danger-outline {
-  border-color: var(--danger-border);
-  color: var(--danger);
-}
-
-.outline-button.danger-outline:hover:not(:disabled) {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-}
-
 .icon-button {
   display: inline-grid;
   width: 30px;
@@ -189,18 +179,6 @@ a.outline-button {
   font-size: 11px;
 }
 
-.blind-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 20px;
-  color: var(--accent-text);
-  background: var(--bg-sunken);
-  font-size: 11px;
-  font-weight: 600;
-}
-
 /* Evidence tier badges (Claimed → Interview-verified) */
 .tier-badge {
   display: inline-flex;
@@ -293,16 +271,6 @@ a.outline-button {
   background: var(--info-bg);
 }
 
-.req-type-label {
-  display: inline-block;
-  margin-right: 6px;
-  color: var(--fg-muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
 /* Flags */
 .flag-chips {
   display: flex;
@@ -377,160 +345,11 @@ a.outline-button {
 }
 
 /* Cards, sections */
-.section-card {
-  padding: 22px 24px;
-}
-
-.section-card h2,
-.section-head h2 {
-  margin: 0;
-  color: var(--fg-default);
-  font: 700 15px Manrope, sans-serif;
-}
-
-.section-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
-.section-head p,
-.section-intro {
-  margin: 6px 0 0;
-  color: var(--fg-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.subheading {
-  margin: 20px 0 8px;
-  color: var(--fg-default);
-  font: 700 13px Manrope, sans-serif;
-}
-
-.muted-copy {
-  color: var(--fg-muted);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.card-pad {
-  margin: 0;
-  padding: 0 22px 20px;
-}
-
-.item-meta {
-  display: block;
-  margin-top: 3px;
-  color: var(--fg-subtle);
-  font-size: 12px;
-}
-
-.card-list {
-  display: grid;
-  gap: 12px;
-  margin: 0;
-  padding: 0 22px 22px;
-  list-style: none;
-}
-
-.section-card .card-list {
-  padding: 0;
-}
-
-.item-card {
-  padding: 16px;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  background: var(--bg-surface);
-}
-
-.item-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.item-card h3 {
-  margin: 0;
-  color: var(--fg-default);
-  font: 700 14px Manrope, sans-serif;
-}
-
-.item-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.item-details {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-default);
-}
-
-.item-details h4,
-.question-card h4 {
-  margin: 14px 0 6px;
-  color: var(--fg-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.item-details h4:first-child {
-  margin-top: 0;
-}
-
-.head-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.tab-stack {
-  display: grid;
-  gap: 18px;
-}
-
-.two-column {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 18px;
-  margin-top: 18px;
-}
-
-.form-card {
-  margin-bottom: 18px;
-  padding: 22px 24px;
-}
-
-.form-card h2 {
-  margin: 0 0 14px;
-  color: var(--fg-default);
-  font: 700 15px Manrope, sans-serif;
-}
-
-.highlight-card {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 3px var(--accent-subtle-border);
-}
 
 /* State panels */
 .state-panel.compact {
   min-height: 120px;
   padding: 20px;
-}
-
-.state-title {
-  margin: 13px 0 0;
-  color: var(--fg-default);
-  font: 700 18px Manrope, sans-serif;
 }
 
 .state-panel>a.outline-button {
@@ -540,10 +359,6 @@ a.outline-button {
 .form-api-error {
   margin: 12px 0;
   font-size: 12px;
-}
-
-.job-form>.form-api-error {
-  margin: 17px 24px 0;
 }
 
 /* Forms */
@@ -568,27 +383,12 @@ a.outline-button {
   font-weight: 400;
 }
 
-.form-grid.compact {
-  margin-top: 0;
-}
-
-.req-field {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.req-field>span,
 .chips-field>label {
   color: var(--fg-muted);
   font-size: 12px;
   font-weight: 600;
 }
 
-.req-field input,
-.req-field select,
-.req-field textarea,
-.inline-select,
 .chips-input {
   width: 100%;
   min-width: 0;
@@ -602,52 +402,9 @@ a.outline-button {
   font-size: 13px;
 }
 
-.inline-select {
-  width: auto;
-  min-height: 32px;
-  padding: 4px 8px;
-}
-
-.req-field textarea {
-  resize: vertical;
-  line-height: 1.6;
-}
-
-.req-field input:focus,
-.req-field select:focus,
-.req-field textarea:focus,
-.inline-select:focus,
 .chips-input:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-subtle-border);
-}
-
-.req-field [aria-invalid='true'] {
-  border-color: var(--danger-fg);
-}
-
-.req-field.grow {
-  flex: 1;
-}
-
-.check-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--fg-default);
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.check-label input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-}
-
-.check-label.disabled {
-  color: var(--fg-subtle);
 }
 
 /* Chips input */
@@ -795,10 +552,7 @@ a.outline-button {
   border: 0;
 }
 
-.rating-scale legend,
-.recommendation-picker legend,
-.rubric-editor legend,
-.follow-up-editor legend {
+.rating-scale legend{
   margin-bottom: 8px;
   padding: 0;
   color: var(--fg-default);
@@ -1071,97 +825,23 @@ a.outline-button {
 }
 
 /* Tables */
-.job-table th {
-  font-size: 10px;
-}
-
-.job-table td {
-  font-size: 12px;
-}
-
-.job-table tbody th {
-  padding: 10px 15px;
-  border-top: 1px solid var(--border-hairline);
-  color: var(--fg-default);
-  font-size: 12px;
-  font-weight: 600;
-  text-align: left;
-  vertical-align: top;
-}
-
-.job-table tbody th:first-child {
-  padding-left: 22px;
-}
-
-.wrap-cell {
-  max-width: 340px;
-  white-space: normal !important;
-  word-break: break-word;
-}
-
-.cell-title {
-  display: block;
-  color: var(--fg-default);
-  font-size: 13px;
-}
-
-.cell-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.job-title-link {
-  font-size: 13px;
-}
-
-.job-meta {
-  font-size: 11px;
-}
 
 .table-footer {
   font-size: 12px;
 }
 
-.record-count {
-  font-size: 11px;
-}
-
-.toolbar-count {
-  margin-left: auto;
-}
-
 /* Stat grid variants */
-.stat-grid.five {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.stat-icon.hold {
-  color: var(--info-fg);
-  background: var(--info-bg);
-}
-
-@media (max-width: 1050px) {
-  .stat-grid.five {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
 
 @media (max-width: 760px) {
-  .stat-grid.five {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  
 
   .rating-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .section-card {
-    padding: 18px;
-  }
+  
 
-  .section-head {
-    flex-direction: column;
-  }
+  
 
   .tab-row {
     flex-direction: column;

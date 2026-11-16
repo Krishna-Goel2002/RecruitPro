@@ -4,59 +4,77 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError } from '../api/client'
 import { applicationsApi } from '../api/endpoints'
 import { queryKeys } from '../api/queryKeys'
-import type { ApplicationDetail, ApplicationRequirement } from '../api/types'
-import { MustHaveBadge, StatusBadge, VerificationBadge } from '../components/Badges'
+import type { ApplicationDetail, ApplicationRequirement, ApplicationStatus } from '../api/types'
 import { ClaimForm } from '../components/ClaimForm'
-import { ConfirmDialog, Dialog } from '../components/Dialog'
-import { EmptyState, ErrorBlock, FormError, LoadingBlock } from '../components/Feedback'
+import { ConfirmDialog } from '../components/Dialog'
+import { ErrorState, Facts } from '../components/Feedback'
 import { useNotify } from '../components/Notices'
-import { PageHeader, Section } from '../components/PageHeader'
-import { focusPageHeading } from '../lib/focus'
-import { formatDate, formatDateTime, formatLongDateTime, localTimeZone } from '../lib/format'
 import {
-  APPLICATION_STATUS_DESCRIPTION,
-  REQUIREMENT_TYPE_LABEL,
-  WITHDRAWABLE_STATUSES,
-  applicationStatusLabel,
-  claimTypeFor,
-  humanize,
-  workSampleStatusLabel,
+  Badge, Button, Drawer, EmptyState, IconButton, LoadingRegion, Menu, PageHeader, Panel, ReqMarker, Skeleton, SkeletonText, Timeline,
+  buttonProps, type TimelineItem,
+} from '../design/components'
+import {
+  ArrowRight, ArrowUpRight, BadgeCheck, Calendar, CalendarClock, Clock, Ellipsis, FileText, Icon, ListChecks, Plus, X,
+} from '../design/icons'
+import { formatDate, relativeTime } from '../design/lib/format'
+import { downloadInterviewIcs, timeRange, timeZoneLabel } from '../lib/calendar'
+import { focusPageHeading } from '../lib/focus'
+import {
+  APPLICATION_STATUS_DESCRIPTION, REQUIREMENT_TYPE_LABEL, WITHDRAWABLE_STATUSES, applicationStatusLabel, claimTypeFor, humanize, workSampleStatusLabel,
 } from '../lib/labels'
+import { interviewEnd, nextStepFor } from '../lib/nextStep'
+import { isHttpUrl } from '../lib/url'
+import { ApplicationStatusBadge } from './ApplicationsPage'
+import './common.css'
+import './applications/applications.css'
 
 export function ApplicationDetailPage() {
   const { id } = useParams()
   const applicationId = Number(id)
   const valid = Number.isInteger(applicationId) && applicationId > 0
-  const application = useQuery({
-    queryKey: queryKeys.application(applicationId),
-    queryFn: () => applicationsApi.get(applicationId),
-    enabled: valid,
-  })
-
-  const backLink = (
-    <Link className="back-link" to="/applications">
-      ← All applications
-    </Link>
-  )
+  const application = useQuery({ queryKey: queryKeys.application(applicationId), queryFn: () => applicationsApi.get(applicationId), enabled: valid })
 
   if (!valid || (application.error instanceof ApiError && application.error.status === 404)) {
     return (
       <>
-        {backLink}
-        <PageHeader title="Application not found" />
-        <EmptyState title="We could not find this application">It may belong to another account or the link is wrong.</EmptyState>
+        <PageHeader title="Application not found" breadcrumb={[{ label: 'Applications', to: '/applications' }, { label: 'Not found' }]} />
+        <EmptyState
+          icon={FileText}
+          title="We could not find this application"
+          description="It may belong to another account, or the link is wrong."
+          action={
+            <Link {...buttonProps('secondary')} to="/applications">
+              All applications
+            </Link>
+          }
+        />
       </>
     )
   }
-  if (application.isPending) return <LoadingBlock label="Loading application…" />
-  if (application.isError) return <ErrorBlock error={application.error} onRetry={() => void application.refetch()} />
+  if (application.isPending) return <DetailSkeleton />
+  if (application.isError) return <ErrorState error={application.error} onRetry={() => void application.refetch()} title="This application could not be loaded" />
+  return <ApplicationView detail={application.data} />
+}
 
-  return (
-    <>
-      {backLink}
-      <ApplicationView detail={application.data} />
-    </>
-  )
+const PATH: ApplicationStatus[] = ['SUBMITTED', 'SHORTLISTED', 'INTERVIEWING', 'SELECTED']
+const FUTURE_TITLE: Partial<Record<ApplicationStatus, string>> = { SHORTLISTED: 'Shortlist', INTERVIEWING: 'Interview', SELECTED: 'Decision' }
+
+/** Past steps from the server's timeline, then the steps still ahead, so "what's next" is always visible. */
+function timelineItems(detail: ApplicationDetail): TimelineItem[] {
+  const past: TimelineItem[] = detail.timeline.map((entry, i) => ({
+    id: `p${i}`,
+    title: applicationStatusLabel(entry.status),
+    meta: APPLICATION_STATUS_DESCRIPTION[entry.status],
+    at: entry.at,
+    state: i === detail.timeline.length - 1 ? 'current' : 'done',
+  }))
+  const status = detail.status
+  if (status === 'REJECTED' || status === 'WITHDRAWN' || status === 'SELECTED') {
+    return past.map((p, i) => (i === past.length - 1 ? { ...p, state: 'done' } : p))
+  }
+  const reached = PATH.indexOf(status)
+  const future = PATH.slice(reached + 1).map(s => ({ id: `f${s}`, title: FUTURE_TITLE[s] ?? applicationStatusLabel(s), state: 'future' as const }))
+  return [...past, ...future]
 }
 
 function ApplicationView({ detail }: { detail: ApplicationDetail }) {
@@ -65,14 +83,12 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
   const [confirmWithdraw, setConfirmWithdraw] = useState(false)
   const [evidenceFor, setEvidenceFor] = useState<ApplicationRequirement | null>(null)
   const canWithdraw = WITHDRAWABLE_STATUSES.includes(detail.status)
-
   const withdraw = useMutation({
     mutationFn: () => applicationsApi.withdraw(detail.id),
     onSuccess: () => {
       setConfirmWithdraw(false)
-      notify('success', `Your application for ${detail.jobTitle} was withdrawn.`)
+      notify('success', 'Application withdrawn', { body: `The employer will stop considering you for ${detail.jobTitle}.` })
       void queryClient.invalidateQueries({ queryKey: queryKeys.applicationsAll })
-      // The Withdraw button disappears with the new status; keep focus on the page.
       void queryClient.invalidateQueries({ queryKey: queryKeys.application(detail.id) }).then(focusPageHeading)
     },
   })
@@ -80,178 +96,171 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
   return (
     <>
       <PageHeader
-        eyebrow={`APPLICATION #${detail.id}`}
+        breadcrumb={[{ label: 'Applications', to: '/applications' }, { label: detail.jobTitle }]}
         title={detail.jobTitle}
         documentTitle={`Application: ${detail.jobTitle}`}
-        description={
-          <>
-            {detail.organizationName ? `${detail.organizationName} · ` : ''}Applied {formatDateTime(detail.appliedAt)}
-          </>
-        }
+        status={<ApplicationStatusBadge status={detail.status} />}
+        meta={[detail.organizationName || null, <>Applied {formatDate(detail.appliedAt, { dateStyle: 'medium' })}</>]}
         actions={
           <>
-            <StatusBadge status={detail.status} />
+            <Link {...buttonProps('secondary')} to={`/jobs/${detail.jobId}`}>
+              View job
+            </Link>
             {canWithdraw && (
-              <button type="button" className="danger-button" onClick={() => setConfirmWithdraw(true)}>
-                Withdraw
-              </button>
+              <Menu
+                label="More actions"
+                items={[{ label: 'Withdraw application…', icon: X, danger: true, onSelect: () => setConfirmWithdraw(true) }]}
+                trigger={props => <IconButton {...props} label="More actions" icon={Ellipsis} variant="secondary" />}
+              />
             )}
           </>
         }
       />
 
-      <div className="detail-grid">
-        <Section title="Progress" id="progress">
-          <ol className="timeline">
-            {detail.timeline.map((entry, index) => (
-              <li key={`${entry.status}-${entry.at}-${index}`} className={index === detail.timeline.length - 1 ? 'current' : ''}>
-                <span className="timeline-dot" aria-hidden="true" />
-                <div>
-                  <strong>{applicationStatusLabel(entry.status)}</strong>
-                  <time dateTime={entry.at} className="muted">
-                    {' '}
-                    · {formatDateTime(entry.at)}
-                  </time>
-                  <p className="muted">{APPLICATION_STATUS_DESCRIPTION[entry.status] ?? ''}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </Section>
+      <NextStepPanel detail={detail} />
 
-        <Section title="What you sent" id="sent">
-          <dl className="key-facts">
-            <div>
-              <dt>Resume</dt>
-              <dd>
-                <Link to="/resumes">{detail.resumeFilename}</Link>
-              </dd>
-            </div>
-            <div>
-              <dt>Job</dt>
-              <dd>
-                <Link to={`/jobs/${detail.jobId}`}>View job posting</Link>
-              </dd>
-            </div>
-          </dl>
-          <h3 className="subheading">Cover letter</h3>
-          <div className="prose small">{detail.coverLetter?.trim() || <span className="muted">No cover letter was included.</span>}</div>
-        </Section>
-      </div>
+      <div className="c-split a-split">
+        <div>
+          <section className="a-section" aria-labelledby="a-progress">
+            <h2 id="a-progress" className="t-h2">
+              Progress
+            </h2>
+            <Timeline items={timelineItems(detail)} label="Application progress" />
+          </section>
 
-      <Section
-        title="Requirements and verification"
-        id="requirements"
-        description="Verified means the employer has evidence: your resume, a recruiter check of a claim, a work sample or an interview."
-      >
-        {detail.requirements === null ? (
-          <p className="muted">
-            {canWithdraw
-              ? 'This employer does not share verification status with candidates.'
-              : 'Verification status is shown while an application is active.'}
-          </p>
-        ) : detail.requirements.length === 0 ? (
-          <p className="muted">This job has no structured requirements.</p>
-        ) : (
-          <ul className="requirement-list verification-list">
-            {detail.requirements.map(requirement => (
-              <li key={requirement.requirementId}>
-                <div className="requirement-head">
-                  <span className="fact-type-badge">{REQUIREMENT_TYPE_LABEL[requirement.type] ?? humanize(requirement.type)}</span>
-                  <MustHaveBadge mandatory={requirement.mandatory} />
-                  <VerificationBadge verification={requirement.verification} />
-                </div>
-                <p className="requirement-text">{requirement.description}</p>
-                {requirement.verification !== 'VERIFIED' && detail.status !== 'WITHDRAWN' && (
-                  <button
-                    type="button"
-                    className="text-button inline"
-                    onClick={() => setEvidenceFor(requirement)}
-                    aria-label={`Add evidence for ${requirement.description}`}
-                  >
-                    + Add evidence
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
+          <section className="a-section" aria-labelledby="a-req">
+            <h2 id="a-req" className="t-h2">
+              Requirements and your evidence
+            </h2>
+            <p className="c-muted a-section-desc">
+              Verified means the employer has evidence: your resume, a recruiter check of a claim, a work sample or an interview.
+            </p>
+            {detail.requirements === null ? (
+              <p className="c-muted">
+                {canWithdraw ? 'This employer does not share verification status with candidates.' : 'Verification status is shown while an application is active.'}
+              </p>
+            ) : detail.requirements.length === 0 ? (
+              <p className="c-muted">This job has no structured requirements.</p>
+            ) : (
+              <ul className="c-rows" data-closed="">
+                {detail.requirements.map(r => (
+                  <li key={r.requirementId} className="a-req">
+                    <div className="a-req-main">
+                      <span className="t-strong">{r.description}</span>
+                      <span className="a-req-meta">
+                        <span className="c-meta">{REQUIREMENT_TYPE_LABEL[r.type] ?? humanize(r.type)}</span>
+                        <ReqMarker kind={r.mandatory ? 'must' : 'nice'} />
+                      </span>
+                    </div>
+                    <div className="a-req-state">
+                      {r.verification === 'VERIFIED' ? (
+                        <Badge tone="success" dot>
+                          Verified
+                        </Badge>
+                      ) : r.verification === 'CLAIMED' ? (
+                        <Badge tone="neutral" variant="outline">
+                          Your claim, unverified
+                        </Badge>
+                      ) : (
+                        <Badge tone="neutral">Not yet verified</Badge>
+                      )}
+                      {r.verification !== 'VERIFIED' && detail.status !== 'WITHDRAWN' && (
+                        <span className="a-req-actions">
+                          <Button size="sm" variant="ghost" icon={Plus} onClick={() => setEvidenceFor(r)}>
+                            Add evidence<span className="sr-only"> for {r.description}</span>
+                          </Button>
+                          <Link {...buttonProps('ghost', 'sm')} to="/verification?add=source&step=choose">
+                            <Icon icon={BadgeCheck} size={14} />
+                            Verify with a source<span className="sr-only">: {r.description}</span>
+                          </Link>
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
 
-      <div className="detail-grid">
-        <Section title="Work samples" id="work-samples">
-          {detail.workSamples.length === 0 ? (
-            <p className="muted">No work sample has been assigned for this application.</p>
-          ) : (
-            <ul className="plain-list compact-list">
-              {detail.workSamples.map(sample => (
-                <li key={sample.assignmentId}>
-                  <div>
-                    <Link to={`/work-samples/${sample.assignmentId}`}>{sample.title}</Link>
-                    <p className="muted">
-                      {workSampleStatusLabel(sample.status)} · {sample.timeLimitMinutes} minutes
-                      {sample.dueAt && sample.status === 'ASSIGNED' ? ` · start by ${formatDate(sample.dueAt)}` : ''}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
-
-        <Section title="Interviews" id="interviews" description={`Times are shown in ${localTimeZone()}.`}>
-          {detail.interviews.length === 0 ? (
-            <p className="muted">No interview has been scheduled yet.</p>
-          ) : (
-            <ul className="plain-list compact-list">
-              {detail.interviews.map(interview => (
-                <li key={interview.id}>
-                  <div>
-                    <strong>
-                      <time dateTime={interview.scheduledAt}>{formatLongDateTime(interview.scheduledAt)}</time>
-                    </strong>
-                    <p className="muted">
-                      {interview.durationMinutes} minutes · {humanize(interview.status)}
-                      {interview.location ? ` · ${interview.location}` : ''}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
+        <aside className="c-rail" aria-label="Details">
+          <div className="c-rail-block">
+            <p className="c-rail-title">What you sent</p>
+            <Facts
+              items={[
+                { label: 'Resume', value: <Link to="/resumes">{detail.resumeFilename}</Link> },
+                { label: 'Cover letter', value: detail.coverLetter?.trim() ? 'Included' : 'Not included' },
+              ]}
+            />
+            {detail.coverLetter?.trim() && (
+              <details className="a-cover">
+                <summary>Read your cover letter</summary>
+                <p className="a-cover-text">{detail.coverLetter}</p>
+              </details>
+            )}
+          </div>
+          <div className="c-rail-block">
+            <p className="c-rail-title">Work samples</p>
+            {detail.workSamples.length === 0 ? (
+              <p className="c-meta">None assigned for this application.</p>
+            ) : (
+              <ul className="a-mini">
+                {detail.workSamples.map(s => (
+                  <li key={s.assignmentId}>
+                    <Link to={`/work-samples/${s.assignmentId}`}>{s.title}</Link>
+                    <span className="c-meta">
+                      {workSampleStatusLabel(s.status)} · {s.timeLimitMinutes} minutes
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="c-rail-block">
+            <p className="c-rail-title">Interviews</p>
+            {detail.interviews.length === 0 ? (
+              <p className="c-meta">None scheduled yet.</p>
+            ) : (
+              <ul className="a-mini">
+                {detail.interviews.map(i => {
+                  const r = timeRange(i.scheduledAt, i.durationMinutes)
+                  return (
+                    <li key={i.id}>
+                      <span className="t-strong">
+                        {r.day}, {r.time}
+                      </span>
+                      <span className="c-meta">
+                        {humanize(i.status)} · {timeZoneLabel(new Date(i.scheduledAt))}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        </aside>
       </div>
 
       <ConfirmDialog
         open={confirmWithdraw}
-        title="Withdraw this application?"
+        title={`Withdraw your application for ${detail.jobTitle}?`}
         confirmLabel="Withdraw application"
         busy={withdraw.isPending}
+        error={withdraw.error}
         onCancel={() => {
           setConfirmWithdraw(false)
           withdraw.reset()
         }}
         onConfirm={() => withdraw.mutate()}
-        error={<FormError error={withdraw.error} />}
       >
-        <p>
-          The employer will stop considering you for <strong>{detail.jobTitle}</strong>. You cannot undo this, and the
-          employer may not accept a new application for the same job.
-        </p>
+        <p>The employer stops considering you. You cannot undo this, and the employer may not accept a new application for the same job.</p>
       </ConfirmDialog>
 
-      <Dialog
+      <Drawer
         open={evidenceFor !== null}
-        title="Add evidence"
         onClose={() => setEvidenceFor(null)}
-        description={
-          evidenceFor && (
-            <p>
-              For the requirement <strong>{evidenceFor.description}</strong>. Your claim is added to your evidence and shared
-              with employers you apply to.
-            </p>
-          )
-        }
+        title="Add evidence"
+        description={evidenceFor ? `For “${evidenceFor.description}”. Your claim is added to your evidence for every employer you apply to.` : undefined}
       >
         {evidenceFor && (
           <ClaimForm
@@ -261,11 +270,112 @@ function ApplicationView({ detail }: { detail: ApplicationDetail }) {
             onCancel={() => setEvidenceFor(null)}
             onCreated={() => {
               setEvidenceFor(null)
-              notify('success', 'Evidence added. Recruiters see it as unverified until they check it.')
+              notify('success', 'Evidence added', { body: 'Recruiters see it as your claim until it is checked. Matching re-runs now.' })
             }}
           />
         )}
-      </Dialog>
+      </Drawer>
     </>
+  )
+}
+
+/** The one thing to do now, directly under the header (UX C-1). */
+function NextStepPanel({ detail }: { detail: ApplicationDetail }) {
+  const step = nextStepFor(detail, detail.workSamples, detail.interviews)
+  if (step.kind === 'closed') return null
+
+  if ((step.kind === 'work-sample' || step.kind === 'work-sample-started') && step.sample && step.to) {
+    const s = step.sample
+    const started = step.kind === 'work-sample-started'
+    return (
+      <Panel className="a-next-panel" aria-label="Next step">
+        <span className="a-next-icon">
+          <Icon icon={ListChecks} size={20} />
+        </span>
+        <div className="a-next-body">
+          <p className="a-next-label">Next step</p>
+          <p className="t-h3">{started ? `Finish “${s.title}”` : `Work sample: ${s.title}`}</p>
+          <p className="c-muted">
+            {started
+              ? `In progress${s.deadlineAt ? `, ends ${relativeTime(s.deadlineAt)}` : ''}. The timer keeps running.`
+              : `${s.timeLimitMinutes} minutes once you start${s.dueAt ? ` · start by ${formatDate(s.dueAt, { weekday: 'short', day: 'numeric', month: 'short' })} (${relativeTime(s.dueAt)})` : ''}. Instructions appear when you start.`}
+          </p>
+        </div>
+        <Link {...buttonProps('primary')} to={step.to}>
+          {started ? 'Continue' : 'Open work sample'}
+          <Icon icon={ArrowRight} size={16} />
+        </Link>
+      </Panel>
+    )
+  }
+
+  if (step.kind === 'interview' && step.interview) {
+    const i = step.interview
+    const r = timeRange(i.scheduledAt, i.durationMinutes)
+    const live = Date.now() >= new Date(i.scheduledAt).getTime() - 15 * 60_000 && Date.now() <= interviewEnd(i)
+    return (
+      <Panel className="a-next-panel" aria-label="Next step">
+        <span className="a-next-icon">
+          <Icon icon={CalendarClock} size={20} />
+        </span>
+        <div className="a-next-body">
+          <p className="a-next-label">Next step · interview {relativeTime(i.scheduledAt)}</p>
+          <p className="t-h3">
+            {r.day}, {r.time}
+          </p>
+          <p className="c-muted">
+            {timeZoneLabel(new Date(i.scheduledAt))} · {i.durationMinutes} minutes
+            {i.location && !isHttpUrl(i.location) ? ` · ${i.location}` : ''}
+          </p>
+        </div>
+        <div className="a-next-actions">
+          <Button icon={Calendar} onClick={() => downloadInterviewIcs(i, detail.jobTitle)}>
+            Add to calendar
+          </Button>
+          {i.location && isHttpUrl(i.location) && (
+            <a {...buttonProps(live ? 'primary' : 'secondary')} href={i.location} target="_blank" rel="noopener noreferrer">
+              Join
+              <Icon icon={ArrowUpRight} size={16} />
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          )}
+        </div>
+      </Panel>
+    )
+  }
+
+  return (
+    <Panel className="a-next-panel" data-quiet="" aria-label="Next step">
+      <span className="a-next-icon">
+        <Icon icon={step.kind === 'selected' ? BadgeCheck : Clock} size={20} />
+      </span>
+      <div className="a-next-body">
+        <p className="a-next-label">Next step</p>
+        <p className="t-h3">{step.kind === 'selected' ? 'The employer will contact you about next steps' : 'Nothing needed from you right now'}</p>
+        <p className="c-muted">
+          {step.kind === 'selected'
+            ? 'Congratulations. Keep an eye on your email and inbox.'
+            : 'We notify you when the employer moves forward. Meanwhile, stronger evidence helps every application.'}
+        </p>
+      </div>
+      {step.kind !== 'selected' && (
+        <Link {...buttonProps('secondary')} to="/verification">
+          Strengthen your evidence
+        </Link>
+      )}
+    </Panel>
+  )
+}
+
+function DetailSkeleton() {
+  return (
+    <LoadingRegion label="Loading application">
+      <Skeleton width={180} height={10} />
+      <Skeleton width={300} height={24} style={{ marginTop: 12 }} />
+      <Skeleton width="100%" height={88} style={{ marginTop: 24, borderRadius: 6 }} />
+      <div style={{ marginTop: 32 }}>
+        <SkeletonText lines={5} />
+      </div>
+    </LoadingRegion>
   )
 }

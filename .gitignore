@@ -70,3 +70,4 @@ test-data/resume-storage-*/
 
 # === Docker (future) ===
 docker-compose.override.yml
+.pnpm-store/

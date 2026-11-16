@@ -1,35 +1,59 @@
-import { useEffect, useState } from 'react'
-import { useQueries, useQuery } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query'
+import { Link, useNavigate } from 'react-router-dom'
 import { jobsApi } from '../../api/jobs'
 import { qk } from '../../api/queryKeys'
-import { JOB_STATUSES, JobListParams, JobStatus } from '../../api/types'
+import type { JobListParams, JobStaff, JobStatus } from '../../api/types'
 import { useAuth } from '../../auth/AuthContext'
-import { StatusBadge } from '../../components/Badges'
-import { ArrowIcon, BriefcaseIcon, PlusIcon, SearchIcon } from '../../components/Icons'
-import { PageHeader } from '../../components/Layout'
-import { Pagination } from '../../components/Pagination'
-import { EmptyPanel, ErrorPanel, LoadingPanel } from '../../components/States'
-import { formatDate, formatNumber, humanize } from '../../lib/format'
-import { useDebouncedValue, usePageTitle } from '../../lib/hooks'
+import { QueryError } from '../../components/QueryError'
+import { useShortcuts } from '../../components/Shortcuts'
+import { JobStatusBadge } from '../../components/StatusBadges'
+import {
+  Button, DataTable, EmptyState, IconButton, Input, Menu, PageHeader, Pagination, TabPanel, Tabs, buttonProps, type Column,
+} from '../../design/components'
+import { formatDate, formatNumber, plural, relativeTime } from '../../design/lib/format'
+import { BriefcaseBusiness, Ellipsis, Icon, Plus, Search, X } from '../../design/icons'
+import { humanize } from '../../lib/format'
+import { useDebouncedValue } from '../../lib/hooks'
+import { newSince } from '../../lib/lastSeen'
 import { useSearchState } from '../../lib/useSearchState'
+import { useJobActions } from './jobActions'
+import './jobs.css'
 
-const STAT_STATUSES: { key: JobStatus | 'ALL'; label: string; icon: string }[] = [
-  { key: 'ALL', label: 'Total jobs', icon: 'all' },
-  { key: 'PUBLISHED', label: 'Published', icon: 'published' },
-  { key: 'DRAFT', label: 'Drafts', icon: 'draft' },
-  { key: 'ON_HOLD', label: 'On hold', icon: 'hold' },
-  { key: 'CLOSED', label: 'Closed', icon: 'closed' },
+type StatusTab = JobStatus | 'ALL'
+const TABS: { value: StatusTab; label: string }[] = [
+  { value: 'ALL', label: 'All' },
+  { value: 'PUBLISHED', label: 'Published' },
+  { value: 'DRAFT', label: 'Drafts' },
+  { value: 'ON_HOLD', label: 'On hold' },
+  { value: 'CLOSED', label: 'Closed' },
+  { value: 'CANCELLED', label: 'Cancelled' },
 ]
+const PAGE_SIZE = 20
 
+/** "in 12 days" / "Closed" / "—", with the absolute date for the tooltip. */
+function closes(job: JobStaff): { text: string; title?: string; soon?: boolean } {
+  if (job.status === 'CLOSED' || job.status === 'CANCELLED') return { text: job.status === 'CLOSED' ? 'Closed' : 'Cancelled' }
+  if (!job.deadline) return { text: 'No deadline' }
+  const ms = new Date(job.deadline).getTime() - Date.now()
+  return { text: ms <= 0 ? 'Deadline passed' : relativeTime(job.deadline), title: formatDate(job.deadline), soon: ms > 0 && ms < 3 * 86_400_000 }
+}
+
+/**
+ * Jobs (the home screen for managers and recruiters): status tabs with counts that ARE the filter, a debounced title
+ * search, and a table whose rows open the job. Managers get a row menu for status changes (hold/resume with Undo;
+ * publish/close confirmed). Everything is in the URL: ?status, ?q, ?page.
+ */
 export function JobsListPage() {
-  usePageTitle('Jobs')
   const { can } = useAuth()
   const canManage = can('jobs.manage')
+  const canExport = can('audit.jobExport')
+  const navigate = useNavigate()
   const state = useSearchState()
-  const status = state.get('status') as JobStatus | ''
+  const status = (state.get('status') || 'ALL') as StatusTab
   const search = state.get('q')
   const page = state.getPage()
+  const actions = useJobActions()
 
   const [searchInput, setSearchInput] = useState(search)
   const debounced = useDebouncedValue(searchInput.trim(), 300)
@@ -39,113 +63,182 @@ export function JobsListPage() {
     // only react to the debounced input
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounced])
+  const searchRef = useRef<HTMLInputElement>(null)
+  useShortcuts({ '/': event => { event.preventDefault(); searchRef.current?.focus() } })
 
-  const params: JobListParams = { page, size: 20, status: status || undefined, search: search || undefined, sort: 'createdAt', direction: 'DESC' }
-  const list = useQuery({ queryKey: qk.jobList(params), queryFn: ({ signal }) => jobsApi.list(params, signal) })
+  const params: JobListParams = { page, size: PAGE_SIZE, status: status === 'ALL' ? undefined : status, search: search || undefined, sort: 'createdAt', direction: 'DESC' }
+  const list = useQuery({ queryKey: qk.jobList(params), queryFn: ({ signal }) => jobsApi.list(params, signal), placeholderData: keepPreviousData })
 
+  // API gap: no GET /jobs/stats. Six size=1 calls in parallel, cached for a minute.
   const stats = useQueries({
-    queries: STAT_STATUSES.map(stat => ({
-      queryKey: qk.jobStats(stat.key),
-      queryFn: ({ signal }: { signal: AbortSignal }) => jobsApi.list({ page: 0, size: 1, status: stat.key === 'ALL' ? undefined : stat.key }, signal),
-      staleTime: 30_000,
+    queries: TABS.map(tab => ({
+      queryKey: qk.jobStats(tab.value),
+      queryFn: ({ signal }: { signal: AbortSignal }) => jobsApi.list({ page: 0, size: 1, status: tab.value === 'ALL' ? undefined : tab.value }, signal),
+      staleTime: 60_000,
     })),
   })
+  const counts = Object.fromEntries(TABS.map((tab, i) => [tab.value, stats[i].data?.totalElements])) as Record<StatusTab, number | undefined>
+  const tabs = TABS.filter(tab => tab.value !== 'CANCELLED' || (counts.CANCELLED ?? 0) > 0 || status === 'CANCELLED')
+    .map(tab => ({ value: tab.value, label: tab.label, count: counts[tab.value] }))
 
-  const filtered = Boolean(search || status)
+  const filtered = Boolean(search) || status !== 'ALL'
+  const data = list.data
+  const noJobsAtAll = counts.ALL === 0 && !search
+
+  const columns = useMemo<Column<JobStaff>[]>(() => [
+    {
+      key: 'title',
+      header: 'Job',
+      primary: true,
+      cell: job => (
+        <span className="hra-job-cell">
+          <Link className="hra-row-link" to={`/jobs/${job.id}`}>{job.title}</Link>
+          <span className="hra-job-sub">{humanize(job.jobType)} · {humanize(job.experienceLevel)}</span>
+        </span>
+      ),
+    },
+    { key: 'department', header: 'Department', cell: job => job.department, hideWhenStacked: true },
+    { key: 'location', header: 'Location', cell: job => <span className="hra-clamp">{job.location}</span>, hideWhenStacked: true },
+    { key: 'status', header: 'Status', width: '120px', cell: job => <JobStatusBadge status={job.status} /> },
+    {
+      key: 'applicants',
+      header: 'Applicants',
+      width: '128px',
+      cell: job => {
+        if (job.applicationCount == null) return <span className="subtle">—</span>
+        const fresh = newSince(job.id, job.applicationCount)
+        return (
+          <span className="hra-applicants numeric">
+            <span>{formatNumber(job.applicationCount)}<span className="hra-stack-label"> applicants</span></span>
+            {fresh != null && fresh > 0 && <span className="hra-new">{formatNumber(fresh)} new</span>}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'closes',
+      header: 'Closes',
+      width: '132px',
+      hideWhenStacked: true,
+      cell: job => {
+        const c = closes(job)
+        const text = <span className={c.soon ? 'hra-soon' : undefined}>{c.text}</span>
+        return c.title ? <time dateTime={job.deadline ?? undefined} title={c.title}>{text}</time> : text
+      },
+    },
+    {
+      key: 'created',
+      header: 'Created',
+      width: '112px',
+      hideWhenStacked: true,
+      cell: job => <time dateTime={job.createdAt} title={formatDate(job.createdAt)} className="subtle">{relativeTime(job.createdAt)}</time>,
+    },
+    ...(canManage || canExport
+      ? [{
+          key: 'menu',
+          header: <span className="sr-only">Actions</span>,
+          width: '48px',
+          align: 'end' as const,
+          cell: (job: JobStaff) => (
+            <Menu
+              label={`Actions for ${job.title}`}
+              items={actions.menuItems(job, { canManage, canExport, includeEdit: true })}
+              trigger={props => <IconButton {...props} label={`Actions for ${job.title}`} icon={Ellipsis} size="sm" noTooltip />}
+            />
+          ),
+        }]
+      : []),
+  ], [canManage, canExport, actions])
 
   return (
-    <>
+    <div className="hra-jobs" data-width="wide">
       <PageHeader
-        eyebrow="HIRING OPERATIONS"
         title="Jobs"
-        subtitle="Create roles, define what evidence matters, and review applicants blind-first."
-        actions={canManage && <Link className="primary-button workspace-primary" to="/jobs/new"><PlusIcon /> Create job</Link>}
+        actions={canManage && <Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>}
       />
 
-      <section className="stat-grid five" aria-label="Job summary">
-        {STAT_STATUSES.map((stat, index) => (
-          <article className="stat-card" key={stat.key}>
-            <span className={`stat-icon ${stat.icon}`} aria-hidden="true"><BriefcaseIcon /></span>
-            <div>
-              <span className="stat-label">{stat.label}</span>
-              <strong className="stat-value">{stats[index].data ? formatNumber(stats[index].data.totalElements) : '—'}</strong>
-            </div>
-          </article>
-        ))}
-      </section>
+      <Tabs
+        label="Job status"
+        idBase="jobs-status"
+        items={tabs}
+        value={status}
+        onChange={value => state.set({ status: value === 'ALL' ? null : value })}
+        className="hra-status-tabs"
+      />
 
-      <section className="jobs-card" aria-labelledby="jobs-heading">
-        <div className="jobs-card-head">
-          <div>
-            <h2 id="jobs-heading">All jobs</h2>
-            <p>Newest first. Search matches job titles.</p>
-          </div>
-          <span className="record-count" aria-live="polite">{list.data ? `${list.data.totalElements} jobs` : '—'}</span>
-        </div>
-        <div className="jobs-toolbar" role="search">
-          <label className="search-field">
-            <SearchIcon />
-            <span className="sr-only">Search jobs by title</span>
-            <input type="search" placeholder="Search job titles…" value={searchInput} onChange={event => setSearchInput(event.target.value)} />
-          </label>
-          <label className="status-filter">
-            <span>Status</span>
-            <select value={status} onChange={event => state.set({ status: event.target.value })}>
-              <option value="">All statuses</option>
-              {JOB_STATUSES.map(value => <option key={value} value={value}>{humanize(value)}</option>)}
-            </select>
-          </label>
-        </div>
-
-        {list.isPending ? (
-          <LoadingPanel label="Loading jobs…" />
-        ) : list.isError ? (
-          <ErrorPanel error={list.error} title="We couldn’t load jobs" onRetry={() => void list.refetch()} />
-        ) : list.data.content.length === 0 ? (
-          <EmptyPanel
-            title={filtered ? 'No matching jobs' : 'No jobs yet'}
-            action={canManage && !filtered ? <Link className="outline-button" to="/jobs/new"><PlusIcon /> Create a job</Link> : undefined}
-          >
-            {filtered ? 'Try another title or status.' : canManage ? 'Create your first job draft to get started.' : 'Jobs created by your HR managers appear here.'}
-          </EmptyPanel>
+      <TabPanel idBase="jobs-status" value={status} active={status} className="hra-jobs-panel">
+      {noJobsAtAll && status === 'ALL' ? (
+        canManage ? (
+          <EmptyState
+            icon={BriefcaseBusiness}
+            title="Create your first job"
+            description="Describe the role, and we suggest requirements from your description. Applicants are ranked by the evidence they show for each one."
+            action={<Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>}
+            className="hra-first-job"
+          />
         ) : (
-          <>
-            <div className="job-table-wrap">
-              <table className="job-table">
-                <caption className="sr-only">Jobs, page {list.data.page + 1}</caption>
-                <thead>
-                  <tr>
-                    <th scope="col">JOB TITLE</th>
-                    <th scope="col">DEPARTMENT</th>
-                    <th scope="col">LOCATION</th>
-                    <th scope="col">STATUS</th>
-                    <th scope="col">APPLICANTS</th>
-                    <th scope="col">CREATED</th>
-                    <th scope="col"><span className="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {list.data.content.map(job => (
-                    <tr key={job.id}>
-                      <td>
-                        <Link className="job-title-link" to={`/jobs/${job.id}`}>{job.title}</Link>
-                        <span className="job-meta">{humanize(job.jobType)} · {humanize(job.experienceLevel)}</span>
-                      </td>
-                      <td>{job.department}</td>
-                      <td>{job.location}</td>
-                      <td><StatusBadge status={job.status} /></td>
-                      <td>{job.applicationCount != null ? formatNumber(job.applicationCount) : '—'}</td>
-                      <td>{formatDate(job.createdAt)}</td>
-                      <td><Link className="row-action" to={`/jobs/${job.id}`} aria-label={`Open ${job.title}`}>Open <ArrowIcon /></Link></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Pagination page={list.data} onPage={next => state.set({ page: next })} label="jobs" />
-          </>
-        )}
-      </section>
-    </>
+          <EmptyState icon={BriefcaseBusiness} title="No jobs yet" description="Jobs your HR managers create appear here. You can review their applicants once they are published." className="hra-first-job" />
+        )
+      ) : (<>
+      <div className="hra-list-toolbar" role="search">
+        <Input
+          ref={searchRef}
+          type="search"
+          aria-label="Search jobs by title"
+          placeholder="Search job titles"
+          value={searchInput}
+          onChange={event => setSearchInput(event.target.value)}
+          leading={<Icon icon={Search} size={16} />}
+          trailing={searchInput ? <IconButton label="Clear search" icon={X} size="sm" onClick={() => setSearchInput('')} noTooltip /> : <kbd className="hra-kbd" aria-hidden="true">/</kbd>}
+          className="hra-search"
+        />
+        <p className="hra-count numeric" aria-live="polite">
+          {data ? plural(data.totalElements, 'job') : ''}
+        </p>
+      </div>
+
+      {list.isError && !data ? (
+        <QueryError error={list.error} title="Jobs could not be loaded" onRetry={() => void list.refetch()} retrying={list.isFetching} />
+      ) : (
+        <div className="hra-fade" data-stale={list.isPlaceholderData || undefined}>
+          <DataTable<JobStaff>
+            caption={`Jobs${status !== 'ALL' ? `, ${tabs.find(t => t.value === status)?.label.toLowerCase()}` : ''}${search ? `, matching “${search}”` : ''}`}
+            columns={columns}
+            rows={data?.content ?? []}
+            rowKey={job => job.id}
+            loading={list.isPending}
+            loadingRows={8}
+            onRowActivate={job => navigate(`/jobs/${job.id}`)}
+            empty={
+              filtered && !noJobsAtAll ? (
+                <EmptyState
+                  compact
+                  icon={Search}
+                  title={search ? `No jobs match “${search}”` : `No ${tabs.find(t => t.value === status)?.label.toLowerCase() ?? ''} jobs`}
+                  description={search ? 'Search looks at job titles only.' : 'Jobs move here when their status changes.'}
+                  action={<Button size="sm" onClick={() => { setSearchInput(''); state.set({ q: null, status: null }) }}>Clear filters</Button>}
+                />
+              ) : canManage ? (
+                <EmptyState
+                  icon={BriefcaseBusiness}
+                  title="Create your first job"
+                  description="Describe the role, and we suggest requirements from your description. Applicants are ranked by the evidence they show for each one."
+                  action={<Link {...buttonProps('primary')} to="/jobs/new"><Icon icon={Plus} size={16} /><span className="ui-btn-label">New job</span></Link>}
+                />
+              ) : (
+                <EmptyState icon={BriefcaseBusiness} title="No jobs yet" description="Jobs your HR managers create appear here. You can review their applicants once they are published." />
+              )
+            }
+          />
+        </div>
+      )}
+
+      {data && data.totalElements > PAGE_SIZE && (
+        <Pagination page={data.page + 1} pageSize={PAGE_SIZE} total={data.totalElements} onPageChange={next => state.set({ page: next - 1 })} />
+      )}
+      </>)}
+      </TabPanel>
+      {actions.dialog}
+    </div>
   )
 }

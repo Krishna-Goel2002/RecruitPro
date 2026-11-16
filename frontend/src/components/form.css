@@ -1,0 +1,53 @@
+@layer pages {
+  .c-reveal {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    margin-right: -6px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: none;
+    color: var(--fg-subtle);
+    cursor: pointer;
+    transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+  }
+  .c-reveal:hover { color: var(--fg-default); background: var(--bg-hover); }
+  .c-reveal[aria-pressed='true'] { color: var(--fg-default); }
+  @media (pointer: coarse) {
+    .c-reveal { width: 40px; height: 40px; margin-right: -10px; }
+  }
+
+  .c-claim-form { display: flex; flex-direction: column; gap: 16px; }
+  .c-claim-note { color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .c-claim-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .c-claim-actions > .ui-btn[data-variant='ghost'] { margin-right: auto; }
+  /* Inside a drawer the actions stick to the bottom edge, like a footer. */
+  .ui-drawer-body .c-claim-actions {
+    position: sticky;
+    bottom: -20px;
+    margin: 4px -20px -20px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-hairline);
+    background: var(--bg-raised);
+  }
+  .c-confirm-body { color: var(--fg-default); }
+  .c-confirm-body p + p { margin-top: 8px; }
+
+  .c-pw-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--fg-subtle);
+    font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans);
+  }
+  .c-pw-checks li { display: inline-flex; align-items: center; gap: 6px; transition: color var(--dur-fast) var(--ease-standard); }
+  .c-pw-checks li[data-met] { color: var(--success-fg); }
+  .c-pw-checks li[data-met] svg { animation: ui-dialog-in var(--dur-fast) var(--ease-settle); }
+  @media (prefers-reduced-motion: reduce) {
+    .c-pw-checks li[data-met] svg { animation: none; }
+  }
+}
