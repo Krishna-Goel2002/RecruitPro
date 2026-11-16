@@ -1,5 +1,8 @@
 # Plan v2 status, 16 Nov 2026
 
+> **17 Nov 2026 — first real backend build of `Kshitij-redesign`:** `mvnw verify` on JDK 21 (Windows): 441 tests, 0 failures, 0 errors, 6 skipped, BUILD SUCCESS (after commit `f1908ad` fixed the 12 failures of the first run: microsecond `UtcTime`, stale dedupe keys, four test mistakes).
+
+
 **Current truth for both branches** (updated by the R7 infrastructure audit, [BUG_HUNT_R7_INFRA.md](../audit/BUG_HUNT_R7_INFRA.md)):
 
 | Branch | Head (16 Nov) | Contains | Compiled / built? |
