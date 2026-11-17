@@ -1,0 +1,8 @@
+# Run state holds throwaway candidate passwords; reports can be large.
+runs/
+# Generated ResumeLab corpora and ad-hoc report folders (see README).
+corpora/
+out/
+.venv/
+__pycache__/
+*.pyc

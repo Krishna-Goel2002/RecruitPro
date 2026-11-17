@@ -17,10 +17,11 @@ from app.core.config import Settings, load_settings
 from app.llm.provider import LLMError, LLMProvider, find_quote, get_provider
 from app.matching.certifications import ACRONYMS
 from app.matching.engine import skill_cnf
+from app.matching.preferences import split_preference
 from app.models.authoring import CompiledRequirement, CompileRequest, CompileResult, CompileWarning
 from app.pipeline.dates import find_duration_months
 from app.pipeline.deidentify import scrub_contacts
-from app.pipeline.education import degree_levels
+from app.pipeline.education import degree_levels, detect_fields
 from app.pipeline.text import STOP_WORDS, content_tokens, normalize_text
 from app.taxonomy.taxonomy import get_taxonomy
 
@@ -307,8 +308,8 @@ def compile_rules(request: CompileRequest) -> CompileResult:
                                                     alternatives=alternatives, proficiency=proficiency,
                                                     rationale=rationale))
 
-    for sentence, section in pairs:
-        nice_cue, must_cue = bool(_NICE_RE.search(sentence)), bool(_MUST_RE.search(sentence))
+    for sentence, section, preferred_from in _with_preferences(pairs):
+        nice_cue, must_cue = bool(_NICE_RE.search(sentence)) or preferred_from is not None, bool(_MUST_RE.search(sentence))
         groups = skill_cnf(sentence)
         if section == "SKIP" and not (nice_cue or must_cue):
             continue
@@ -320,7 +321,8 @@ def compile_rules(request: CompileRequest) -> CompileResult:
         knockout = mandatory and bool(_HARD_RE.search(sentence))
         where = {"MUST": "listed under requirements", "NICE": "listed under nice-to-have", None: "found in the description"}.get(section, "found in the description")
         cue = "; says it is preferred" if nice_cue else ("; uses must/required wording" if knockout else "")
-        rationale_base = f"'{sentence[:120]}' - {where}{cue}"
+        source = preferred_from if preferred_from is not None else sentence
+        rationale_base = f"'{source[:120]}' - {where}{cue}"
         capped = _MAX_YEARS_RE.search(sentence)
         if capped:
             add("OTHER", sentence[:200], mandatory, False, None, [], None,
@@ -354,6 +356,24 @@ def compile_rules(request: CompileRequest) -> CompileResult:
             add("OTHER", _clean(sentence, keep_wording=True)[:200], mandatory, False, None, [], None,
                 rationale_base + "; not a skill, degree, certificate or duration - needs human judgement.")
     return CompileResult(engine="rules", requirements=requirements, warnings=_warnings(request, requirements))
+
+
+def _with_preferences(pairs: list[tuple[str, str | None]]) -> list[tuple[str, str | None, str | None]]:
+    """Split "Bachelor's degree; MBA preferred" into the required part and each preferred part.
+
+    Yields (text, section, original sentence when the text is a preference split from it, else None).
+    A preferred field without its own degree borrows the required degree: "B.Tech, preferably in
+    Computer Science" -> required "B.Tech" plus preferred "B.Tech in Computer Science"."""
+    items: list[tuple[str, str | None, str | None]] = []
+    for sentence, section in pairs:
+        required, preferred = split_preference(sentence)
+        items.append((required, section, None))
+        for part in preferred:
+            if degree_levels(required) and not degree_levels(part) and detect_fields(part):
+                part = f"{required} in {part}"
+            if len(part) >= 2:
+                items.append((part, section, sentence))
+    return items
 
 
 def _warnings(request: CompileRequest, requirements: list[CompiledRequirement]) -> list[CompileWarning]:

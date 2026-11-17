@@ -1,0 +1,2 @@
+# Runtime (python -m simulate). Pinned; Python 3.10+.
+httpx==0.28.1

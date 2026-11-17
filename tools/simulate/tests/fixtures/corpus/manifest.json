@@ -1,0 +1,318 @@
+{
+  "resumes": [
+    {
+      "id": "r001",
+      "file": "resumes/r001.pdf",
+      "format": "pdf",
+      "persona": {
+        "firstName": "Asha",
+        "lastName": "Rao",
+        "email": "asha.rao@example.com",
+        "phone": "+1 555 0100",
+        "city": "Pune",
+        "gender": "female"
+      },
+      "gold": {
+        "template": "classic",
+        "quality": "clean",
+        "yearsOfExperience": 8,
+        "currentTitle": "Staff Engineer"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "strong",
+          "expectedRankingGroup": "RANKED",
+          "metRequirements": [
+            "Java",
+            "Spring Boot",
+            "PostgreSQL"
+          ]
+        },
+        "data-analyst": {
+          "label": "weak",
+          "expectedRankingGroup": "MUST_HAVES_UNVERIFIED",
+          "metRequirements": [
+            "SQL"
+          ]
+        }
+      }
+    },
+    {
+      "id": "r002",
+      "file": "resumes/r002.docx",
+      "format": "docx",
+      "persona": {
+        "firstName": "Ben",
+        "lastName": "Okafor",
+        "email": "ben.okafor@example.com",
+        "phone": "+1 555 0100",
+        "city": "Lagos",
+        "gender": "male"
+      },
+      "gold": {
+        "template": "modern",
+        "quality": "clean",
+        "yearsOfExperience": 5,
+        "currentTitle": "Backend Engineer"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "good",
+          "expectedRankingGroup": "RANKED",
+          "metRequirements": [
+            "Java",
+            "Spring Boot"
+          ]
+        },
+        "data-analyst": {
+          "label": "partial",
+          "expectedRankingGroup": "MUST_HAVES_UNVERIFIED",
+          "metRequirements": [
+            "SQL"
+          ]
+        }
+      }
+    },
+    {
+      "id": "r003",
+      "file": "resumes/r003.pdf",
+      "format": "pdf",
+      "persona": {
+        "firstName": "Chen",
+        "lastName": "Li",
+        "email": "chen.li@example.com",
+        "phone": "+1 555 0100",
+        "city": "Shanghai",
+        "gender": "male"
+      },
+      "gold": {
+        "template": "two-column",
+        "quality": "noisy",
+        "yearsOfExperience": 4,
+        "currentTitle": "Data Engineer"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "partial",
+          "expectedRankingGroup": "MUST_HAVES_UNVERIFIED",
+          "metRequirements": [
+            "Java"
+          ]
+        },
+        "data-analyst": {
+          "label": "good",
+          "expectedRankingGroup": "RANKED",
+          "metRequirements": [
+            "SQL",
+            "Python"
+          ]
+        }
+      }
+    },
+    {
+      "id": "r004",
+      "file": "resumes/r004.pdf",
+      "format": "pdf",
+      "persona": {
+        "firstName": "Dana",
+        "lastName": "Cruz",
+        "email": "dana.cruz@example.com",
+        "phone": "+1 555 0100",
+        "city": "Manila",
+        "gender": "female"
+      },
+      "gold": {
+        "template": "classic",
+        "quality": "clean",
+        "yearsOfExperience": 6,
+        "currentTitle": "Analytics Lead"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "weak",
+          "expectedRankingGroup": "MUST_HAVES_UNVERIFIED",
+          "metRequirements": []
+        },
+        "data-analyst": {
+          "label": "strong",
+          "expectedRankingGroup": "RANKED",
+          "metRequirements": [
+            "SQL",
+            "Python",
+            "Tableau"
+          ]
+        }
+      }
+    },
+    {
+      "id": "r005",
+      "file": "resumes/r005.docx",
+      "format": "docx",
+      "persona": {
+        "firstName": "Eli",
+        "lastName": "Novak",
+        "email": "eli.novak@example.com",
+        "phone": "+1 555 0100",
+        "city": "Prague",
+        "gender": "male"
+      },
+      "gold": {
+        "template": "classic",
+        "quality": "clean",
+        "yearsOfExperience": 3,
+        "currentTitle": "Chef"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "unrelated",
+          "expectedRankingGroup": "UNSCORED",
+          "metRequirements": []
+        },
+        "data-analyst": {
+          "label": "unrelated",
+          "expectedRankingGroup": "UNSCORED",
+          "metRequirements": []
+        }
+      }
+    },
+    {
+      "id": "r006",
+      "file": "resumes/r006.pdf",
+      "format": "pdf",
+      "persona": {
+        "firstName": "Farah",
+        "lastName": "Haddad",
+        "email": "farah.haddad@example.com",
+        "phone": "+1 555 0100",
+        "city": "Amman",
+        "gender": "female"
+      },
+      "gold": {
+        "template": "classic",
+        "quality": "clean",
+        "adversarial": "injection",
+        "yearsOfExperience": 1,
+        "currentTitle": "Intern"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "weak",
+          "expectedRankingGroup": "MUST_HAVES_UNVERIFIED",
+          "metRequirements": []
+        }
+      }
+    },
+    {
+      "id": "r007",
+      "file": "resumes/r007.pdf",
+      "format": "pdf",
+      "persona": {
+        "firstName": "Grace",
+        "lastName": "Kim",
+        "email": "grace.kim@example.com",
+        "phone": "+1 555 0100",
+        "city": "Seoul",
+        "gender": "female"
+      },
+      "gold": {
+        "template": "modern",
+        "quality": "clean",
+        "twinGroup": "tw-1",
+        "yearsOfExperience": 5,
+        "currentTitle": "Software Engineer"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "good",
+          "expectedRankingGroup": "RANKED",
+          "metRequirements": [
+            "Java",
+            "Spring Boot"
+          ]
+        }
+      }
+    },
+    {
+      "id": "r008",
+      "file": "resumes/r008.pdf",
+      "format": "pdf",
+      "persona": {
+        "firstName": "Greg",
+        "lastName": "Kim",
+        "email": "greg.kim@example.com",
+        "phone": "+1 555 0100",
+        "city": "Seoul",
+        "gender": "male"
+      },
+      "gold": {
+        "template": "modern",
+        "quality": "clean",
+        "twinGroup": "tw-1",
+        "yearsOfExperience": 5,
+        "currentTitle": "Software Engineer"
+      },
+      "fit": {
+        "backend-java": {
+          "label": "good",
+          "expectedRankingGroup": "RANKED",
+          "metRequirements": [
+            "Java",
+            "Spring Boot"
+          ]
+        }
+      }
+    },
+    {
+      "id": "r009",
+      "file": "resumes/r009.pdf",
+      "format": "pdf",
+      "persona": {
+        "firstName": "Hana",
+        "lastName": "Sato",
+        "email": "hana.sato@example.com",
+        "phone": "+1 555 0100",
+        "city": "Osaka",
+        "gender": "female"
+      },
+      "gold": {
+        "template": "classic",
+        "quality": "scanned",
+        "yearsOfExperience": 7
+      },
+      "fit": {
+        "backend-java": {
+          "label": "partial",
+          "expectedRankingGroup": "UNSCORED",
+          "metRequirements": [
+            "Java"
+          ]
+        }
+      }
+    },
+    {
+      "id": "r010",
+      "file": "resumes/r010.txt",
+      "format": "txt",
+      "persona": {
+        "firstName": "Ivan",
+        "lastName": "Petrov",
+        "email": "ivan.petrov@example.com",
+        "phone": "+1 555 0100",
+        "city": "Sofia",
+        "gender": "male"
+      },
+      "gold": {
+        "template": "plain",
+        "quality": "clean",
+        "yearsOfExperience": 2
+      },
+      "fit": {
+        "backend-java": {
+          "label": "weak",
+          "expectedRankingGroup": "UNSCORED",
+          "metRequirements": []
+        }
+      }
+    }
+  ]
+}

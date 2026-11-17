@@ -71,6 +71,17 @@ def has_title_word(text: str) -> bool:
     return bool(TITLE_RE.search(text))
 
 
+_ORGANISATION_RE = re.compile(
+    r"\b(?:ltd|limited|inc|llc|llp|pvt|private|corp|corporation|company|co|bank|hospital|hospitals|clinic|clinics|school|"
+    r"university|college|institute|gmbh|plc|pte|sdn|bhd|ag|sa|nv|bv)\b\.?", re.I)
+
+
+def has_employer_word(text: str) -> bool:
+    """An unmistakable organisation word ("Pvt. Ltd.", "GmbH", "Hospital", "University"); words such as
+    "Technologies" or "Services" are also section and skill words, so they do not count here."""
+    return bool(_ORGANISATION_RE.search(text))
+
+
 @dataclass
 class Role:
     anchor: Line  # the line holding the date range or stated duration
@@ -80,16 +91,26 @@ class Role:
     date_range: DateRange | None
     stated_months: int | None
     lines: list[Line] = field(default_factory=list)  # every line of the role block, in order
+    section_heading: str | None = None  # heading of the section the role sits in ("Internships")
+
+    @property
+    def is_internship(self) -> bool:
+        """An internship, traineeship or articleship: its title says so, or it sits under such a heading."""
+        return bool(_INTERN_RE.search(self.header() or "")) or bool(
+            self.section_heading and _INTERN_RE.search(self.section_heading))
 
     def header(self, render: Callable[[Line], str] = lambda line: line.text) -> str | None:
         """Title/employer text, rendered line by line through ``render`` (e.g. de-identification)."""
+        parts: list[str] = []
         if self.header_in_anchor:
             rendered = render(self.anchor)
             marker = self.anchor.text[self.anchor_span[0]:self.anchor_span[1]]
-            return _clean(rendered.replace(marker, " | ", 1)) or None
-        if self.header_lines:
-            return " | ".join(render(line) for line in self.header_lines)
-        return None
+            cleaned = _clean(_DATE_KEY_LABEL_RE.sub("", rendered.replace(marker, " | ", 1)))
+            if cleaned:
+                parts.append(cleaned)
+        parts.extend(render(line) for line in self.header_lines)
+        header = _clean(strip_role_keys(" | ".join(parts)))
+        return header or None
 
     @property
     def months(self) -> int | None:
@@ -130,24 +151,64 @@ def _words(text: str) -> list[str]:
     return text.split()
 
 
+# Key-value role blocks ("Organisation : Acme Pvt Ltd", "Designation : Sales Manager", "Duration : ...").
+ROLE_KEY_RE = re.compile(
+    r"^\s*(?:designation|position(?:\s+held)?|role|job\s+title|title|post|organi[sz]ation(?:\s+name)?|company(?:\s+name)?|"
+    r"employer|firm|client|hospital|school|institution|department|work\s+location|location)\s*[:|\-–]\s*", re.I)
+# A label that only introduces the dates: "Duration : May 2025 - Aug 2026", "Period: 2019 - 2021".
+_DATE_KEY_RE = re.compile(r"\b(?:duration|period|tenure|dates?|from|working\s+period|time\s+period|tenure\s+period|"
+                          r"worked\s+from)\b", re.I)
+# "Label: content" lines are body (Environment:, Tools & Technologies:, Key skills used:), except role keys.
+_LABEL_LINE_RE = re.compile(r"^[A-Za-z][A-Za-z &/'’().\-]{1,30}\s*:\s")
+# Adjectives in job titles that look like past-tense verbs ("Registered Nurse", "Certified Trainer").
+_TITLE_ADJECTIVES_RE = re.compile(r"^(?:registered|licensed|licenced|certified|qualified|chartered|enrolled|accredited|"
+                                  r"authori[sz]ed|retained|appointed|seconded|contracted|outsourced|deputed)\b", re.I)
+# Gaps are written in the work history but are not roles ("Career break - family (Jul 2025 - Apr 2026)").
+_BREAK_RE = re.compile(r"\b(?:career\s+break|break|gap|sabbatical|parental\s+leave|maternity\s+leave|paternity\s+leave|"
+                       r"relocation|relocated|caregiving|career\s+pause)\b", re.I)
+_PROJECT_KEY_RE = re.compile(r"^\s*(?:project(?:\s+(?:name|title))?|client|team\s+size|domain)\s*[:|\-–]", re.I)
+_INTERN_RE = re.compile(r"\b(?:intern|interns|internship|trainee|apprentice|apprenticeship|articled|articleship|"
+                        r"industrial\s+training|summer\s+training)\b", re.I)
+
+
 def _is_header_like(line: Line) -> bool:
     text = line.text
-    if line.is_bullet or len(_words(text)) > 14 or re.match(r"^[A-Za-z ]{2,25}:\s", text):
+    if line.is_bullet or len(_words(text)) > 14:
+        return False
+    if _LABEL_LINE_RE.match(text) and not ROLE_KEY_RE.match(text):
         return False
     if text.endswith(".") and not re.search(r"\b(?:ltd|inc|co|corp|pvt|llc)\.$", text, re.I):
         return False
-    return not _BODY_VERB_RE.match(text)
+    if not _BODY_VERB_RE.match(text):
+        return True
+    if _TITLE_ADJECTIVES_RE.match(text) and has_title_word(text):
+        return True  # "Registered Nurse - Apollo Hospitals"
+    # "Design Engineer | Ganesh Polymers", "Support Engineer, Acme": a title that starts with a verb-like word.
+    head = " ".join(_words(text)[:4])
+    separator = re.search(r"\s[|–—-]\s|,", text)
+    return bool(TITLE_RE.search(head) and separator and TITLE_RE.search(head).end() <= separator.start())
 
 
 def _looks_like_role_header(line: Line) -> bool:
     return _is_header_like(line) and (has_title_word(line.text) or bool(_EMPLOYER_RE.search(line.text))
-                                      or bool(re.search(r"[|,@–—]| at ", line.text)))
+                                      or bool(re.search(r"[|,@–—]| at ", line.text)) or bool(ROLE_KEY_RE.match(line.text)))
 
 
 def _has_words(text: str) -> bool:
-    return len(re.findall(r"[A-Za-z]{2,}", re.sub(r"\b(?:present|current|now|till|date|to)\b", "", text, flags=re.I))) > 0
+    text = re.sub(r"\b(?:present|current|now|till|date|to)\b", "", text, flags=re.I)
+    text = _DATE_KEY_RE.sub("", text)
+    return len(re.findall(r"[A-Za-z]{2,}", text)) > 0
 
 
+def strip_role_keys(text: str) -> str:
+    """'Organisation : Acme | Designation : Sales Manager' -> 'Acme | Sales Manager'."""
+    parts = [ROLE_KEY_RE.sub("", part) for part in re.split(r"\s+\|\s+", text)]
+    return " | ".join(part for part in parts if part.strip())
+
+
+# "Duration :" left in front of an anchor's dates.
+_DATE_KEY_LABEL_RE = re.compile(r"(?:^|(?<=\|))\s*(?:duration|period|tenure|dates?|working\s+period|time\s+period)\s*[:\-–]?\s*(?=\||$)",
+                                re.I)
 _DANGLING_RE = re.compile(r"(?:\s+(?:from|since|between|during|for|dated|period|duration|tenure|w\.?e\.?f\.?))+\s*$", re.I)
 
 
@@ -161,10 +222,26 @@ def _clean(text: str) -> str:
     return cleaned
 
 
+# "VP - Product", "Head – Sales", "Manager - Operations": a rank and its function, one title (Indian style).
+_FUNCTIONS = (
+    "product", "products", "sales", "marketing", "operations", "finance", "accounts", "hr", "human resources", "engineering",
+    "technology", "it", "legal", "design", "data", "analytics", "procurement", "purchase", "supply chain", "quality",
+    "admin", "administration", "business development", "customer success", "customer support", "growth", "strategy",
+    "risk", "compliance", "audit", "taxation", "treasury", "logistics", "projects", "production", "maintenance",
+    "mathematics", "maths", "science", "english", "physics", "chemistry", "biology", "hindi", "social science",
+    "social studies", "computer science", "economics", "commerce", "history", "geography", "accountancy", "nursing",
+)
+_RANK_FUNCTION_RE = re.compile(
+    r"\b((?:a|s|e)?vp|head|manager|director|gm|dgm|agm|chief|lead|officer|executive|engineer|analyst|consultant|"
+    r"specialist|teacher|pgt|tgt|prt|department|hod)\s+[-–—]\s+(?=(?:" + "|".join(re.escape(item) for item in _FUNCTIONS) +
+    r")\s*(?:$|[|,(]|\s[-–—]\s))", re.I)
+
+
 def split_title_employer(header: str | None) -> tuple[str | None, str | None]:
     if not header:
         return None, None
-    parts = [_clean(part) for part in _SEPARATORS_RE.split(header)]
+    header = _RANK_FUNCTION_RE.sub(lambda match: match.group(1) + " \x00 ", header)
+    parts = [_clean(part).replace(" \x00 ", " - ").replace("\x00", "-") for part in _SEPARATORS_RE.split(header)]
     parts = [part for part in parts if part and part.lower() not in _LOCATIONS and len(re.findall(r"[A-Za-z]", part)) >= 2]
     if not parts:
         return None, None
@@ -205,34 +282,86 @@ def join_wrapped_dates(lines: list[Line], today: date) -> list[Line]:
     return joined
 
 
-def segment_roles(lines: list[Line], today: date) -> tuple[list[Role], list[Line]]:
-    """Cut experience-section lines into roles; returns (roles, lines before the first role)."""
+def segment_roles(lines: list[Line], today: date, heading: str | None = None) -> tuple[list[Role], list[Line]]:
+    """Cut experience-section lines into roles; returns (roles, lines before the first role).
+
+    Bare date lines ("Jul 2024 - Present" alone) take their title/employer from the header-like
+    lines right above them, or - in a date-first layout, where the first role's dates open the
+    section - from the line right after them. An anchor whose own text has no job title also takes
+    a title-only line right after it ("Northgate Software GmbH  Dec 2025 - Present" + "Senior Java
+    Developer"). Career-break lines are kept as body text, never roles."""
     lines = join_wrapped_dates(lines, today)
     dated_mode = any(_anchor(line, today, True) for line in lines)
     roles: list[Role] = []
     preface: list[Line] = []
+    date_first: bool | None = None
+    pending_title: Role | None = None  # a role whose title may still follow on the next line
+    pending_employer: Role | None = None  # a role whose employer may still follow on the next line
     for line in lines:
         anchor = _anchor(line, today, dated_mode)
+        if anchor is not None and _BREAK_RE.search(line.text) and not has_title_word(line.text):
+            anchor = None  # "Career break - relocation (Jul 2025 - Apr 2026)"
+        if anchor is not None and roles and _PROJECT_KEY_RE.match(line.text) is None and _DATE_KEY_RE.match(line.text) \
+                and any(_PROJECT_KEY_RE.match(previous.text) for previous in roles[-1].lines[-3:]):
+            anchor = None  # "Project : X / Client : Y / Duration : ..." inside a role is a project, not a new role
         if anchor is None:
             role = roles[-1] if roles else None
-            if (role is not None and not role.header_in_anchor and not role.header_lines and len(role.lines) == 1
-                    and _is_header_like(line)):
+            if role is not None and not role.header_in_anchor and not role.header_lines and len(role.lines) == 1 \
+                    and _is_header_like(line):
                 role.header_lines.append(line)  # date-first layout: the title line follows the dates
+            elif role is not None and role is pending_title and len(role.lines) == 1 and _is_title_line(line, today):
+                role.header_lines.append(line)  # the title on its own line under "Employer  dates"
+            elif role is not None and role is pending_employer and len(role.lines) == 1 and _is_employer_line(line, today):
+                role.header_lines.append(line)  # the employer on its own line under "Title  dates"
+            pending_title = pending_employer = None
             (role.lines if role is not None else preface).append(line)
             continue
         date_range, stated, span = anchor
         rest = _clean(line.text[:span[0]] + " | " + line.text[span[1]:])
         borrowed: list[Line] = []
-        if not _has_words(rest):
+        has_rest = _has_words(rest)
+        if not has_rest:
             pool = roles[-1].lines if roles else preface
-            while pool and len(borrowed) < 2 and _looks_like_role_header(pool[-1]) and not find_date_ranges(pool[-1].text, today):
-                if borrowed and len(_words(pool[-1].text)) > 6:
-                    break
-                borrowed.insert(0, pool.pop())
-            if not borrowed and pool and pool is preface and _is_header_like(pool[-1]):
-                borrowed.append(pool.pop())
-        roles.append(Role(line, span, _has_words(rest), borrowed, date_range, stated, borrowed + [line]))
+            if date_first is None:
+                # The first bare date line decides the layout: nothing header-like above it means date-first.
+                date_first = not (pool and _is_header_like(pool[-1]) and not find_date_ranges(pool[-1].text, today)
+                                  and (_looks_like_role_header(pool[-1]) or pool is preface))
+            if not date_first:
+                while pool and len(borrowed) < 3 and _looks_like_role_header(pool[-1]) and not find_date_ranges(pool[-1].text, today):
+                    if borrowed and len(_words(pool[-1].text)) > (12 if ROLE_KEY_RE.match(pool[-1].text) else 6):
+                        break
+                    if len(borrowed) == 2 and not ROLE_KEY_RE.match(pool[-1].text):
+                        break  # three header lines only in key-value blocks (Organisation / Designation / Location)
+                    borrowed.insert(0, pool.pop())
+                if not borrowed and pool and pool is preface and _is_header_like(pool[-1]):
+                    borrowed.append(pool.pop())
+        if has_rest and has_title_word(rest) and split_title_employer(rest)[1] is None:
+            pool = roles[-1].lines if roles else preface
+            if pool and len(pool) > (1 if roles else 0) and _is_employer_line(pool[-1], today) and not pool[-1].is_bullet:
+                borrowed.append(pool.pop())  # "Little Acorns Montessori | Pune" above "Vice Principal | Jan'26 - Ongoing"
+        role = Role(line, span, has_rest, borrowed, date_range, stated, borrowed + [line], heading)
+        roles.append(role)
+        pending_title = role if has_rest and not has_title_word(rest) else None
+        title, employer = split_title_employer(role.header())
+        pending_employer = role if title and has_title_word(title) and employer is None else None
     return roles, preface
+
+
+def _is_employer_line(line: Line, today: date) -> bool:
+    """A short organisation line ("Mudra Lending Solutions, Vadodara, Gujarat", "Skyline Telecom Ltd.")."""
+    text = line.text
+    words = _words(text)
+    if not _is_header_like(line) or len(words) > 8 or has_title_word(text) or find_date_ranges(text, today):
+        return False
+    capitalised = sum(1 for word in words if word[:1].isupper() or not word[:1].isalpha())
+    return bool(_EMPLOYER_RE.search(text)) or (bool(re.search(r",|\s\|\s", text)) and capitalised == len(words))
+
+
+def _is_title_line(line: Line, today: date) -> bool:
+    """A short line that is only a job title ("Senior Java Developer", "SDE-2")."""
+    text = line.text
+    return (_is_header_like(line) and len(_words(text)) <= 8 and has_title_word(text)
+            and not find_date_ranges(text, today) and not re.search(r"[.;:]$", text))
 
 
 def build_timeline(roles: list[Role], role_skills: list[set[str]],

@@ -42,10 +42,13 @@ _LIST_LABEL_RE = re.compile(
     r"tools (?:and|&) technologies|languages|frameworks|platforms|software|technical skills)\s*[:\-–]\s*",
     re.I,
 )
+# Rating glyphs ("English ●●●●○", "Python ★★★☆☆") end an item like a comma does.
 _ITEM_DELIMITER_RE = re.compile(
-    r"\s*(?:[,;|•·●▪/()\[\]{}:]|\s[-–—]\s|\s(?:and|or|&|with|plus|including|incl\.?|such as|like|e\.g\.?|eg)\s)\s*",
+    r"\s*(?:[,;|•·●○◯◐◑★☆▪■□◆◇✦✧/()\[\]{}:]|\s[-–—]\s|\s(?:and|or|&|with|plus|including|incl\.?|such as|like|e\.g\.?|eg)\s)\s*",
     re.I,
 )
+# A bullet or dash left in front of an item by a table cell ("| – Go", "» Workday").
+_ITEM_MARKER_RE = re.compile(r"^[\-–—»›•·▪*>]+$")
 _LEADING_QUALIFIERS = {
     "advanced", "basic", "basics", "intermediate", "expert", "expertise", "strong", "good", "solid", "proficient",
     "proficiency", "in", "with", "knowledge", "of", "experience", "experienced", "hands-on", "hands", "on", "working",
@@ -344,7 +347,7 @@ def _trim_item(text: str, start: int, end: int) -> tuple[int, int] | None:
     def bare(span: tuple[int, int]) -> str:
         return text[span[0]:span[1]].strip(".,:;!?*\"'").lower()
 
-    while words and bare(words[0]) in _LEADING_QUALIFIERS:
+    while words and (bare(words[0]) in _LEADING_QUALIFIERS or _ITEM_MARKER_RE.match(text[words[0][0]:words[0][1]])):
         words.pop(0)
     while words and (bare(words[-1]) in _TRAILING_QUALIFIERS or _VERSION_RE.match(bare(words[-1]) or "x")):
         words.pop()

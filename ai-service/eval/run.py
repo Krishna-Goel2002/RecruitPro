@@ -1,4 +1,4 @@
-"""Evaluation harness: ``python -m eval.run [--check] [--per-domain N] [--seed S] [--json FILE]``.
+"""Evaluation harness: ``python -m eval.run [--check] [--per-domain N] [--seed S] [--json FILE] [--corpus DIR]``.
 
 Generates the seeded synthetic gold set, runs every document through the real parser (file bytes
 in, ``ParseResponse`` out) and the matcher, and reports skill-extraction precision/recall/F1,
@@ -277,7 +277,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--per-domain", type=int, default=DEFAULT_PER_DOMAIN, help="base resumes per domain (each gets a twin)")
     parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
     parser.add_argument("--json", help="also write the metrics to this file")
+    parser.add_argument("--corpus", help="evaluate the parser and matcher on a ResumeLab corpus directory (tools/resumelab) instead; "
+                                         "report only, never a gate")
     args = parser.parse_args(argv)
+    if args.corpus:
+        from eval.corpus import evaluate_corpus, print_report
+        corpus_metrics = evaluate_corpus(args.corpus, workers=args.workers)
+        print_report(corpus_metrics)
+        if args.json:
+            with open(args.json, "w", encoding="utf-8") as handle:
+                json.dump(corpus_metrics, handle, indent=2)
+        return 0
     metrics = evaluate(args.seed, args.per_domain, args.workers)
     print("RecruitPro AI service - synthetic evaluation (synthetic data overstates real accuracy)")
     for key, value in metrics.items():

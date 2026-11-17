@@ -1,0 +1,358 @@
+[
+  {
+    "key": "job-01-nurse-mid",
+    "title": "ICU Staff Nurse",
+    "department": "Nursing",
+    "location": "Ahmedabad, Gujarat (On-site)",
+    "jobType": "FULL_TIME",
+    "experienceLevel": "MID",
+    "description": "ICU Staff Nurse - Harbourview General Hospital\n\nHarbourview General Hospital is hiring nurses for its expanding critical care unit.\n\nLocation: Ahmedabad, Gujarat (On-site) | Experience: 2+ years\n\nWhat you will do:\n- Provide safe, compassionate nursing care\n- Monitor and document patient condition\n- Work with doctors and the care team\n\nWhat we are looking for:\n- Registered Nurse (State Nursing Council registration)\n- Patient care and medication administration\n- BLS\n- 2+ years: clinical nursing experience\n- B.Sc Nursing or GNM\n- Willing to work rotating night shifts\n\nNice to have:\n- ACLS\n- Critical care\n\nWhat we offer:\n- Health insurance for you and your family\n- Hybrid working (3 days in office)\n- Annual learning budget\n- Performance bonus\n\nHarbourview General Hospital is an equal opportunity employer. We welcome applicants of every gender, religion, caste, disability and background.",
+    "vacancies": 2,
+    "requirements": [
+      {
+        "type": "CERTIFICATION",
+        "description": "Registered Nurse (State Nursing Council registration)",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Patient care and medication administration",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "BLS",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "ACLS",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Critical care",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EXPERIENCE",
+        "description": "2+ years: clinical nursing experience",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": 2,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EDUCATION",
+        "description": "B.Sc Nursing or GNM",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "OTHER",
+        "description": "Willing to work rotating night shifts",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      }
+    ]
+  },
+  {
+    "key": "job-02-data-analyst-senior",
+    "title": "Lead Data Analyst",
+    "department": "Analytics",
+    "location": "Mumbai, Maharashtra (On-site)",
+    "jobType": "FULL_TIME",
+    "experienceLevel": "SENIOR",
+    "description": "Lead Data Analyst - Kiranakart\n\nKiranakart is looking for a data analyst to own reporting and insights for our category and supply teams.\n\nLocation: Mumbai, Maharashtra (On-site) | Experience: 5+ years\n\nWhat you will do:\n- Build and maintain dashboards\n- Run deep dives that answer business questions\n- Design and read experiments\n\nWhat we are looking for:\n- Advanced SQL\n- Power BI or Tableau\n- 5+ years: experience in data analysis or business intelligence\n- Bachelor's degree in Statistics, Mathematics, Economics, Engineering or similar\n\nNice to have:\n- Python\n- Statistics and A/B testing\n- Excel\n- Microsoft Certified: Power BI Data Analyst Associate\n- Strong written and spoken communication\n\nWhat we offer:\n- Health insurance for you and your family\n- Hybrid working (3 days in office)\n- Annual learning budget\n- Performance bonus\n\nKiranakart is an equal opportunity employer. We welcome applicants of every gender, religion, caste, disability and background.",
+    "vacancies": 5,
+    "requirements": [
+      {
+        "type": "SKILL",
+        "description": "Advanced SQL",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Power BI or Tableau",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Python",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": "ADVANCED"
+      },
+      {
+        "type": "SKILL",
+        "description": "Statistics and A/B testing",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Excel",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EXPERIENCE",
+        "description": "5+ years: experience in data analysis or business intelligence",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": 5,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EDUCATION",
+        "description": "Bachelor's degree in Statistics, Mathematics, Economics, Engineering or similar",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "CERTIFICATION",
+        "description": "Microsoft Certified: Power BI Data Analyst Associate",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "OTHER",
+        "description": "Strong written and spoken communication",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      }
+    ]
+  },
+  {
+    "key": "job-03-sales-junior",
+    "title": "Inside Sales Executive",
+    "department": "Sales",
+    "location": "Kochi, Kerala (On-site)",
+    "jobType": "FULL_TIME",
+    "experienceLevel": "ENTRY",
+    "description": "Inside Sales Executive - Gulmohar Beverages\n\nGulmohar Beverages sells software to mid-sized businesses across India. We need a closer who loves the full sales cycle.\n\nLocation: Kochi, Kerala (On-site) | Experience: 1+ years\n\nWhat you will do:\n- Own the full sales cycle from first call to close\n- Build and manage your pipeline\n- Hit and beat quarterly quota\n\nWhat we are looking for:\n- B2B or SaaS sales\n- CRM tools such as Salesforce or HubSpot\n- Negotiation\n- 1+ years: B2B sales experience\n- Graduate in any discipline\n\nNice to have:\n- Lead generation\n- Fluent in English and Hindi\n- Willing to travel within the region\n\nWhat we offer:\n- Health insurance for you and your family\n- Hybrid working (3 days in office)\n- Annual learning budget\n- Performance bonus\n\nGulmohar Beverages is an equal opportunity employer. We welcome applicants of every gender, religion, caste, disability and background.",
+    "vacancies": 1,
+    "requirements": [
+      {
+        "type": "SKILL",
+        "description": "B2B or SaaS sales",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "CRM tools such as Salesforce or HubSpot",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Negotiation",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Lead generation",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EXPERIENCE",
+        "description": "1+ years: B2B sales experience",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": 1,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EDUCATION",
+        "description": "Graduate in any discipline",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "OTHER",
+        "description": "Fluent in English and Hindi",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "OTHER",
+        "description": "Willing to travel within the region",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      }
+    ]
+  },
+  {
+    "key": "job-04-backend-mid",
+    "title": "Backend Engineer (Java)",
+    "department": "Engineering",
+    "location": "Noida, Uttar Pradesh (On-site)",
+    "jobType": "FULL_TIME",
+    "experienceLevel": "MID",
+    "description": "Backend Engineer (Java) - Jalwave Networks\n\nWe are looking for a backend engineer to build and run the services behind our payments and lending products at Jalwave Networks. You will own APIs end to end - design, code, tests, release and on-call.\n\nLocation: Noida, Uttar Pradesh (On-site) | Experience: 3+ years\n\nWhat you will do:\n- Design, build and operate Java services that handle millions of transactions\n- Review code and raise the bar on testing\n- Work with product managers to break down features\n- Improve reliability, latency and cost of the platform\n\nWhat we are looking for:\n- Strong hands-on experience with Java\n- Spring Boot\n- Relational databases such as PostgreSQL or MySQL\n- 3+ years: professional backend development experience\n- Bachelor's degree in Computer Science or a related field\n\nNice to have:\n- Kafka\n- AWS or Azure\n- AWS Certified Solutions Architect - Associate\n- Able to join within 30 days\n\nWhat we offer:\n- Health insurance for you and your family\n- Hybrid working (3 days in office)\n- Annual learning budget\n- Performance bonus\n\nJalwave Networks is an equal opportunity employer. We welcome applicants of every gender, religion, caste, disability and background.",
+    "vacancies": 2,
+    "requirements": [
+      {
+        "type": "SKILL",
+        "description": "Strong hands-on experience with Java",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Spring Boot",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Relational databases such as PostgreSQL or MySQL",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "Kafka",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [
+          "RabbitMQ"
+        ],
+        "proficiency": null
+      },
+      {
+        "type": "SKILL",
+        "description": "AWS or Azure",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EXPERIENCE",
+        "description": "3+ years: professional backend development experience",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": 3,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "EDUCATION",
+        "description": "Bachelor's degree in Computer Science or a related field",
+        "mandatory": true,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "CERTIFICATION",
+        "description": "AWS Certified Solutions Architect - Associate",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      },
+      {
+        "type": "OTHER",
+        "description": "Able to join within 30 days",
+        "mandatory": false,
+        "knockout": false,
+        "minimumYears": null,
+        "alternatives": [],
+        "proficiency": null
+      }
+    ]
+  }
+]

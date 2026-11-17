@@ -1,0 +1,17 @@
+# Override for big LOCAL simulations only. Never use it for a shared or production stack.
+#
+#   docker compose -f docker-compose.yml -f tools/simulate/docker-compose.simulate.yml up --build -d
+#
+# Backend: turns the per-IP rate limits off (sign-up 5/min and sign-in 10/min would otherwise pace a 1000-resume run
+# to about 3.5 hours) and makes sure applying does not require a confirmed email. Run the simulator with --pacing off.
+# AI service: OCR on, so ResumeLab's scanned (image-only) PDFs are parsed instead of ending as NEEDS_OCR. The image
+# installs RapidOCR by default (WITH_OCR=true). The value is fixed here because .env usually says OCR_ENABLED=false.
+# To measure without OCR, or to go back to the normal settings: docker compose up -d backend ai-service
+services:
+  backend:
+    environment:
+      RATE_LIMIT_ENABLED: "false"
+      AUTH_REQUIRE_VERIFIED_EMAIL_TO_APPLY: "false"
+  ai-service:
+    environment:
+      OCR_ENABLED: "true"

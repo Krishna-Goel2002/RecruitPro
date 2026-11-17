@@ -19,7 +19,7 @@ _INVISIBLE_RE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066
 # (Word's second-level bullet) only before a capitalised word.
 _BULLET_RE = re.compile(
     "^(?:[\u2022\u25aa\u25cf\u25e6\u2023\u2219\u00b7\u25cb\u25a0\u25a1\u27a2\u27a4\u25ba\u25b6\u2713\u2714"
-    "\u2756\u2666\u25c6\u2043\u25b8\u25b9\u2794\u2192\ue000-\uf8ff]+\\s*"
+    "\u2756\u2666\u25c6\u2043\u25b8\u25b9\u2794\u2192\u00bb\u203a\u27a3\u21d2\u2605\u2606\ue000-\uf8ff]+\\s*"
     "|(?:[*\\-\u2013\u2014>]+|\\d{1,2}[.)])\\s+|o\\s+(?=[A-Z]))"
 )
 
@@ -59,6 +59,44 @@ def normalize_text(value: str) -> str:
     value = unicodedata.normalize("NFKC", _INVISIBLE_RE.sub("", value))
     value = _CONTROL_RE.sub(" ", value.replace(" ", " ").replace("\t", " "))
     return " ".join(value.split())
+
+
+_PAGE_NUMBER_RE = re.compile(r"^[\s\-–—|]*(?:page\s*)?\d{1,3}(?:\s*(?:/|of)\s*\d{1,3})?[\s\-–—|]*$", re.I)
+# "Megha Agarwal - Resume | 1/2", "Curriculum Vitae - Page 2 of 3", "CV | Page 2".
+_RUNNING_LINE_RE = re.compile(r"\b(?:resume|résumé|cv|curriculum\s+vitae|page)\b.{0,40}?(?:\bpage\s*\d{1,3}|\b\d{1,3}\s*(?:/|of)\s*\d{1,3})"
+                              r"[\s|)\]]*$", re.I)
+
+
+def strip_page_furniture(raw_lines: list[RawLine]) -> list[RawLine]:
+    """Drop page numbers, running headers/footers ("Name - Resume | 1/2") and lines repeated at the top or
+    bottom of several pages: they are not resume content, and a running line carries the candidate's name
+    into whatever section it lands in (finding W10)."""
+    pages: dict[str, list[int]] = {}
+    for index, line in enumerate(raw_lines):
+        if line.reference and line.reference.startswith("page:"):
+            pages.setdefault(line.reference, []).append(index)
+    edges: dict[int, str] = {}
+    for indexes in pages.values():
+        for index in indexes[:2] + indexes[-2:]:
+            edges[index] = normalize_text(raw_lines[index].text).lower()
+    seen_on: dict[str, set[str]] = {}
+    for index, text in edges.items():
+        if text and len(text.split()) <= 10:
+            seen_on.setdefault(text, set()).add(raw_lines[index].reference or "")
+    repeated = {text for text, refs in seen_on.items() if len(refs) >= 2}
+    first_seen: set[str] = set()
+    kept: list[RawLine] = []
+    for index, line in enumerate(raw_lines):
+        text = normalize_text(line.text)
+        if text and (_PAGE_NUMBER_RE.match(text) or (len(text.split()) <= 12 and _RUNNING_LINE_RE.search(text))):
+            continue
+        key = edges.get(index)
+        if key in repeated:
+            if key in first_seen:
+                continue  # the same header/footer again on a later page
+            first_seen.add(key)
+        kept.append(line)
+    return kept
 
 
 def build_document(raw_lines: list[RawLine]) -> tuple[str, list[Line]]:

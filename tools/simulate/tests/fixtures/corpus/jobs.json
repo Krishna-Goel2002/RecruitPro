@@ -1,0 +1,71 @@
+[
+  {
+    "key": "backend-java",
+    "title": "Senior Backend Engineer (Java)",
+    "department": "Engineering",
+    "location": "Bengaluru, India",
+    "jobType": "FULL_TIME",
+    "experienceLevel": "SENIOR",
+    "description": "Build and run the services behind our hiring platform: Java 21, Spring Boot, PostgreSQL.",
+    "vacancies": 2,
+    "requirements": [
+      {
+        "type": "SKILL",
+        "description": "Java",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": 4,
+        "alternatives": [
+          "Kotlin"
+        ],
+        "proficiency": "ADVANCED"
+      },
+      {
+        "type": "SKILL",
+        "description": "Spring Boot",
+        "mandatory": true,
+        "knockout": false
+      },
+      {
+        "type": "SKILL",
+        "description": "PostgreSQL",
+        "mandatory": false,
+        "knockout": false
+      }
+    ]
+  },
+  {
+    "key": "data-analyst",
+    "title": "Data Analyst",
+    "department": "Analytics",
+    "location": "Remote",
+    "jobType": "FULL_TIME",
+    "experienceLevel": "MID",
+    "description": "Own reporting and analysis for the commercial team using SQL and Python.",
+    "vacancies": 1,
+    "requirements": [
+      {
+        "type": "SKILL",
+        "description": "SQL",
+        "mandatory": true,
+        "knockout": true,
+        "minimumYears": 2
+      },
+      {
+        "type": "SKILL",
+        "description": "Python",
+        "mandatory": true,
+        "knockout": false
+      },
+      {
+        "type": "SKILL",
+        "description": "Tableau",
+        "mandatory": false,
+        "knockout": false,
+        "alternatives": [
+          "Power BI"
+        ]
+      }
+    ]
+  }
+]

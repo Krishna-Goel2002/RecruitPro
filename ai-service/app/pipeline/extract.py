@@ -16,10 +16,11 @@ from app.models.resume import ParsedFact, ParseFlag, ParseResponse, Timeline as 
 from app.pipeline import injection
 from app.pipeline.deidentify import RedactedText, deidentify, find_contacts
 from app.pipeline.education import detect_degree, is_school_line, parse_education
+from app.pipeline.ellipsis import with_elided
 from app.pipeline.ingest import DocumentParseError, extension_of, ingest
 from app.pipeline.ocr import OcrEngine
 from app.pipeline.sections import LIST_SECTIONS, Section, split_sections
-from app.pipeline.text import Flag, Line, RawLine, build_document
+from app.pipeline.text import Flag, Line, RawLine, build_document, strip_page_furniture
 from app.pipeline.timeline import Role, Timeline, build_timeline, segment_roles, split_title_employer
 from app.taxonomy.taxonomy import Skill, get_taxonomy, list_item_cores
 
@@ -31,7 +32,7 @@ _SKILL_SECTION_PRIORITY = {"SKILLS": 0, "EXPERIENCE": 1, "PROJECTS": 2, "CERTIFI
                            "LANGUAGES": 0, "SUMMARY": 5}
 # Hobbies are not professional evidence (and are a class/background proxy); references and personal
 # details are about other people or protected data.
-_NO_SKILL_SECTIONS = frozenset({"REFERENCES", "PERSONAL", "INTERESTS"})
+_NO_SKILL_SECTIONS = frozenset({"REFERENCES", "PERSONAL", "INTERESTS", "DECLARATION"})
 _CERT_RE = re.compile(r"\bcertif|\blicen[cs]e|\bcertificate\b", re.I)
 _UNKNOWN_ITEM_STOP = frozenset({"etc", "others", "other", "and more", "basics", "familiar", "other things", "many more",
                                 "more", "much more", "so on", "and so on", "others etc"})
@@ -68,7 +69,7 @@ class Analysis:
 def analyse(raw_lines: list[RawLine], *, hidden_text: str = "", today: date | None = None) -> Analysis:
     """Run the rule-based pipeline over already-ingested lines."""
     today = today or date.today()
-    text, lines = build_document(raw_lines)
+    text, lines = build_document(strip_page_furniture(raw_lines))
     sections = split_sections(lines, today)
     header_count = len(sections[0].lines) if sections and sections[0].kind == "HEADER" else 0
     redacted = deidentify(text, lines, header_count)
@@ -76,11 +77,11 @@ def analyse(raw_lines: list[RawLine], *, hidden_text: str = "", today: date | No
     def render(line: Line) -> str:
         return " ".join(redacted.slice(line.start, line.end).split())
 
-    mentions, unknown = _skill_mentions(sections, redacted)
+    mentions, unknown = _skill_mentions(sections, redacted, today)
     experience, timeline = _experience_facts(sections, mentions, render, today)
     facts = _cap(
         experience,
-        _education_facts(sections, render),
+        _education_facts(sections, render, today),
         _certification_facts(sections, render),
         _skill_facts(mentions, redacted),
         _unknown_skill_facts(unknown, redacted),
@@ -156,26 +157,77 @@ def _flags(flags: list[Flag]) -> list[ParseFlag]:
 
 
 # ------------------------------------------------------------------------------------- skills
-def _skill_mentions(sections: list[Section], redacted: RedactedText) -> tuple[list[_Mention], list[tuple[str, int, int, Line, Section]]]:
+# "Areas handled: Oracle, SAP MM, Excel" or "Key skills used: ...": a labelled list inside a role or summary.
+_LABELLED_LIST_RE = re.compile(r"^[A-Za-z][A-Za-z &/'’\-]{2,30}\s*:\s*\S")
+# "English | ●●●○○", "Python ★★★★☆": a rated list item, wherever the layout put it.
+_RATED_ITEM_RE = re.compile(r"^[^|●○◯★☆■□◆◇]{1,40}?\s*\|?\s*[●○◯◐◑★☆■□◆◇]{3,}\s*$")
+# Languages written inside personal details ("Languages Known : English, Hindi").
+_LANGUAGES_KEY_RE = re.compile(r"^\s*(?:languages?(?:\s+(?:known|spoken|proficiency))?|mother\s+tongue|linguistic\s+proficiency)"
+                               r"\s*[:|\-–]", re.I)
+# A skill name followed by one of these is part of an organisation's name ("The Linux Foundation",
+# "Northstar Logistics Pvt. Ltd."): the issuer or employer, not a skill claim.
+_ORG_FOLLOWER_RE = re.compile(r"^\s*(?:foundation|institute|academy|technologies|technology\s+(?:pvt|ltd|inc)|labs|pvt|private|"
+                              r"ltd|limited|inc|llc|llp|solutions|systems|consulting|corporation|corp|university|college|school|"
+                              r"hospital|council|society|association|gmbh)\b", re.I)
+# "Github: [link]", "LinkedIn - linkedin.com/in/x": a contact label, not a skill.
+_CONTACT_AFTER_RE = re.compile(r"^\s*[:|\-–]?\s*(?:\[(?:link|email|phone)\]|https?://|www\.|[\w.-]+\.(?:com|in|io|net|org)/)", re.I)
+
+
+def _skill_mentions(sections: list[Section], redacted: RedactedText, today: date) -> tuple[list[_Mention], list[tuple[str, int, int, Line, Section]]]:
     taxonomy = get_taxonomy()
     mentions: list[_Mention] = []
     unknown: list[tuple[str, int, int, Line, Section]] = []
     for section in sections:
-        if section.kind in _NO_SKILL_SECTIONS:
+        personal_languages = section.kind == "PERSONAL"
+        if section.kind in _NO_SKILL_SECTIONS and not personal_languages:
             continue
-        list_context = section.kind in LIST_SECTIONS
+        employers = _employer_spans(section, today) if section.kind == "EXPERIENCE" else []
         for line in section.lines:
             if section.kind == "EDUCATION" and (detect_degree(line.text) or is_school_line(line.text)):
                 continue  # a field of study is recorded on the EDUCATION fact, not claimed as a skill
+            if personal_languages and not _LANGUAGES_KEY_RE.match(line.text):
+                continue  # personal details are never evidence, except the languages someone speaks
+            list_context = section.kind in LIST_SECTIONS or personal_languages or _labelled_list(line.text) \
+                or bool(_RATED_ITEM_RE.match(line.text))
             line_mentions = []
-            for mention in taxonomy.find_mentions(line.text, list_context=list_context):
+            for mention in with_elided(line.text, taxonomy.find_mentions(line.text, list_context=list_context)):
+                if personal_languages and mention.skill.domain != "LANGUAGE":
+                    continue
                 start, end = line.start + mention.start, line.start + mention.end
-                if not redacted.overlaps_identifier(start, end):
-                    line_mentions.append(_Mention(mention.skill, start, end, line, section))
+                if redacted.overlaps_identifier(start, end) or any(a <= start and end <= b for a, b in employers):
+                    continue
+                if _ORG_FOLLOWER_RE.match(line.text[mention.end:]) or _CONTACT_AFTER_RE.match(redacted.slice(end, line.end)):
+                    continue
+                line_mentions.append(_Mention(mention.skill, start, end, line, section))
             mentions.extend(line_mentions)
             if section.kind == "SKILLS":
                 unknown.extend(_unknown_items(line, section, line_mentions, redacted))
     return mentions, unknown
+
+
+def _labelled_list(text: str) -> bool:
+    """"Areas handled: Fleet Management, Oracle, SAP MM": a label and at least three comma-separated items."""
+    label = _LABELLED_LIST_RE.match(text)
+    if not label:
+        return False
+    items = [item for item in re.split(r"\s*[,;|]\s*", text[text.index(":") + 1:]) if item.strip()]
+    return len(items) >= 3 and all(len(item.split()) <= 5 for item in items)
+
+
+def _employer_spans(section: Section, today: date) -> list[tuple[int, int]]:
+    """Source spans of employer names in the section's role headers ("Gyanpath Edtech", "Little Acorns
+    Montessori"): a skill word inside an employer's name is not a claim of that skill."""
+    spans: list[tuple[int, int]] = []
+    roles, _ = segment_roles(list(section.lines), today, section.heading)
+    for role in roles:
+        _, employer = split_title_employer(role.header())
+        if not employer or len(employer) < 3:
+            continue
+        for line in [role.anchor, *role.header_lines]:
+            index = line.text.find(employer)
+            if index >= 0:
+                spans.append((line.start + index, line.start + index + len(employer)))
+    return spans
 
 
 def _unknown_items(line: Line, section: Section, mentions: list[_Mention], redacted: RedactedText) -> list[tuple[str, int, int, Line, Section]]:
@@ -241,7 +293,7 @@ def _experience_facts(sections: list[Section], mentions: list[_Mention], render,
     for section in sections:
         if section.kind != "EXPERIENCE":
             continue
-        section_roles, preface = segment_roles(list(section.lines), today)
+        section_roles, preface = segment_roles(list(section.lines), today, section.heading)
         roles.extend((role, section) for role in section_roles)
         if not section_roles:
             loose.extend((line, section) for line in preface)
@@ -258,6 +310,8 @@ def _experience_facts(sections: list[Section], mentions: list[_Mention], render,
                            ("endDate", role.end_date), ("months", role.months)):
             if value is not None:
                 attributes[key] = value
+        if role.is_internship:
+            attributes["internship"] = True  # counted as experience; the flag lets reviewers weigh it
         value = header or render(role.anchor)
         facts.append(ParsedFact(
             type="EXPERIENCE", value=value[:1000], normalizedValue=value.lower()[:1000],
@@ -274,7 +328,21 @@ def _experience_facts(sections: list[Section], mentions: list[_Mention], render,
 
 
 # ---------------------------------------------------------------------------------- education
-def _education_facts(sections: list[Section], render) -> list[ParsedFact]:
+# A degree still in progress: "(expected)", "pursuing", "till 7th semester", "final year".
+_IN_PROGRESS_RE = re.compile(r"\b(?:pursuing|expected|ongoing|in\s+progress|appearing|currently\s+(?:studying|enrolled|pursuing)|"
+                             r"till\s+\w+\s+sem(?:ester)?|final\s+year|(?:1st|2nd|3rd|[4-8]th)\s+(?:year|sem(?:ester)?)|"
+                             r"present|till\s+date)\b", re.I)
+_YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+
+
+def _in_progress(text: str, today: date) -> bool:
+    years = [int(year) for year in _YEAR_RE.findall(text)]
+    if years and max(years) < today.year:
+        return False  # finished by its own dates ("final year project" in a 2015 - 2019 degree)
+    return bool(_IN_PROGRESS_RE.search(text)) or (bool(years) and max(years) > today.year)
+
+
+def _education_facts(sections: list[Section], render, today: date) -> list[ParsedFact]:
     entries: list[tuple[list[Line], Section]] = []
     education_sections = [section for section in sections if section.kind == "EDUCATION"]
     for section in education_sections:
@@ -299,6 +367,8 @@ def _education_facts(sections: list[Section], render) -> list[ParsedFact]:
             attributes["degreeLevel"] = info.level
         if info.field_label:
             attributes["field"] = info.field_label
+        if info.level and _in_progress(" ".join(line.text for line in entry), today):
+            attributes["inProgress"] = True  # not yet completed: it does not meet a degree requirement on its own
         value = render(first)
         facts.append(ParsedFact(type="EDUCATION", value=value[:1000], normalizedValue=value.lower()[:1000],
                                 evidence=" · ".join(render(line) for line in entry)[:1000], sourceSection=section.label,
@@ -314,20 +384,39 @@ def _certification_facts(sections: list[Section], render) -> list[ParsedFact]:
     for section in sections:
         if section.kind not in {"CERTIFICATIONS", "COURSES", "ACHIEVEMENTS", "SUMMARY", "OTHER"}:
             continue
-        for line in section.lines:
-            if section.kind != "CERTIFICATIONS" and not _CERT_RE.search(line.text):
+        for group in _certification_items(section):
+            line = group[0]
+            text = " ".join(item.text for item in group)
+            if section.kind != "CERTIFICATIONS" and not _CERT_RE.search(text):
                 continue
-            if not re.search(r"[A-Za-z]{2,}", line.text):
+            if not re.search(r"[A-Za-z]{2,}", text):
                 continue
-            value = render(line)
+            value = " ".join(render(item) for item in group)
             normalized = " ".join(re.sub(r"[^a-z0-9+#. ]", " ", value.lower()).split())
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
             facts.append(ParsedFact(type="CERTIFICATION", value=value[:1000], normalizedValue=normalized[:1000],
                                     evidence=value[:1000], sourceSection=section.label, sourceReference=line.reference,
-                                    spanStart=line.start, spanEnd=line.end))
+                                    spanStart=line.start, spanEnd=group[-1].end))
     return facts
+
+
+def _certification_items(section: Section) -> list[list[Line]]:
+    """Lines grouped into items: a certificate title wrapped over several lines is one item.
+
+    In a bulleted list every non-bullet line continues the bullet above it; otherwise a line that
+    starts in lower case or with "(" ("(Microsoft, 2025)") continues the previous one."""
+    bulleted = any(line.is_bullet for line in section.lines)
+    items: list[list[Line]] = []
+    for line in section.lines:
+        continues = items and ((bulleted and not line.is_bullet) or (
+            not line.is_bullet and re.match(r"^[(a-z]", line.text) and len(items[-1]) < 3))
+        if continues and len(items[-1]) < 4:
+            items[-1].append(line)
+        else:
+            items.append([line])
+    return items
 
 
 # ------------------------------------------------------------------------------------ contacts

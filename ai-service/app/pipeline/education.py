@@ -22,9 +22,9 @@ _DEGREES: tuple[tuple[re.Pattern[str], str, str | None], ...] = tuple(
     for pattern, flags, level, field in (
         (r"\bPh\.?\s?D\b\.?|\bD\.?\s?Phil\b|\bdoctor(?:ate)?\s+of\s+philosophy\b|\bdoctorate\b", re.I, "DOCTORATE", None),
         (r"\bM\.?\s?Tech\b|\bmaster\s+of\s+(?:technology|engineering)\b", re.I, "MASTER", None),
-        (r"\bM\.\s?E\.(?=\s|$)|\bM\.\s?E\b(?!\.)" + _DOTTED_FOLLOW + r"|\bME" + _FOLLOW, 0, "MASTER", None),
+        (r"\bM\.\s?E\.(?=[\s,;|)]|$)|\bM\.\s?E\b(?!\.)" + _DOTTED_FOLLOW + r"|\bME" + _FOLLOW, 0, "MASTER", None),
         (r"\bM\.?\s?Sc\b\.?|\bmaster\s+of\s+science\b", re.I, "MASTER", None),
-        (r"\bM\.\s?S\.(?=\s|$)|\bM\.\s?S\b(?!\.)" + _DOTTED_FOLLOW + r"|\bMS" + _FOLLOW, 0, "MASTER", None),
+        (r"\bM\.\s?S\.(?=[\s,;|)]|$)|\bM\.\s?S\b(?!\.)" + _DOTTED_FOLLOW + r"|\bMS" + _FOLLOW, 0, "MASTER", None),
         (r"\bM\.?\s?C\.?\s?A\b\.?|\bmaster\s+of\s+computer\s+applications?\b", re.I, "MASTER", "computer science"),
         (r"\bM\.?\s?B\.?\s?A\b\.?|\bmaster\s+of\s+business\s+administration\b|\bPGDM\b|\bPGDBA\b", re.I, "MASTER", "business"),
         (r"\bM\.?\s?Com\b\.?|\bmaster\s+of\s+commerce\b", re.I, "MASTER", "commerce"),
@@ -33,13 +33,31 @@ _DEGREES: tuple[tuple[re.Pattern[str], str, str | None], ...] = tuple(
         (r"\bM\.?\s?Ed\b\.?|\bmaster\s+of\s+education\b", re.I, "MASTER", "education"),
         (r"\bM\.?\s?Des\b\.?|\bmaster\s+of\s+design\b", re.I, "MASTER", "design"),
         (r"\bM\.?\s?Phil\b\.?", re.I, "MASTER", None),
+        (r"\bM\.?\s?Stat\b\.?|\bmaster\s+of\s+statistics\b", re.I, "MASTER", "mathematics"),
+        (r"\bM\.?\s?S\.?\s?W\b\.?|(?i:\bmaster\s+of\s+social\s+work\b)", 0, "MASTER", "humanities"),
+        (r"\bM\.?\s?J\.?\s?M\.?\s?C\b\.?|\bMMC\b|\bmaster\s+of\s+(?:journalism|mass\s+communication)\b", re.I, "MASTER", "journalism"),
+        (r"\bM\.?\s?H\.?\s?M\b\.?|(?i:\bmaster\s+of\s+hotel\s+management\b)", 0, "MASTER", "hospitality"),
+        (r"\bM\.?\s?Arch\b\.?|\bmaster\s+of\s+architecture\b", re.I, "MASTER", "architecture"),
+        (r"\bMPH\b|\bmaster\s+of\s+public\s+health\b", 0, "MASTER", "public health"),
+        # Indian professional qualifications, ranked with master's degrees (as Indian employers and the UGC treat
+        # them). Intermediate stages ("CA Inter", "CS Executive", "CFA Level II") are not completed qualifications.
+        (r"(?i:\bchartered\s+accountan(?:t|cy)\b(?!\s*(?:\(|-|–)?\s*(?:inter|foundation|student|aspirant|pursuing)))|"
+         r"\b[AF]?CA\b(?=\s*(?:\(ICAI\)|[,\-–|]\s*ICAI\b|\s+(?i:final|qualified)\b))|(?:^|(?<=\|\s))CA(?=\s*(?:$|[,|(]))"
+         r"(?!\s*\(?(?i:inter|foundation))", 0, "MASTER", "commerce"),
+        (r"(?i:\bcompany\s+secretary(?:ship)?\b(?!\s*(?:\(|-|–)?\s*(?:executive|foundation|student|pursuing)))|"
+         r"\bICSI\b(?!\W*(?i:executive|foundation))|\b[AF]?CS\s*(?:\(|,|-|–)?\s*(?:ICSI|(?i:professional|final))\b", 0,
+         "MASTER", "law"),
+        (r"(?i:\bcost\s+(?:and|&)\s+management\s+accountan(?:t|cy)\b)|\b(?:ICWA|ICWAI|ICMAI)\b|"
+         r"\bCMA\b(?!\s*(?:\(|-|–)?\s*(?i:inter|foundation|part))", 0, "MASTER", "commerce"),
+        (r"\bCFA\b(?!\s*(?:\(|-|–)?\s*(?i:level\s*(?:i{1,2}|1|2)\b|candidate|pursuing))|(?i:\bchartered\s+financial\s+analyst\b)", 0,
+         "MASTER", "commerce"),
         (r"\bmaster\s+of\s+arts\b", re.I, "MASTER", None),
-        (r"\bM\.\s?A\.(?=\s|$)|\bM\.\s?A\b(?!\.)" + _DOTTED_FOLLOW + r"|\bMA" + _FOLLOW, 0, "MASTER", None),
+        (r"\bM\.\s?A\.(?=[\s,;|)]|$)|\bM\.\s?A\b(?!\.)" + _DOTTED_FOLLOW + r"|\bMA" + _FOLLOW, 0, "MASTER", None),
         # A bare "Master" is a title or a certification ("Scrum Master", "Master Trainer"), not a degree.
         (r"\bmaster(?:'s|’s|s)\b(?:\s+degree)?|\bmaster\s+(?:degree|in|of)\b|\bpost[\s-]?graduat(?:e|ion)\b|"
          r"\bmaster(?=\s*(?:/|or\b|and\b)\s*bachelor)|(?<=bachelor/)master\b|(?<=bachelor or )master\b", re.I, "MASTER", None),
         (r"\bB\.?\s?Tech\b\.?|\bbachelor\s+of\s+(?:technology|engineering)\b", re.I, "BACHELOR", None),
-        (r"\bB\.\s?E\.(?=\s|$)|\bB\.\s?E\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBE" + _FOLLOW, 0, "BACHELOR", None),
+        (r"\bB\.\s?E\.(?=[\s,;|)]|$)|\bB\.\s?E\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBE" + _FOLLOW, 0, "BACHELOR", None),
         (r"\bB\.?\s?C\.?\s?A\b\.?|\bbachelor\s+of\s+computer\s+applications?\b", re.I, "BACHELOR", "computer science"),
         (r"\bB\.?\s?B\.?\s?A\b\.?|\bbachelor\s+of\s+business\s+administration\b|\bBMS\b", re.I, "BACHELOR", "business"),
         (r"\bB\.?\s?Com\b\.?|\bbachelor\s+of\s+commerce\b", re.I, "BACHELOR", "commerce"),
@@ -48,12 +66,21 @@ _DEGREES: tuple[tuple[re.Pattern[str], str, str | None], ...] = tuple(
         (r"\bB\.?\s?Ed\b\.?|\bB\.?\s?El\.?\s?Ed\b\.?|\bbachelor\s+of\s+(?:elementary\s+)?education\b", re.I, "BACHELOR", "education"),
         (r"\bB\.?\s?Des\b\.?|\bbachelor\s+of\s+design\b|\bB\.?\s?F\.?\s?A\b\.?|\bbachelor\s+of\s+fine\s+arts\b", re.I, "BACHELOR", "design"),
         (r"\bB\.?\s?Arch\b\.?|\bbachelor\s+of\s+architecture\b", re.I, "BACHELOR", "architecture"),
+        (r"\bB\.?\s?H\.?\s?M\.?(?:\s?C\.?\s?T)?\b\.?|(?i:\bbachelor\s+of\s+hotel\s+management\b)", 0, "BACHELOR", "hospitality"),
+        (r"\bB\.?\s?Stat\b\.?|\bbachelor\s+of\s+statistics\b", re.I, "BACHELOR", "mathematics"),
+        (r"\bB\.?\s?S\.?\s?W\b\.?|(?i:\bbachelor\s+of\s+social\s+work\b)", 0, "BACHELOR", "humanities"),
+        (r"\bB\.?\s?J\.?\s?M\.?\s?C\b\.?|\bBAJMC\b|\bBMM\b|\bbachelor\s+of\s+(?:journalism|mass\s+(?:media|communication))\b",
+         re.I, "BACHELOR", "journalism"),
+        (r"\bB\.?\s?A\.?\s?M\.?\s?S\b\.?|\bB\.?\s?H\.?\s?M\.?\s?S\b\.?|\bBUMS\b|\bBNYS\b", 0, "BACHELOR", "medicine"),
+        (r"\bB\.?\s?V\.?\s?Sc\b\.?|\bbachelor\s+of\s+veterinary\s+science\b", re.I, "BACHELOR", "biology"),
+        (r"\bB\.?\s?Voc\b\.?|\bbachelor\s+of\s+vocation(?:al\s+studies)?\b", re.I, "BACHELOR", None),
+        (r"\bACCA\b|\bCPA\b(?!\s*(?i:candidate|pursuing))|(?i:\bcertified\s+public\s+accountant\b)", 0, "BACHELOR", "commerce"),
         (r"\bMBBS\b|\bBDS\b|\bbachelor\s+of\s+medicine\b", re.I, "BACHELOR", "medicine"),
         (r"\bB\.?\s?P\.?\s?T\b\.?|\bbachelor\s+of\s+physiotherapy\b", re.I, "BACHELOR", "medicine"),
         (r"\bB\.?\s?Sc\b\.?|\bbachelor\s+of\s+science\b", re.I, "BACHELOR", None),
-        (r"\bB\.\s?S\.(?=\s|$)|\bB\.\s?S\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBS" + _FOLLOW, 0, "BACHELOR", None),
+        (r"\bB\.\s?S\.(?=[\s,;|)]|$)|\bB\.\s?S\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBS" + _FOLLOW, 0, "BACHELOR", None),
         (r"\bbachelor\s+of\s+arts\b", re.I, "BACHELOR", None),
-        (r"\bB\.\s?A\.(?=\s|$)|\bB\.\s?A\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBA" + _FOLLOW, 0, "BACHELOR", None),
+        (r"\bB\.\s?A\.(?=[\s,;|)]|$)|\bB\.\s?A\b(?!\.)" + _DOTTED_FOLLOW + r"|\bBA" + _FOLLOW, 0, "BACHELOR", None),
         (r"\bbachelor(?:'s|’s|s)\b(?:\s+degree)?|\bbachelor\s+(?:degree|in|of)\b|\bundergraduate\s+degree\b|"
          r"\bbachelor(?=\s*(?:/|or\b|and\b)\s*master)|(?<=master/)bachelor\b|(?<=master or )bachelor\b|"
          r"\bgraduat(?:e|ion)\s+(?:degree|in)\b|\bany\s+graduate\b", re.I, "BACHELOR", None),
@@ -64,7 +91,10 @@ _DEGREES: tuple[tuple[re.Pattern[str], str, str | None], ...] = tuple(
         (r"\bITI\b", 0, "DIPLOMA", None),
     )
 )
-_SCHOOL_RE = re.compile(r"\b(?:12th|10th|XII|HSC|SSC|higher\s+secondary|senior\s+secondary|secondary\s+school|matriculation|intermediate|class\s+(?:x|xii|10|12))\b", re.I)
+_SCHOOL_RE = re.compile(
+    r"\b(?:12th|10th|XII|HSC|SSC|HSSC|SSLC|AISSCE|AISSE|PUC|higher\s+secondary|senior\s+secondary|secondary\s+school|"
+    r"matriculation|matric|intermediate|pre[\s-]?university|class\s+(?:x|xii|10|12)(?:th)?|std\.?\s*(?:x|xii|10|12)(?:th)?|"
+    r"grade\s+(?:10|12)|(?:CBSE|ICSE|ISC)(?=\s*(?:\||,|-|–|\(|$|board))|state\s+board)\b|(?<![\w+])10\s*\+\s*2(?![\w+])", re.I)
 
 FIELD_FAMILIES: dict[str, tuple[str, ...]] = {
     "computer science": ("computer science", "computer science and engineering", "computer engineering",

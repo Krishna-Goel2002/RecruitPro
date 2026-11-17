@@ -1,0 +1,14 @@
+# ResumeLab - realistic resume + job corpus generator (Python 3.10+). Exact versions verified together on Python 3.10.
+# Install: pip install -r tools/resumelab/requirements.txt
+# Nothing here reaches the network at generation time; --llm (optional) uses only the standard library (urllib).
+
+reportlab==5.0.1        # PDF rendering (selectable text, embedded TrueType subsets)
+python-docx==1.2.0      # DOCX rendering (styles, tables, headers/footers, VML text boxes)
+pillow==12.3.0          # photo placeholder, scanned-page effects
+pypdfium2==5.14.0       # rasterising PDF pages for the scanned (image-only) format
+
+# Tests only
+pypdf==6.21.2           # text extraction in tests
+pytest==8.4.2
+
+# Optional, detected at run time: LibreOffice (`soffice`) for --formats doc (legacy Word 97); without it .docx is written instead.

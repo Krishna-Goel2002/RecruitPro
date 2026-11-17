@@ -169,22 +169,50 @@ def _header_name(lines: list[Line], header_count: int) -> tuple[list[str], str |
         if labelled and _name_words(labelled.group("name")):
             return _name_words(labelled.group("name")), labelled.group("name").strip()
     for line in lines[:limit]:
-        text = line.text
-        if EMAIL_RE.search(text) or URL_RE.search(text) or re.search(r"\d|[|@:,;]", text) or len(text) > 45:
-            continue
-        words = _name_words(text)
-        raw_words = [word for word in _NAME_WORD_RE.findall(text) if word.lower() not in _HONORIFIC_WORDS]
-        initials = [word for word in raw_words if len(word) == 1]
-        if not 1 <= len(words) <= 4 or len(raw_words) > 6 or (len(words) == 1 and not initials):
-            continue
-        if not all(word[0].isupper() for word in raw_words if word.lower() not in _NAME_PARTICLES):
-            continue
-        if any(word.lower() in _NOT_NAME_WORDS for word in raw_words) or has_title_word(text) or detect_degree(text):
-            continue
-        if len(words) == 1 and _common_heading_or_skill(words[0]):
-            continue
-        return words, _HONORIFIC_PREFIX_RE.sub("", text.strip())
+        if _name_like(line.text):
+            return _name_words(line.text), _HONORIFIC_PREFIX_RE.sub("", line.text.strip())
+    # No name in the header block: a sidebar or banner layout can put the contact block or a heading
+    # first. A name-like line elsewhere is the candidate's name when the email or profile handle spells it.
+    handles = _contact_handles("\n".join(line.text for line in lines[:120]))
+    if handles:
+        for line in lines[:120]:
+            words = _name_words(line.text)
+            if len(words) >= 2 and _name_like(line.text) and any(
+                    len(word) >= 3 and word.lower() in handle for word in words for handle in handles):
+                return words, _HONORIFIC_PREFIX_RE.sub("", line.text.strip())
+        # A name wrapped one word per line ("Khushi" / "Irani" in a narrow table cell or sidebar).
+        singles = [line.text.strip() for line in lines[:120]
+                   if len(_name_words(line.text)) == 1 and len(line.text.split()) == 1 and line.text.strip()[:1].isupper()
+                   and len(line.text.strip()) >= 4 and line.text.strip().isalpha()
+                   and not _common_heading_or_skill(line.text.strip()) and not has_title_word(line.text)
+                   and any(line.text.strip().lower() in handle for handle in handles)]
+        if singles:
+            words = list(dict.fromkeys(singles))[:3]
+            return words, None
     return [], None
+
+
+def _name_like(text: str) -> bool:
+    if EMAIL_RE.search(text) or URL_RE.search(text) or re.search(r"\d|[|@:,;]", text) or len(text) > 45:
+        return False
+    words = _name_words(text)
+    raw_words = [word for word in _NAME_WORD_RE.findall(text) if word.lower() not in _HONORIFIC_WORDS]
+    initials = [word for word in raw_words if len(word) == 1]
+    if not 1 <= len(words) <= 4 or len(raw_words) > 6 or (len(words) == 1 and not initials):
+        return False
+    if not all(word[0].isupper() for word in raw_words if word.lower() not in _NAME_PARTICLES):
+        return False
+    if any(word.lower() in _NOT_NAME_WORDS for word in raw_words) or has_title_word(text) or detect_degree(text):
+        return False
+    return not (len(words) == 1 and _common_heading_or_skill(words[0]))
+
+
+def _contact_handles(text: str) -> list[str]:
+    """Lower-case email local parts and profile handles ("neha_tiwari99", "tsidhu")."""
+    handles = [match.group(0).split("@", 1)[0].lower() for match in EMAIL_RE.finditer(text)]
+    handles += [match.group(0).rstrip("/").rsplit("/", 1)[-1].lower() for match in URL_RE.finditer(text)
+                if "/" in match.group(0).rstrip("/")]
+    return [handle for handle in handles if len(handle) >= 3]
 
 
 def _common_heading_or_skill(word: str) -> bool:

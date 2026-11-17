@@ -3,7 +3,9 @@
 * PDF - pdfplumber words with positions. Characters that are white (luminance >= 0.95, unless
   drawn on a dark filled rectangle), smaller than 4 pt, or outside the page are hidden: they are
   excluded and reported as ``HIDDEN_TEXT``. A vertical gutter found by x-coverage clustering marks
-  a two-column layout; each band is then read left column first, then right (``TWO_COLUMN_LAYOUT``).
+  a two-column layout (``TWO_COLUMN_LAYOUT``): a sidebar is read after the whole main text, balanced
+  columns band by band, left then right. Label/value tables and right-aligned date/rating columns
+  are not columns.
 * DOCX - every paragraph in document order (body, tables, text boxes, headers, footers). Runs
   that are hidden (``w:vanish``), white or smaller than 4 pt - directly or through styles - are
   excluded and reported.
@@ -165,9 +167,21 @@ def _hidden_char_ids(page: Any) -> tuple[set[int], str]:
     hidden: set[int] = set()
     hidden_chars: list[str] = []
     previous: dict[str, Any] | None = None
+    last_char: dict[str, Any] | None = None  # the previous character, visible or not
+    overflowing = False
     for char in page.chars:
         lum = _luminance(char.get("non_stroking_color"))
         off_page = char["x1"] <= x0 or char["x0"] >= x1 or char["bottom"] <= top or char["top"] >= bottom
+        # A long URL or line that simply runs past the right edge is a layout accident, not hidden text:
+        # it is excluded from analysis without a HIDDEN_TEXT flag.
+        continues_run = last_char is not None and abs(char["top"] - last_char["top"]) <= 2 \
+            and -1.5 <= char["x0"] - last_char["x1"] <= max(2.0, 0.6 * float(char.get("size") or 10)) \
+            and (last_char["x1"] > x0 or overflowing)
+        overflowing = off_page and char["x0"] >= x1 - 1 and continues_run and (overflowing or last_char["x0"] < x1)
+        last_char = char
+        if overflowing:
+            hidden.add(id(char))
+            continue
         tiny = float(char.get("size") or 0) < HIDDEN_FONT_SIZE
         white = lum is not None and lum >= HIDDEN_LUMINANCE
         if white:
@@ -227,12 +241,41 @@ def _column_gap(words: list[dict[str, Any]], width: float) -> tuple[float, float
         left_rows, right_rows = _group_rows(left), _group_rows(right)
         if len(left) < minimum or len(right) < minimum or len(left_rows) < 4 or len(right_rows) < 4:
             continue
+        if _key_value_table(left_rows, right_rows):
+            continue
         # A real right column is left-aligned; words past a ragged edge start anywhere.
         starts = [row[0]["x0"] for row in right_rows]
         margin = statistics.median(starts)
         if sum(1 for x in starts if abs(x - margin) <= 8) / len(starts) >= 0.6:
             return gap
     return None
+
+
+# Cells that annotate the row they sit on: dates ("Dec-2025 - Till date", "2019 - 2021"), rating glyphs, scores.
+_ANNOTATION_RE = re.compile(r"(?:19|20)\d{2}|\b(?:present|till\s+date|current|now|ongoing)\b|[●○◯★☆■□◆◇]{2,}|\d+(?:\.\d+)?\s*%|"
+                            r"\b\d+(?:\.\d+)?\s*/\s*(?:10|5|4)\b", re.I)
+
+
+def _key_value_table(left_rows: list[list[dict[str, Any]]], right_rows: list[list[dict[str, Any]]]) -> bool:
+    """Two "columns" that are really one table: label/value rows ("Father's Name   : ...") or rows with a
+    right-aligned annotation (dates, rating dots, scores) next to a title or a skill.
+
+    Columns of a two-column page usually have independent baselines; the cells of a table row share one.
+    Shared baselines alone are not enough (two columns with the same leading line up too), so the rows
+    must also read as label/value pairs: a colon at the boundary on at least half of them."""
+    fewer, other = (left_rows, right_rows) if len(left_rows) <= len(right_rows) else (right_rows, left_rows)
+    tops = [row[0]["top"] for row in other]
+    aligned = sum(1 for row in fewer if any(abs(row[0]["top"] - top) <= 2.0 for top in tops))
+    if aligned < 4 or aligned / len(fewer) < 0.75:
+        return False
+    annotations = sum(1 for row in fewer if _ANNOTATION_RE.search(" ".join(word["text"] for word in row)) and len(row) <= 6)
+    if annotations / len(fewer) >= 0.6:
+        return True  # a right-aligned date or rating column next to role titles / skills, not a second column
+    right_tops = {round(row[0]["top"]): row for row in right_rows}
+    colons = sum(1 for row in left_rows
+                 if row[-1]["text"].endswith(":") or any(abs(top - row[0]["top"]) <= 2.0 and right[0]["text"].startswith(":")
+                                                         for top, right in right_tops.items()))
+    return colons / len(left_rows) >= 0.5
 
 
 def _row_to_line(row: list[dict[str, Any]], body_size: float, reference: str) -> RawLine:
@@ -261,26 +304,47 @@ def _segments(row: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return segments
 
 
-def _layout_lines(words: list[dict[str, Any]], width: float, reference: str, body_size: float) -> tuple[list[RawLine], bool]:
+def _layout_lines(words: list[dict[str, Any]], width: float, reference: str,
+                  body_size: float) -> tuple[list[RawLine], bool, list[RawLine]]:
+    """(main lines, two-column?, sidebar lines).
+
+    In a sidebar layout (one column clearly narrower than the other) the main column is read first and
+    the sidebar is returned separately, so the caller can put every page's sidebar after the whole main
+    text: the name and headline at the top of the main column stay in the header block, and a role that
+    continues on the next page is not split by the sidebar's sections. Balanced columns are read left
+    then right, band by band."""
     gap = _column_gap(words, width)
     if gap is None:
-        return [_row_to_line(row, body_size, reference) for row in _group_rows(words)], False
+        return [_row_to_line(row, body_size, reference) for row in _group_rows(words)], False, []
     gap_left, gap_right = gap
     centre = (gap_left + gap_right) / 2
+    left_extent = gap_left - min(word["x0"] for word in words)
+    right_extent = max(word["x1"] for word in words) - gap_right
+    sidebar = "left" if left_extent < 0.6 * right_extent else "right" if right_extent < 0.6 * left_extent else None
     lines: list[RawLine] = []
+    side_lines: list[RawLine] = []
     left: list[dict[str, Any]] = []
     right: list[dict[str, Any]] = []
 
     def flush() -> None:
-        lines.extend(_row_to_line(row, body_size, reference) for row in _group_rows(left))
-        lines.extend(_row_to_line(row, body_size, reference) for row in _group_rows(right))
+        left_lines = [_row_to_line(row, body_size, reference) for row in _group_rows(left)]
+        right_lines = [_row_to_line(row, body_size, reference) for row in _group_rows(right)]
+        if sidebar == "left":
+            side_lines.extend(left_lines)
+            lines.extend(right_lines)
+        elif sidebar == "right":
+            lines.extend(left_lines)
+            side_lines.extend(right_lines)
+        else:
+            lines.extend(left_lines + right_lines)
         left.clear()
         right.clear()
 
     def full_width(segment: list[dict[str, Any]]) -> bool:
         # Runs through the gutter and well into the right column (a name or contact line above the
         # columns); a sidebar heading that merely overflows into the gutter does not.
-        return segment[0]["x0"] < gap_right - 2 and segment[-1]["x1"] > gap_right + 20 \
+        # It must start before the gutter: a main-column title merely outdented into the gutter is not one.
+        return segment[0]["x0"] < gap_left + 0.25 * (gap_right - gap_left) and segment[-1]["x1"] > gap_right + 20 \
             and any(word["x1"] > gap_left + 2 and word["x0"] < gap_right - 2 for word in segment)
 
     for row in _group_rows(words):
@@ -294,7 +358,7 @@ def _layout_lines(words: list[dict[str, Any]], width: float, reference: str, bod
                 for word in segment:
                     (left if (word["x0"] + word["x1"]) / 2 < centre else right).append(word)
     flush()
-    return lines, True
+    return lines, True, side_lines
 
 
 def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
@@ -303,6 +367,7 @@ def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
     result = IngestResult("pdf")
     hidden_parts: list[str] = []
     two_column_pages: list[int] = []
+    sidebar_lines: list[RawLine] = []
     try:
         with pdfplumber.open(io.BytesIO(content)) as pdf:
             if not pdf.pages:
@@ -324,13 +389,15 @@ def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
                 if not words:
                     continue
                 body_size = statistics.median(float(word.get("size") or 10) for word in words)
-                lines, two_column = _layout_lines(words, float(page.width), f"page:{number}", body_size)
+                lines, two_column, side = _layout_lines(words, float(page.width), f"page:{number}", body_size)
                 if two_column:
                     two_column_pages.append(number)
                 result.lines.extend(lines)
+                sidebar_lines.extend(side)
                 characters += sum(len(word["text"]) for word in words)
                 if characters > MAX_TEXT_CHARACTERS:
                     raise DocumentParseError("TEXT_LIMIT_EXCEEDED")
+            result.lines.extend(sidebar_lines)
             if result.text_length < MIN_TEXT_CHARACTERS and (result.has_images or vector_paths >= VECTOR_TEXT_PATHS):
                 recognised = _run_ocr(lambda: ocr.ocr_pdf_pages(pdf, engine, MAX_PDF_PAGES)) if engine is not None else None
                 if recognised is not None:
@@ -349,7 +416,7 @@ def _read_pdf(content: bytes, engine: ocr.OcrEngine | None) -> IngestResult:
     _add_hidden_flag(result)
     if two_column_pages:
         result.flags.append(Flag("TWO_COLUMN_LAYOUT", f"Two-column layout detected on page(s) {', '.join(map(str, two_column_pages))}; "
-                                                      "columns were read left then right."))
+                                                      "columns were read separately (main column first when one is a sidebar)."))
     return result
 
 

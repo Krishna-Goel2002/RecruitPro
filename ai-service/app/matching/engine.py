@@ -28,6 +28,8 @@ from datetime import date
 from functools import lru_cache
 
 from app.matching.certifications import certification_tokens, partial_stages, split_certification_options
+from app.matching.occupations import practice
+from app.matching.preferences import split_preference
 from app.models.common import TIER_ORDER, tier_rank
 from app.models.matching import (
     BatchMatchRequest, BatchMatchResponse, CandidateMatch, MatchFact, MatchRequest, MatchRequirement, MatchResponse,
@@ -35,6 +37,7 @@ from app.models.matching import (
 )
 from app.models.resume import Timeline
 from app.pipeline.dates import find_duration_months, merged_months
+from app.pipeline.ellipsis import with_elided
 from app.pipeline.education import LEVELS, EducationInfo, degree_levels, fields_related, parse_education
 from app.pipeline.text import content_tokens, stem
 from app.taxonomy.taxonomy import Skill, get_taxonomy
@@ -94,6 +97,24 @@ class _Role:
     tokens: frozenset[str]
     label: str
     heads: frozenset[str]  # stemmed title words (+ implied field): "PGT Mathematics" -> {pgt, mathemat, teach}
+    implied: frozenset[str] = frozenset()  # practices the title implies (occupation lexicon), never SKILL evidence
+    implied_tokens: frozenset[str] = frozenset()
+
+    @property
+    def practice_skills(self) -> frozenset[str]:
+        """Skills named in the role block plus the practices its title implies ("SDE-2" + Java -> backend)."""
+        return self.skills | self.implied
+
+    header_tokens: frozenset[str] = frozenset()  # the role's title/employer line
+
+    @property
+    def practice_tokens(self) -> frozenset[str]:
+        return self.tokens | self.implied_tokens
+
+    @property
+    def title_tokens(self) -> frozenset[str]:
+        """Words of the role header plus the practice its title implies (not the bullets)."""
+        return self.header_tokens | self.heads | self.implied_tokens
 
 
 @dataclass(frozen=True)
@@ -187,8 +208,11 @@ def _build_roles(facts: list[_Fact], timeline: Timeline | None, today: date) -> 
                 used_timeline.add(index)
                 skills.update(skill.id for name in role.skills if (skill := taxonomy.lookup(name)))
                 break
+        title = attributes.get("title") if isinstance(attributes.get("title"), str) else fact.raw.value
+        implied = practice(title, frozenset(skills))
         roles.append(_Role(fact, fact.rank, interval, months if months else (interval[1] - interval[0] + 1 if interval else None),
-                           frozenset(skills), fact.text_tokens, fact.raw.value, _heads(attributes.get("title"))))
+                           frozenset(skills), fact.text_tokens, fact.raw.value, _heads(attributes.get("title")),
+                           implied.skills, implied.topics, fact.value_tokens))
     for index, role in enumerate(timeline_roles):
         if index in used_timeline:
             continue
@@ -196,8 +220,10 @@ def _build_roles(facts: list[_Fact], timeline: Timeline | None, today: date) -> 
         label = ", ".join(part for part in (role.title, role.employer) if part) or "role"
         tokens = frozenset(content_tokens(" ".join([role.title or "", role.employer or "", *role.skills])))
         months = _positive_months(role.months)
+        implied = practice(role.title, skills)
         roles.append(_Role(None, RESUME_RANK, _interval(role.startDate, role.endDate, role.current, months, today),
-                           months, skills, tokens, label, _heads(role.title)))
+                           months, skills, tokens, label, _heads(role.title), implied.skills, implied.topics,
+                           frozenset(content_tokens(label))))
     return roles
 
 
@@ -228,7 +254,7 @@ def _role_months(roles: list[_Role]) -> int:
 def skill_cnf(text: str) -> tuple[tuple[Skill, ...], ...]:
     """Skills named in a requirement as AND-of-OR groups: "Java, Spring and AWS or Azure" ->
     ((Java,), (Spring,), (AWS, Azure)). "X or Y", "X/Y" and "such as X, Y" are alternatives."""
-    mentions = get_taxonomy().find_mentions(text, list_context=True)
+    mentions = with_elided(text, get_taxonomy().find_mentions(text, list_context=True))  # "B2B or SaaS sales"
     if not mentions:
         return ()
     connectors: list[str] = []
@@ -384,14 +410,50 @@ def _relevant(group: tuple[Skill, ...], skills: frozenset[str], tokens: frozense
     return False
 
 
+def _experience_subject(text: str) -> str:
+    """"3+ years: clinical nursing experience" -> "clinical nursing experience"."""
+    subject = " ".join(_YEARS_PHRASE_RE.sub(" ", text).split())
+    return subject.strip(" :;,.-–—") or text
+
+
+def _subject_options(subject: str) -> list[str]:
+    """Alternatives in an experience subject. "supply chain or operations experience" -> both; a one-word
+    first alternative shares the last one's head noun: "B2B or SaaS sales" -> "B2B sales", "SaaS sales"."""
+    parts = [part.strip(" ,") for part in re.split(r"\s+or\s+|\s*/\s*(?=[A-Za-z]{3})", subject) if part.strip(" ,")]
+    if len(parts) < 2 or len(parts) > 4:
+        return [subject]
+    last_words = parts[-1].split()
+    options = []
+    for part in parts[:-1]:
+        if len(part.split()) == 1 and len(last_words) >= 2 and not get_taxonomy().find_mentions(part, list_context=True):
+            part = f"{part} {' '.join(last_words[1:])}"
+        options.append(part)
+    return options + [parts[-1]]
+
+
 def _eval_experience(text: str, minimum_years: int | None, ctx: _Context) -> _Outcome:
     stated = find_duration_months(text)
     need = minimum_years * 12 if minimum_years else (stated[0] if stated else None)
-    subject = " ".join(_YEARS_PHRASE_RE.sub(" ", text).split()) or text
+    subject = _experience_subject(text)
+    options = _subject_options(subject)
+    whole = {skill.id for group in skill_cnf(subject) for skill in group}
+    option_skills = [{skill.id for group in skill_cnf(option) for skill in group} for option in options]
+    if len(options) > 1 and any(not skills or not skills <= whole for skills in option_skills):
+        # An alternative skill_cnf cannot see: "supply chain or operations" (no skill named "operations") or
+        # "product or UX design" (product design). Each alternative is evaluated on its own; the best wins.
+        # A skill-less alternative must be named by a role's title or what the title implies, not by any
+        # bullet ("operations" in "worked with legal, risk and operations teams").
+        outcomes = [_eval_experience_subject(subject, need, ctx)] + [
+            _eval_experience_subject(option, need, ctx, title_only=True) for option in options]
+        return max(outcomes, key=lambda outcome: _STATUS_RANK[outcome.status])
+    return _eval_experience_subject(subject, need, ctx)
+
+
+def _eval_experience_subject(subject: str, need: int | None, ctx: _Context, title_only: bool = False) -> _Outcome:
     groups = skill_cnf(subject)
     # The topic is what the requirement says beyond the skills it names ("enterprise ... services").
     remainder = subject
-    for mention in reversed(get_taxonomy().find_mentions(subject, list_context=True)):
+    for mention in reversed(with_elided(subject, get_taxonomy().find_mentions(subject, list_context=True))):
         remainder = remainder[:mention.start] + " " + remainder[mention.end:]
     topic = content_tokens(remainder) - _GENERIC_TOPIC
     need_text = f" (minimum {_years(need)})" if need else ""
@@ -404,14 +466,27 @@ def _eval_experience(text: str, minimum_years: int | None, ctx: _Context) -> _Ou
         skills_ok = all(_relevant(group, skills, tokens) for group in groups)
         return skills_ok, topic_share(tokens) >= 0.5
 
-    # A) timeline roles
-    per_group = [[role for role in ctx.roles if _relevant(group, role.skills, role.tokens, role.heads)] for group in groups]
+    # A) timeline roles (a role's practice includes what its title implies: "Key Account Manager" -> B2B sales).
+    # An alternative split out of the requirement ("product" of "product or UX design") is held to the role's
+    # title and named skills: its words in a bullet ("designed the product page") are not enough.
+    def role_tokens(role: _Role) -> frozenset[str]:
+        return role.heads | role.implied_tokens if title_only else role.practice_tokens
+
+    # A multi-word practice is relevant when the role names it as a skill, or its header carries every word
+    # ("B2B SaaS Sales Executive" for B2B Sales); the same words scattered over bullets ("designed the product
+    # page") are not the practice.
+    per_group = [[role for role in ctx.roles if _relevant(group, role.practice_skills, role.title_tokens, role.heads)]
+                 for group in groups]
     if groups:
         skills_months = min(_role_months(roles) for roles in per_group)
         skills_roles = [role for roles in per_group for role in roles]
-        topic_ok = topic_share(frozenset().union(*(role.tokens for role in skills_roles))) >= 0.5 if skills_roles else False
+        topic_ok = topic_share(frozenset().union(*(role_tokens(role) for role in skills_roles))) >= 0.5 if skills_roles else False
+    elif title_only:
+        skills_roles = [role for role in ctx.roles if topic and topic_share(role.heads | role.implied_tokens) >= 0.5]
+        topic_ok = bool(skills_roles)
+        skills_months = _role_months(skills_roles)
     else:
-        skills_roles = [role for role in ctx.roles if topic_share(role.tokens) >= 0.5] if topic else list(ctx.roles)
+        skills_roles = [role for role in ctx.roles if topic_share(role.practice_tokens) >= 0.5] if topic else list(ctx.roles)
         skills_months = _role_months(skills_roles)
         topic_ok = bool(skills_roles)
     role_facts = [role.fact for role in sorted(skills_roles, key=lambda role: -(role.months or 0)) if role.fact][:3]
@@ -453,7 +528,7 @@ def _eval_experience(text: str, minimum_years: int | None, ctx: _Context) -> _Ou
         unlinked = [group for group, roles in zip(groups, per_group) if not roles]
         listed = [fact for fact in ctx.of_type("SKILL") if any(_covers(group, fact.skills) for group in unlinked)]
         linked_roles = [role for group, roles in zip(groups, per_group) if group not in unlinked for role in roles]
-        topical = linked_roles or [role for role in ctx.roles if topic and topic_share(role.tokens) >= 0.5] or list(ctx.roles)
+        topical = linked_roles or [role for role in ctx.roles if topic and topic_share(role.practice_tokens) >= 0.5] or list(ctx.roles)
         career = _role_months(topical) if ctx.roles else (ctx.total_months or 0)
         if unlinked and listed and (need is None or career >= need):
             names = ", ".join(" or ".join(skill.name for skill in group) for group in unlinked)
@@ -495,6 +570,11 @@ def _eval_education(text: str, ctx: _Context) -> _Outcome:
         level_ok = level is None or (info.level is not None and LEVELS[info.level] >= LEVELS[level])
         field_ok = not fields or bool(fields & info.fields)
         related = bool(fields) and fields_related(fields, info.fields)
+        if (fact.raw.attributes or {}).get("inProgress") is True and level_ok and (field_ok or related):
+            reason = f"shows {_degree(info)} that is still in progress"
+            if best is None or 3 > best[0]:
+                best = (3, fact, reason)
+            continue
         if level_ok and (field_ok or (related and related_ok)):
             how = "in a related field" if not field_ok else ""
             return _Outcome("MATCHED", [fact], f"{_source([fact])} shows {_degree(info)}{' ' + how if how else ''}, "
@@ -554,6 +634,8 @@ def _eval_certification(text: str, ctx: _Context) -> _Outcome:
 
 # ------------------------------------------------------------------------------------- dispatch
 def _evaluate_option(requirement: MatchRequirement, text: str, ctx: _Context) -> _Outcome:
+    # "Bachelor's degree; MBA preferred" asks for the bachelor's degree: preferences are not required.
+    text = split_preference(text)[0]
     if requirement.type == "SKILL":
         return _eval_skill(text, ctx)
     if requirement.type == "EXPERIENCE":
@@ -674,7 +756,7 @@ def _apply_proficiency(requirement: MatchRequirement, outcome: _Outcome, tier: s
     missing: list[str] = []
     for group in groups:
         names = " or ".join(skill.name for skill in group)
-        relevant = [role for role in roles if _relevant(group, role.skills, role.tokens, role.heads)]
+        relevant = [role for role in roles if _relevant(group, role.practice_skills, role.practice_tokens, role.heads)]
         months = _role_months(relevant) if relevant else 0
         role_texts = [text for role in relevant for text in (_fact_texts(role.fact) if role.fact else [role.label])]
         word = _level_word(cited_texts + role_texts, depth.words)
