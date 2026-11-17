@@ -9,6 +9,7 @@ import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.common.exception.TooManyRequestsException;
 import com.recruitpro.common.time.UtcTime;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.jobs.entity.BackgroundJobType;
 import com.recruitpro.jobs.service.BackgroundJobService;
 import com.recruitpro.notification.entity.NotificationTemplate;
@@ -102,7 +103,7 @@ public class ReferenceService {
         this.notificationService = notificationService;
         this.backgroundJobService = backgroundJobService;
         this.auditService = auditService;
-        this.candidateUrl = candidateUrl.endsWith("/") ? candidateUrl.substring(0, candidateUrl.length() - 1) : candidateUrl;
+        this.candidateUrl = PortalUrls.base(candidateUrl);
     }
 
     // ----------------------------------------------------------------------------------------- candidate side

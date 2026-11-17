@@ -12,6 +12,7 @@ import { AuthProvider } from './auth/AuthContext'
 import { NoticeProvider } from './components/Notices'
 import { initTheme } from './design/theme'
 import { ToastProvider } from './design/components'
+import { routerBasename } from './design/lib/links'
 
 initTheme()
 
@@ -30,7 +31,8 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      {/* /hr behind the gateway, / on its own port: the Vite base (vite.config.ts) decides both. */}
+      <BrowserRouter basename={routerBasename(import.meta.env.BASE_URL)} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ToastProvider>
           <NoticeProvider>
             <AuthProvider>

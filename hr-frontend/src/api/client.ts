@@ -1,3 +1,4 @@
+import { apiBaseUrl } from '../design/lib/links'
 import type { AuthResponse, Envelope, FieldError } from './types'
 
 /**
@@ -11,7 +12,8 @@ import type { AuthResponse, Envelope, FieldError } from './types'
  *   If the refresh itself is rejected the session is cleared and listeners are told to sign out.
  */
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1').replace(/\/+$/, '')
+/** "/api/v1" on the gateway's origin (default), or the absolute VITE_API_BASE_URL of the per-port mode (design/lib/links). */
+export const API_BASE_URL = apiBaseUrl()
 
 /** Names this portal to the server (per-portal refresh cookie and role check, see backend `auth.web.Portal`). */
 export const PORTAL_HEADER = 'X-RecruitPro-Portal'

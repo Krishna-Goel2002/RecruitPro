@@ -1,8 +1,13 @@
-# RecruitPro local stack: `docker compose up --build`
-#   Candidate portal  http://localhost:5173
-#   HR portal         http://localhost:5174
-#   Landing site      http://localhost:5170  (static; links to both portals)
-#   Backend API       http://localhost:8080/api/v1  (Swagger UI: /swagger-ui.html)
+# RecruitPro local stack: `docker compose up --build`, then open http://localhost:8088 - everything is there:
+#   http://localhost:8088/            landing site (links to both sign-ins)
+#   http://localhost:8088/candidate/  candidate portal
+#   http://localhost:8088/hr/         HR portal
+#   http://localhost:8088/api/v1      backend API (same origin as the pages: no CORS)
+#   (service `gateway`; 127.0.0.1 only unless GATEWAY_BIND=0.0.0.0. Port: GATEWAY_PORT, default 8088 - not 80, which
+#   Windows often reserves (IIS / HTTP.sys "System" process, excluded port ranges). Changing it? Set PUBLIC_URL too.)
+#   Backend API       http://localhost:8080/api/v1  (direct; Swagger UI: /swagger-ui.html)
+#   Old per-port addresses (development; same images as before, built separately):
+#     docker compose --profile ports up --build   ->  candidate 5173, HR 5174, landing site 5170
 #   Agent service     http://localhost:8100/health  (bound to 127.0.0.1)
 #   Mailpit (email)   http://localhost:8025         (bound to 127.0.0.1; SMTP 1025)
 #   AI service        not published (no-egress network); check it with
@@ -16,7 +21,8 @@
 #   agent         backend, agent-service                   - the agent cannot reach postgres or the AI service
 #   egress        backend                                  - SMTP, GitHub OAuth, OIDC providers; publishes 8080
 #   agent-egress  agent-service                            - candidate URLs, GitHub/GitLab, badge issuers; publishes 8100
-#   edge          candidate-portal, hr-portal, site, mailpit - published ports only
+#   gateway       gateway, backend                         - the gateway's route to the API only
+#   edge          gateway, candidate-portal, hr-portal, site, mailpit - published ports only
 # The AI service has no egress. For LLM_PROVIDER=anthropic|openai_compatible add the override:
 #   docker compose -f docker-compose.yml -f docker-compose.ai-egress.yml up -d
 name: recruitpro
@@ -116,10 +122,12 @@ services:
       # GitHub OAuth app for "Connect with GitHub" (optional; empty = username + bio code only).
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8080/api/v1/verification/oauth/github/callback}
+      # The GitHub OAuth app's "Authorization callback URL" must be exactly this value (gateway origin by default;
+      # per-port mode: http://localhost:8080/api/v1/verification/oauth/github/callback).
+      GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8088/api/v1/verification/oauth/github/callback}
       # Staff single sign-on (optional; a provider is offered only when its client id and secret are set).
       # Register <SSO_REDIRECT_BASE_URL>/api/v1/auth/sso/<google|microsoft|oidc>/callback with the identity provider.
-      SSO_REDIRECT_BASE_URL: ${SSO_REDIRECT_BASE_URL:-http://localhost:8080}
+      SSO_REDIRECT_BASE_URL: ${SSO_REDIRECT_BASE_URL:-http://localhost:8088}
       SSO_GOOGLE_CLIENT_ID: ${SSO_GOOGLE_CLIENT_ID:-}
       SSO_GOOGLE_CLIENT_SECRET: ${SSO_GOOGLE_CLIENT_SECRET:-}
       SSO_MICROSOFT_CLIENT_ID: ${SSO_MICROSOFT_CLIENT_ID:-}
@@ -132,9 +140,12 @@ services:
       MAIL_HOST: mailpit
       MAIL_PORT: "1025"
       MAIL_ENABLED: "true"
-      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:5174
-      CANDIDATE_PORTAL_URL: http://localhost:5173
-      HR_PORTAL_URL: http://localhost:5174
+      # Links in e-mails (verification, password reset, invitations, referee links /candidate/reference/<token>) and
+      # the SSO / GitHub redirects point at the gateway. PUBLIC_URL = the gateway's address as the browser sees it.
+      CANDIDATE_PORTAL_URL: ${PUBLIC_URL:-http://localhost:8088}/candidate
+      HR_PORTAL_URL: ${PUBLIC_URL:-http://localhost:8088}/hr
+      # The gateway is same-origin (no CORS needed); it is listed anyway, next to the per-port portals.
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_URL:-http://localhost:8088},http://localhost:5173,http://localhost:5174
       APP_SEED_DEMO: ${APP_SEED_DEMO:-true}
       APP_SEED_PASSWORD: ${APP_SEED_PASSWORD:-ChangeMe-123!}
       BOOTSTRAP_ORG_NAME: ${BOOTSTRAP_ORG_NAME:-}
@@ -143,18 +154,43 @@ services:
       FILE_STORAGE_PATH: /data/uploads
     ports:
       - "8080:8080"
-    networks: [internal, agent, egress]
+    networks: [internal, agent, egress, gateway]
     volumes:
       - resume-uploads:/data/uploads
 
+  # The single address for demos: landing site, both portals and the API on one origin (gateway/nginx.conf).
+  # The image builds all three web apps itself (gateway/Dockerfile) with same-origin links and API URL.
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "${GATEWAY_BIND:-127.0.0.1}:${GATEWAY_PORT:-8088}:8080"
+    networks: [edge, gateway]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  # ---- Old per-port addresses (profile "ports"): docker compose --profile ports up --build ----
   candidate-portal:
+    profiles: [ports]
     build:
       context: ./frontend
       args:
         # The API URL is compiled into the bundle; API_ORIGIN (its scheme://host:port) goes into the nginx CSP
-        # connect-src. Change both together.
+        # connect-src. Change both together. The three app URLs feed the cross-links (src/design/lib/links.ts);
+        # an absolute VITE_CANDIDATE_URL also makes this portal's base path "/".
         VITE_API_BASE_URL: http://localhost:8080/api/v1
         API_ORIGIN: http://localhost:8080
+        VITE_SITE_URL: http://localhost:5170
+        VITE_CANDIDATE_URL: http://localhost:5173
+        VITE_HR_URL: http://localhost:5174
     environment:
       API_ORIGIN: http://localhost:8080
     depends_on:
@@ -164,11 +200,15 @@ services:
     networks: [edge]
 
   hr-portal:
+    profiles: [ports]
     build:
       context: ./hr-frontend
       args:
         VITE_API_BASE_URL: http://localhost:8080/api/v1
         API_ORIGIN: http://localhost:8080
+        VITE_SITE_URL: http://localhost:5170
+        VITE_CANDIDATE_URL: http://localhost:5173
+        VITE_HR_URL: http://localhost:5174
     environment:
       API_ORIGIN: http://localhost:8080
     depends_on:
@@ -180,9 +220,11 @@ services:
   # Public landing page (site/): static, calls no API. The portal URLs are compiled in; change them together with
   # the published portal addresses.
   site:
+    profiles: [ports]
     build:
       context: ./site
       args:
+        VITE_SITE_URL: http://localhost:5170
         VITE_CANDIDATE_URL: http://localhost:5173
         VITE_HR_URL: http://localhost:5174
     ports:
@@ -200,6 +242,8 @@ networks:
   internal:
     internal: true
   agent:
+    internal: true
+  gateway:
     internal: true
   egress: {}
   agent-egress: {}

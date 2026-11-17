@@ -3,16 +3,17 @@ import { useQuery } from '@tanstack/react-query'
 import { NavLink, Outlet } from 'react-router-dom'
 import { accountApi } from '../api/account'
 import { qk } from '../api/queryKeys'
-import { useAuth, useCurrentUser } from '../auth/AuthContext'
+import { SIGNED_OUT_NOTICE, useAuth, useCurrentUser } from '../auth/AuthContext'
 import { Capability } from '../auth/permissions'
 import brand from '../design/brand/active'
 import { AccountMenu, AppShell, BackNavProvider, Tooltip, type NavGroup, type NavItem } from '../design/components'
 import {
-  BadgeCheck, Bell, BriefcaseBusiness, Building2, CalendarClock, Icon, Inbox, KeyRound, LadderMark, LayoutGrid, ListChecks, MailPlus, MessagesSquare,
+  BadgeCheck, Bell, BriefcaseBusiness, Building2, CalendarClock, House, Icon, Inbox, KeyRound, LadderMark, LayoutGrid, ListChecks, MailPlus, MessagesSquare,
   Scale, ScrollText, ShieldCheck, User as UserIcon, Users,
 } from '../design/icons'
 import { AssistantProvider } from '../assistant/AssistantProvider'
 import { AskButton, AssistantPanel } from '../assistant/AssistantPanel'
+import { appLinks } from '../design/lib/links'
 import { useBackNav } from '../lib/backNav'
 import { fullName, roleLabel } from '../lib/format'
 import { readFlag } from '../lib/lastSeen'
@@ -121,19 +122,21 @@ function Shell() {
             name={name}
             email={user.email}
             detail={[roleLabel(user.role), user.organizationName].filter(Boolean).join(' · ')}
-            links={
-              can('account')
+            links={[
+              ...(can('account')
                 ? [
                     { label: 'Your name', to: '/account/name', icon: UserIcon },
                     { label: 'Change password', to: '/account/password', icon: KeyRound },
                     { label: 'Two-step verification', to: '/account/security', icon: ShieldCheck },
                   ]
-                : []
-            }
+                : []),
+              { label: `${brand.name} home`, href: appLinks().site, icon: House },
+            ]}
             signingOut={signingOut}
             onSignOut={() => {
               setSigningOut(true)
-              void signOut().finally(() => setSigningOut(false))
+              // Back to this portal's sign-in page (RequireAuth), which shows the notice.
+              void signOut(SIGNED_OUT_NOTICE).finally(() => setSigningOut(false))
             }}
           />
         </>

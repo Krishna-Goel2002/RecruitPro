@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom'
 import { EmptyState, PageHeader, buttonProps } from '../design/components'
+import brand from '../design/brand/active'
 import { LockKeyhole, Search as Compass } from '../design/icons'
+import { appLinks } from '../design/lib/links'
 
 /** 403 inside the app: the role does not include this area. The server stays the authority. */
 export function ForbiddenPage() {
@@ -26,7 +28,12 @@ export function NotFoundPage() {
         icon={Compass}
         title="This page does not exist"
         description="The link may be out of date, or the item belongs to another organisation."
-        action={<Link {...buttonProps('secondary')} to="/">Go to your home screen</Link>}
+        action={
+          <>
+            <Link {...buttonProps('secondary')} to="/">Go to your home screen</Link>
+            <a {...buttonProps('ghost')} href={appLinks().site}>{brand.name} home</a>
+          </>
+        }
       />
     </div>
   )

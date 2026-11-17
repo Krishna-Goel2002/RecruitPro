@@ -13,7 +13,7 @@ import { CircleAlert, CircleCheck, Clock, Icon, Link2, MailPlus } from '../desig
 import { formatDate } from '../design/lib/format'
 import { useBeforeUnload } from '../lib/hooks'
 import { humanize } from '../lib/labels'
-import { siteUrl } from '../lib/site'
+import { appLinks } from '../design/lib/links'
 import { refereeRelationshipLabel } from '../lib/verification'
 import './referee/referee.css'
 
@@ -37,7 +37,7 @@ function Shell({ title, children, footer }: { title: string; children: ReactNode
           <span className="rf-brand-label">Reference request</span>
         </span>
         <span className="rf-top-end">
-          <a href={siteUrl()} className="rf-site-link">
+          <a href={appLinks().site} className="rf-site-link">
             About {brand.name}
           </a>
           <ThemeSwitch variant="icon" />

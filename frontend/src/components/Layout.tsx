@@ -5,10 +5,12 @@ import { authApi, meApi } from '../api/endpoints'
 import { errorMessage } from '../api/client'
 import { queryKeys } from '../api/queryKeys'
 import { useAuth, useCurrentUser } from '../auth/AuthProvider'
+import brand from '../design/brand/active'
 import { AccountMenu, Alert, AppShell, Button, LoadingRegion, Skeleton, SkeletonText, Tooltip, type NavGroup } from '../design/components'
 import {
-  BadgeCheck, Bell, BriefcaseBusiness, CalendarClock, FileText, Icon, Inbox, LayoutGrid, ListChecks, ScrollText, ShieldCheck, User,
+  BadgeCheck, Bell, BriefcaseBusiness, CalendarClock, FileText, House, Icon, Inbox, LayoutGrid, ListChecks, ScrollText, ShieldCheck, User,
 } from '../design/icons'
+import { appLinks } from '../design/lib/links'
 import { ledgerQuery, workSamplesQuery } from '../lib/queries'
 import { readStored, writeStored } from '../lib/storage'
 import { useNotify } from './Notices'
@@ -66,6 +68,7 @@ export function Layout() {
   async function signOut() {
     setSigningOut(true)
     await logout()
+    // This portal's sign-in page; it shows "You have signed out." (reason 'signed-out').
     navigate('/login', { replace: true })
   }
 
@@ -133,6 +136,7 @@ export function Layout() {
             links={[
               { label: 'Profile', to: '/profile', icon: User },
               { label: 'Privacy and data', to: '/privacy', icon: ShieldCheck },
+              { label: `${brand.name} home`, href: appLinks().site, icon: House },
             ]}
             onSignOut={() => void signOut()}
             signingOut={signingOut}

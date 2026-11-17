@@ -1,0 +1,15 @@
+# Build context of gateway/Dockerfile is the repository root (docker compose: context ".", dockerfile gateway/Dockerfile).
+# BuildKit reads this file instead of a root .dockerignore. Allow-list: only what the gateway image needs.
+*
+!gateway
+!frontend
+!hr-frontend
+!site
+**/node_modules
+**/dist
+**/.pnpm-store
+**/coverage
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+**/*.log

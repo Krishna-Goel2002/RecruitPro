@@ -25,6 +25,14 @@
   }
 
   .hra-auth-top { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); min-height: 32px; }
+  .hra-auth-top-end { display: inline-flex; align-items: center; gap: 4px; }
+  /* Back to the public landing site (one origin: the gateway's "/"). */
+  .hra-auth-site-link {
+    display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px; border-radius: var(--r-sm);
+    color: var(--fg-muted); font: 500 var(--text-sm) / var(--lh-sm) var(--font-sans); text-decoration: none; white-space: nowrap;
+    transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+  }
+  .hra-auth-site-link:hover { color: var(--fg-default); background: var(--bg-hover); text-decoration: none; }
   .hra-auth-brand {
     display: inline-flex;
     align-items: center;
@@ -117,6 +125,8 @@
   .hra-auth-foot { display: flex; flex-direction: column; gap: var(--s-4); }
   .hra-auth-links { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-7); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); color: var(--fg-muted); }
   .hra-auth-links a { color: var(--accent-text); font-weight: 500; }
+  .hra-auth-switch { margin: 0; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); }
+  .hra-auth-switch a { color: var(--accent-text); font-weight: 500; }
   .hra-auth-legal { margin: 0; color: var(--fg-subtle); font: 400 var(--text-caption) / var(--lh-caption) var(--font-sans); }
 
   /* Right column: the specimen. Sunken surface with a quiet dotted field that fades towards the edges, one hairline. */

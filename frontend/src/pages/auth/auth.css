@@ -86,6 +86,9 @@
   .auth-state-icon[data-tone='danger'] { background: var(--danger-bg); color: var(--danger-fg); }
   .auth-state-icon[data-tone='neutral'] { background: var(--bg-active); color: var(--fg-muted); }
 
+  /* The other portal's sign-in (one origin: /hr/login behind the gateway). */
+  .auth-portal-switch { max-width: 400px; margin: 0 auto 12px; color: var(--fg-muted); font: 400 var(--text-sm) / var(--lh-sm) var(--font-sans); text-align: center; }
+  .auth-portal-switch a { color: var(--accent-text); font-weight: 500; }
   .auth-foot { max-width: 400px; margin: 0 auto; color: var(--fg-subtle); font: 400 var(--text-caption) / var(--lh-caption) var(--font-sans); text-align: center; }
 
   /* ---------------------------------------------------------------- the specimen (≥ 900 px) */

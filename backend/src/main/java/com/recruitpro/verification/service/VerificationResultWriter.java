@@ -3,6 +3,7 @@ package com.recruitpro.verification.service;
 import com.recruitpro.candidate.entity.CandidateProfile;
 import com.recruitpro.candidate.repository.CandidateProfileRepository;
 import com.recruitpro.common.time.UtcTime;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.evidence.entity.ClaimType;
 import com.recruitpro.evidence.service.MatchTriggerService;
 import com.recruitpro.notification.entity.NotificationTemplate;
@@ -578,9 +579,6 @@ public class VerificationResultWriter {
     }
 
     private static String trimSlash(String url) {
-        if (url == null) {
-            return "";
-        }
-        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        return PortalUrls.base(url);
     }
 }

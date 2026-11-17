@@ -10,11 +10,11 @@
  *   When the refresh is refused, the session is cleared and subscribers are told to sign the user out.
  * - JSON bodies go through `JSON.stringify`, so `Date` values are sent as `toISOString()` (D15).
  */
+import { apiBaseUrl } from '../design/lib/links'
 import type { ApiEnvelope, ApiFieldError, AuthResponse } from './types'
 
-const DEFAULT_BASE_URL = 'http://localhost:8080/api/v1'
-
-export const API_BASE_URL: string = (import.meta.env.VITE_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '')
+/** "/api/v1" on the gateway's origin (default), or the absolute VITE_API_BASE_URL of the per-port mode (design/lib/links). */
+export const API_BASE_URL: string = apiBaseUrl()
 
 /** Names this portal to the server (per-portal refresh cookie and role check, see backend `auth.web.Portal`). */
 export const PORTAL_HEADER = 'X-RecruitPro-Portal'

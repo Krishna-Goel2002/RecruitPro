@@ -16,6 +16,30 @@ Where the two disagree, this guide is right for this branch.
 - When something differs, note the ID and continue if you can.
 - Section 11 lists what to send back.
 
+> **Open http://localhost:8088 — everything is there.** Since the single-origin gateway (compose service `gateway`),
+> the whole product runs on one address, so a demo never switches ports or windows of different origins:
+>
+> | URL | What |
+> |---|---|
+> | http://localhost:8088/ | landing site (**HR sign in**, **Candidate sign in**, **Find jobs**) |
+> | http://localhost:8088/candidate/ | candidate portal (`/candidate/login`, `/candidate/jobs`, `/candidate/reference/<token>`, …) |
+> | http://localhost:8088/hr/ | HR, interviewer and admin portal (`/hr/login`, `/hr/jobs/1`, `/hr/accept-invite?token=…`, …) |
+> | http://localhost:8088/api/v1 | backend API through the gateway (same origin: no CORS) |
+> | http://localhost:8025 | Mailpit inbox (own address, 127.0.0.1 only) |
+> | http://localhost:8080/api/v1, /swagger-ui.html | backend directly (Swagger UI) |
+>
+> **Demo click-path (5.6):** http://localhost:8088 → **HR sign in** → sign in as `hr@acme.test` → work in the HR
+> portal → account menu → **Sign out** (sign-in page, "You have signed out.") → **← Back to home** → **Candidate sign
+> in** (or "Looking for a job? **Candidate sign in**" straight from the HR sign-in page) → sign in as
+> `candidate@demo.test` → … → account menu → **Sign out** → **← Back to home**.
+>
+> Every step below uses the gateway addresses. The old per-port addresses (candidate 5173, HR 5174, landing site
+> 5170) still exist for development: `docker compose --profile ports up --build`.
+>
+> **GitHub OAuth (9.1):** the callback URL is now `http://localhost:8088/api/v1/verification/oauth/github/callback`.
+> Update the GitHub OAuth app **and** `GITHUB_OAUTH_REDIRECT_URI` in `.env` to exactly that value (both must match;
+> an old `.env` with `http://localhost:8080/...` keeps working only while the GitHub app also says 8080).
+
 ---
 
 ## Contents
@@ -134,17 +158,24 @@ memory=10GB
 Then run `wsl --shutdown` and restart Docker Desktop.
 
 **Ports the stack publishes:**
-- 5173, 5174 and 8080 on all interfaces;
+- 8088 (the gateway: landing site, both portals, API) on 127.0.0.1 only (`GATEWAY_PORT`, `GATEWAY_BIND` in `.env`);
+- 8080 (backend, direct) on all interfaces;
 - 8100, 8025 and 1025 on 127.0.0.1 only;
+- with `--profile ports` also 5173, 5174 and 5170 on all interfaces;
 - the AI service (8000) and PostgreSQL (5432) are not published.
 
-Check that none of the published ports is in use:
+Why 8088 and not 80: on Windows port 80 is often taken or reserved (IIS / World Wide Web Publishing Service, the
+HTTP.sys "System" process, PID 4, or a Hyper-V/WSL excluded port range), and Docker then fails with "ports are not
+available". Any free port works: set `GATEWAY_PORT=9000` **and** `PUBLIC_URL=http://localhost:9000` in `.env`.
+
+Check that none of the published ports is in use, and that 8088 is not in an excluded range:
 
 ```powershell
-netstat -ano | findstr ":5173 :5174 :8080 :8100 :8025 :1025"
+netstat -ano | findstr ":8088 :8080 :8100 :8025 :1025"
+netsh interface ipv4 show excludedportrange protocol=tcp
 ```
 
-**Expected:** no output.
+**Expected:** no output from `netstat`; no range in the second list contains 8088.
 
 ---
 
@@ -484,11 +515,14 @@ From the repository root:
 docker compose up --build
 ```
 
-**First build:** 15–30 minutes, depending on the network. Five images are built:
+**First build:** 15–30 minutes, depending on the network. Four images are built:
 - `backend`: Maven downloads and compile;
 - `ai-service`: apt LibreOffice, pip with RapidOCR, onnxruntime and opencv — the slowest;
 - `agent-service`;
-- `candidate-portal` and `hr-portal`: pnpm install and Vite build.
+- `gateway`: pnpm install and Vite build of the landing site and both portals (in parallel), then nginx.
+
+With `docker compose --profile ports up --build` the per-port images `candidate-portal`, `hr-portal` and `site` are
+built as well.
 
 Later starts without `--build` take under a minute. The backend starts only after PostgreSQL, the AI service and the
 agent service report **healthy**.
@@ -518,12 +552,14 @@ synthetic fixtures`.
 docker compose ps
 ```
 
-**Expected:** 8 services, `postgres`, `mailpit`, `ai-service`, `agent-service`, `backend`, `candidate-portal`,
-`hr-portal` and `site`.
-- Each shows `Up … (healthy)`. All have health checks: Mailpit's is built into its image; the portals use `wget /`.
+**Expected:** 6 services, `postgres`, `mailpit`, `ai-service`, `agent-service`, `backend` and `gateway` (with
+`--profile ports` also `candidate-portal`, `hr-portal` and `site`).
+- Each shows `Up … (healthy)`. All have health checks: Mailpit's is built into its image; the gateway and the
+  per-port portals use `wget /`.
 - PORTS:
+  - `127.0.0.1:8088->8080` (gateway)
   - `0.0.0.0:8080->8080` (backend)
-  - `0.0.0.0:5173->80` and `0.0.0.0:5174->80` (portals), `0.0.0.0:5170->80` (landing site)
+  - with `--profile ports`: `0.0.0.0:5173->80` and `0.0.0.0:5174->80` (portals), `0.0.0.0:5170->80` (landing site)
   - `127.0.0.1:8100->8100` (agent service)
   - `127.0.0.1:8025->8025` and `127.0.0.1:1025->1025` (Mailpit)
   - none for `postgres` and `ai-service`
@@ -538,22 +574,25 @@ docker compose ps
 | LibreOffice in the AI image | `docker compose exec ai-service sh -c "command -v soffice"` | `/usr/bin/soffice` |
 | PostgreSQL (internal only) | `docker compose exec postgres psql -U recruitpro -d recruitpro -c "select email, role from users order by id;"` | 5 rows: admin, hr, recruiter, interviewer `@acme.test` and `candidate@demo.test` |
 | Mailpit | http://localhost:8025 | Mailpit inbox (empty at first) |
-| Candidate portal | http://localhost:5173 | redirects to `/login`, heading **Sign in** |
-| HR portal | http://localhost:5174 | heading **Sign in**, intro "Use your RecruitPro work account." |
-| Portal security headers | `curl.exe -s -D - -o NUL http://localhost:5173/jobs/1 \| findstr /i "content-security-policy"` | contains `connect-src 'self' http://localhost:8080` |
+| Landing site | http://localhost:8088 | heading **See the evidence behind every application.**; header **Candidate sign in** and **HR sign in** |
+| Candidate portal | http://localhost:8088/candidate/ | redirects to `/candidate/login`, heading **Sign in** |
+| HR portal | http://localhost:8088/hr/ | redirects to `/hr/login`, heading **Sign in**, intro "Use your RecruitPro work account." |
+| API through the gateway | `Invoke-RestMethod http://localhost:8088/api/v1/health \| ConvertTo-Json -Compress` | the same answer as the backend row |
+| Deep links | http://localhost:8088/hr/jobs/1 and http://localhost:8088/candidate/verification | the portal loads (sign-in first, then that page), never an nginx 404 |
+| Portal security headers | `curl.exe -s -D - -o NUL http://localhost:8088/hr/jobs/1 \| findstr /i "content-security-policy"` | contains `connect-src 'self';` (one origin: no API origin needed) |
 
 The same `docker compose exec` lines work in bash. The bash equivalents of `Invoke-RestMethod` are
 `curl -s localhost:8080/api/v1/health` and `curl -s localhost:8100/health`.
 
 ### 5.3 Two-minute smoke test
 
-1. **5.3-1** Open http://localhost:5174 and sign in as `admin@acme.test` / `ChangeMe-123!`.
+1. **5.3-1** Open http://localhost:8088/hr/ and sign in as `admin@acme.test` / `ChangeMe-123!`.
    **Expected:**
    - you land on **Overview** (`/admin`);
    - **Service status** shows "Application server", "Database", "AI service" and "Verification agents" as **Up**, and
      "Background queue" with "N pending";
    - "Everything is running."
-2. **5.3-2** In an InPrivate/Incognito window open http://localhost:5173 and sign in as `candidate@demo.test` /
+2. **5.3-2** In an InPrivate/Incognito window open http://localhost:8088/candidate/ and sign in as `candidate@demo.test` /
    `ChangeMe-123!`.
    **Expected:**
    - **Welcome back, Casey**;
@@ -564,7 +603,7 @@ The same `docker compose exec` lines work in bash. The bash equivalents of `Invo
 
 | Goal | Command |
 |---|---|
-| Stop, keep data | `docker compose down` |
+| Stop, keep data | `docker compose down` (with the per-port services: `docker compose --profile ports down`) |
 | Start again (no rebuild) | `docker compose up -d` |
 | Rebuild after code changes | `docker compose up --build -d` |
 | Rebuild one service | `docker compose up --build -d backend` |
@@ -572,33 +611,68 @@ The same `docker compose exec` lines work in bash. The bash equivalents of `Invo
 | Follow logs | `docker compose logs -f backend` (or `agent-service`, `ai-service`, `mailpit`) |
 | Switch to `Kshitij` | `docker compose down -v` first: this branch has migrations V26–V28 that `Kshitij` does not know |
 
-### 5.5 Landing site (http://localhost:5170)
+### 5.5 Landing site (http://localhost:8088)
 
 The public page that explains the product and sends people to the right portal. It is static (no API calls, no forms,
 no cookies) and uses the same design system and brand as the portals.
 
-1. **5.5-1** Open http://localhost:5170. **Expected:** heading **See the evidence behind every application.**; a card
+1. **5.5-1** Open http://localhost:8088. **Expected:** heading **See the evidence behind every application.**; a card
    "Candidate A-3014" marked **Example data** in which **Java 17** climbs from *Resume* to *Corroborated* and shows
    "Confirmed by recruiter" after about two seconds (with the OS "reduce motion" setting on, it shows the end state at
    once).
 2. **5.5-2** Scroll down. **Expected:** sections The problem, How it works, For HR teams, For candidates, Trust and
    privacy, FAQ, footer; each rises in once as it enters the view; bars grow and numbers count up; "Coverage is the
    share of requirements with evidence, not a probability of success" appears in How it works and in the footer.
-3. **5.5-3** **For companies: Open the HR portal** → http://localhost:5174/login. **For candidates: Find jobs** →
-   http://localhost:5173/jobs (sign-in first). On http://localhost:5173/login, **About RecruitPro** (top right) leads
-   back to the landing site.
+3. **5.5-3** Header **HR sign in** and hero **For companies: HR sign in** → http://localhost:8088/hr/login. Header
+   **Candidate sign in** → http://localhost:8088/candidate/login. **For candidates: Find jobs** →
+   http://localhost:8088/candidate/jobs (sign-in first, then the job list). On both sign-in pages **← Back to home**
+   (top right) leads back here.
 4. **5.5-4** Keyboard: Tab from the top. **Expected:** the first stop is **Skip to content**; in the FAQ, Enter or
    Space opens an answer, ↑/↓ move between questions, Home/End jump to the first/last.
 5. **5.5-5** Narrow the window below 1060 px. **Expected:** the section links move into a **Menu** button; Escape
    closes the panel and returns focus to the button. Theme: the moon/sun button in the header and System / Light /
    Dark in the footer.
-6. **5.5-6** Headers: `curl.exe -s -D - -o NUL http://localhost:5170/ | findstr /i "content-security-policy"`.
+6. **5.5-6** Headers: `curl.exe -s -D - -o NUL http://localhost:8088/ | findstr /i "content-security-policy"`.
    **Expected:** `default-src 'self'; script-src 'self'; … connect-src 'self'; … form-action 'none'` (no external
    origin anywhere: fonts and scripts are self-hosted).
 
-The portal addresses are compiled in at build time: change `VITE_HR_URL` / `VITE_CANDIDATE_URL` under `site:` →
-`build.args` in `docker-compose.yml` for another deployment, and set `VITE_SITE_URL` when building the candidate portal
-if the landing site is not at http://localhost:5170.
+All cross-links come from one config shared by the three apps (`src/design/lib/links.ts`): `VITE_SITE_URL`,
+`VITE_CANDIDATE_URL`, `VITE_HR_URL` (defaults `/`, `/candidate`, `/hr`: paths on the gateway's origin, so another
+domain needs no rebuild; only `PUBLIC_URL`, `SSO_REDIRECT_BASE_URL` and `GITHUB_OAUTH_REDIRECT_URI` in `.env`). The
+per-port images get absolute URLs as build args in `docker-compose.yml`.
+7. **5.5-7** http://localhost:8088/pricing. **Expected:** "There is nothing at this address" with **Back to the home
+   page**, **For candidates: find jobs** and **For companies: HR sign in**.
+
+### 5.6 Connected flows: the demo click-path on one address
+
+One browser window, no port changes. Each step names where you land.
+
+1. **5.6-1** http://localhost:8088 → header **HR sign in**. **Expected:** http://localhost:8088/hr/login; top right
+   **← Back to home** and the theme button; at the bottom "New organisation? **Create a workspace**" and "Looking for
+   a job? **Candidate sign in**".
+2. **5.6-2** Sign in as `hr@acme.test` / `ChangeMe-123!`. **Expected:** `/hr/jobs`. Open a job: the address is
+   `/hr/jobs/<id>`; reload the page (F5): it loads again (deep link). Job menu **Copy link** copies
+   `http://localhost:8088/hr/jobs/<id>`.
+3. **5.6-3** Account menu (your name, top right). **Expected:** Theme, Your name, Change password, Two-step
+   verification, **RecruitPro home**, **Sign out**. **RecruitPro home** opens the landing site (you stay signed in:
+   **HR sign in** goes straight back to your jobs).
+4. **5.6-4** Account menu → **Sign out**. **Expected:** http://localhost:8088/hr/login with the notice **"You have
+   signed out."**
+5. **5.6-5** **← Back to home** → http://localhost:8088 → **Candidate sign in**. **Expected:**
+   http://localhost:8088/candidate/login with **← Back to home** (top right) and "Hiring? **Sign in to the HR
+   workspace**" at the bottom. **Create an account** and **Forgot your password?** keep both links.
+6. **5.6-6** Sign in as `candidate@demo.test`. **Expected:** `/candidate/home` (**Welcome back, Casey**). Account menu:
+   Profile, Privacy and data, **RecruitPro home**, **Sign out**.
+7. **5.6-7** **Sign out**. **Expected:** http://localhost:8088/candidate/login with **"You have signed out."**;
+   **← Back to home** returns to the landing page.
+8. **5.6-8** Both portals at once: sign in to the HR portal, then (same window, another tab) to the candidate portal.
+   **Expected:** both stay signed in (separate refresh cookies `rp_refresh_staff` / `rp_refresh_candidate`, both with
+   `Path=/api/v1/auth`); signing out of one leaves the other signed in.
+9. **5.6-9** Not found: http://localhost:8088/hr/nope and http://localhost:8088/candidate/nope (signed in).
+   **Expected:** "Page not found" with the way back into the portal and **RecruitPro home**.
+10. **5.6-10** Email links point at the gateway: Mailpit (http://localhost:8025) → any verification, reset or
+    invitation email. **Expected:** links start with `http://localhost:8088/candidate/` or `http://localhost:8088/hr/`
+    (a referee link is `http://localhost:8088/candidate/reference/<token>`).
 
 ---
 
@@ -608,11 +682,11 @@ if the landing site is not at http://localhost:5170.
 
 | Email | Name | Role (display name) | Portal | Lands on after sign-in | Sidebar |
 |---|---|---|---|---|---|
-| `admin@acme.test` | Ada Admin | Administrator | HR :5174 | `/admin` (Overview) | Workspace: Jobs, My interviews, Get started (while set-up steps are open), Inbox. Administration: Overview, Staff accounts, Invitations, Organisation, Job oversight, Audit log, Fairness, Verification |
-| `hr@acme.test` | Harper Reyes | HR manager | HR :5174 | `/jobs` | Jobs, My interviews, Inbox; Administration → Verification |
-| `recruiter@acme.test` | Riley Chen | Recruiter | HR :5174 | `/jobs` | Jobs, My interviews, Inbox |
-| `interviewer@acme.test` | Ivan Petrov | Interviewer | HR :5174 | `/interviews` | My interviews, Inbox |
-| `candidate@demo.test` | Casey Candidate | Candidate (email already confirmed) | Candidate :5173 | `/home` (Overview) | Overview, Find jobs, Applications; My evidence: Resume, Claims, Strengthen; Tasks: Work samples, Interviews; Inbox |
+| `admin@acme.test` | Ada Admin | Administrator | HR `/hr` | `/admin` (Overview) | Workspace: Jobs, My interviews, Get started (while set-up steps are open), Inbox. Administration: Overview, Staff accounts, Invitations, Organisation, Job oversight, Audit log, Fairness, Verification |
+| `hr@acme.test` | Harper Reyes | HR manager | HR `/hr` | `/jobs` | Jobs, My interviews, Inbox; Administration → Verification |
+| `recruiter@acme.test` | Riley Chen | Recruiter | HR `/hr` | `/jobs` | Jobs, My interviews, Inbox |
+| `interviewer@acme.test` | Ivan Petrov | Interviewer | HR `/hr` | `/interviews` | My interviews, Inbox |
+| `candidate@demo.test` | Casey Candidate | Candidate (email already confirmed) | Candidate `/candidate` | `/home` (Overview) | Overview, Find jobs, Applications; My evidence: Resume, Claims, Strengthen; Tasks: Work samples, Interviews; Inbox |
 
 ### 6.2 What the seed creates (organisation **Acme Labs**, slug `acme-labs`)
 
@@ -775,8 +849,8 @@ All mail lands in Mailpit, whatever the domain.
 ## 7. Test scripts, in run order (both portals)
 
 **Browser set-up:**
-- **Window H** (normal): HR portal http://localhost:5174.
-- **Window C** (InPrivate/Incognito): candidate portal http://localhost:5173.
+- **Window H** (normal): HR portal http://localhost:8088/hr.
+- **Window C** (InPrivate/Incognito): candidate portal http://localhost:8088/candidate.
 - A third tab: Mailpit http://localhost:8025.
 - Both portals may be signed in at once in one browser (separate cookies `rp_refresh_staff` and
   `rp_refresh_candidate`). Separate windows just keep things clear.
@@ -792,7 +866,7 @@ All mail lands in Mailpit, whatever the domain.
 
 #### 7.1 [HR] Admin overview and health
 
-1. **7.1-1** Window H → http://localhost:5174.
+1. **7.1-1** Window H → http://localhost:8088/hr.
    **Expected:**
    - heading **Sign in**, fields **Work email** and **Password**, link "Forgot your password?", button **Sign in**,
      footer "New organisation? Create a workspace";
@@ -823,7 +897,7 @@ All mail lands in Mailpit, whatever the domain.
    **Expected:**
    - Jobs, My interviews and Inbox only;
    - no **New job**;
-   - typing http://localhost:5174/admin shows "Not available for your role" / "Your role does not include this area".
+   - typing http://localhost:8088/hr/admin shows "Not available for your role" / "Your role does not include this area".
 3. **7.2-3** Sign out; sign in as `interviewer@acme.test`.
    **Expected:**
    - lands on **My interviews**: "Completed and cancelled" lists the seeded completed interview (Casey) with
@@ -832,7 +906,7 @@ All mail lands in Mailpit, whatever the domain.
 4. **7.2-4** Sign out; sign in as `candidate@demo.test`.
    **Expected:** red notice "This is the HR portal for organisation staff. Candidate accounts sign in to the candidate
    portal." No session is created.
-5. **7.2-5** Window C → http://localhost:5173 → sign in as `hr@acme.test`.
+5. **7.2-5** Window C → http://localhost:8088/candidate → sign in as `hr@acme.test`.
    **Expected:** form error "This is the candidate portal. Staff accounts sign in to the RecruitPro HR portal."
 6. **7.2-6** Window H: sign in as `hr@acme.test` again (stay signed in for Part II).
 
@@ -1001,7 +1075,7 @@ As `hr@acme.test` in Window H.
 4. **7.6-4** **Resend link**. **Expected:** toast "Verification link sent" / "Check arjun.test@example.com…".
 5. **7.6-5** Mailpit.
    **Expected:** two mails "Confirm your email address for RecruitPro". Open the newest → click the link
-   (`http://localhost:5173/verify-email?token=…`).
+   (`http://localhost:8088/candidate/verify-email?token=…`).
    **Expected:**
    - "Email address confirmed" / "Thank you. arjun.test@example.com is confirmed…" → **Continue**;
    - the banner is gone; checklist "1 of 5 done".
@@ -1338,7 +1412,7 @@ As Asha.
 4. **7.17-4** Mailpit.
    **Expected:**
    - "Asha asked you for a reference" (first name only);
-   - the link is `http://localhost:5173/reference/<token>`; open it in **any** browser, signed out.
+   - the link is `http://localhost:8088/candidate/reference/<token>`; open it in **any** browser, signed out.
 5. **7.17-5** Referee page.
    **Expected:**
    - header "RecruitPro · Reference request" and a theme icon button;
@@ -1557,7 +1631,7 @@ As `hr@acme.test` → **Frontend Engineer (React)** → Applicants → Asha (**C
    - already revealed, so evidence is shown;
    - confirming React works, but Backend has no React requirement, so the Evidence tab does not change.
 9. **7.21-9** As `interviewer@acme.test`, open an applicant URL directly
-   (`http://localhost:5174/jobs/<id>/applicants/<id>`).
+   (`http://localhost:8088/hr/jobs/<id>/applicants/<id>`).
    **Expected:** "Not available for your role".
 
 #### 7.22 [HR] Work samples on the job tab
@@ -1918,7 +1992,7 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
    - **Pending · 1** / **All · N**;
    - row status **Pending** with **Revoke**. There is **no Resend**: inviting the same email again replaces the pending
      invitation.
-6. **7.33-6** Open the Mailpit link (`http://localhost:5174/accept-invite?token=…`) in a signed-out browser.
+6. **7.33-6** Open the Mailpit link (`http://localhost:8088/hr/accept-invite?token=…`) in a signed-out browser.
    **Expected:**
    - "Join Acme Labs" with facts Organisation, Your role, Email and Expires;
    - fields **First name** `New`, **Last name** `Manager`, **Password** `TestPass123` (checklist "At least 10
@@ -2059,7 +2133,7 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
    - the next open step is tagged **Next**;
    - sidebar **Get started** with "N steps left".
 3. **7.38-3** Mailpit → "Confirm your email address for RecruitPro" for owner@org2.example → link
-   `http://localhost:5174/verify-email?token=…`.
+   `http://localhost:8088/hr/verify-email?token=…`.
    **Expected:**
    - the HR portal confirms it;
    - **Welcome** shows step 2 done.
@@ -2127,7 +2201,7 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
    **Expected:**
    - **Menu** button;
    - an applicant page shows the tab **Identity & notes** below 1200 px.
-5. **7.41-5** Style guide: http://localhost:5173/__design and http://localhost:5174/__design. No sign-in is needed;
+5. **7.41-5** Style guide: http://localhost:8088/candidate/__design and http://localhost:8088/hr/__design. No sign-in is needed;
    the route is public and present in production builds.
    **Expected:**
    - page **Design system** with sections Foundations, Actions, Forms, Navigation, Evidence, Data, Feedback, Overlays
@@ -2136,13 +2210,13 @@ Use `recruiter@acme.test`, so a mistake cannot lock out the admin.
    - works in light and dark.
 6. **7.41-6** Name options: open `docs\design\name-options.html` directly in the browser (a static file, not an app
    route).
-7. **7.41-7** Not found: http://localhost:5173/nope (signed in).
+7. **7.41-7** Not found: http://localhost:8088/candidate/nope (signed in).
    **Expected:**
    - "Page not found";
    - "There is nothing at this address";
    - **Go to your overview**.
 
-   HR http://localhost:5174/nope → "Page not found".
+   HR http://localhost:8088/hr/nope → "Page not found".
 
 ---
 
@@ -2200,7 +2274,7 @@ For about a minute every sign-in from this machine gets "Too many attempts. Plea
 ### 8.4 Another organisation cannot see Acme's data
 
 1. **8.4-1** As `hr@acme.test`, open **Backend Engineer (Java)** and copy the URL (e.g.
-   `http://localhost:5174/jobs/1`). Also copy an applicant URL.
+   `http://localhost:8088/hr/jobs/1`). Also copy an applicant URL.
 2. **8.4-2** Sign in as `owner@org2.example` (7.38) and paste both URLs.
    **Expected:**
    - "Job not found" / "This job does not exist, or it belongs to another organisation";
@@ -2228,7 +2302,7 @@ For about a minute every sign-in from this machine gets "Too many attempts. Plea
 ### 8.6 Expired, cancelled or answered referee link (410)
 
 Done in 7.17-8 and 7.17-11. **Expected** both times: "This request is closed", with HTTP 410 in the Network tab. A
-made-up token (`http://localhost:5173/reference/abc`) gives "This link is not valid" (404).
+made-up token (`http://localhost:8088/candidate/reference/abc`) gives "This link is not valid" (404).
 
 ### 8.7 OAuth not configured
 
@@ -2262,14 +2336,16 @@ run `docker compose up -d` (it recreates the affected containers).
 
 1. GitHub → **Settings** → **Developer settings** → **OAuth Apps** → **New OAuth App**:
    - Application name `RecruitPro local`;
-   - Homepage URL `http://localhost:5173`;
-   - **Authorization callback URL `http://localhost:8080/api/v1/verification/oauth/github/callback`**.
+   - Homepage URL `http://localhost:8088`;
+   - **Authorization callback URL `http://localhost:8088/api/v1/verification/oauth/github/callback`** (the gateway
+     origin; it must match `GITHUB_OAUTH_REDIRECT_URI` exactly. An existing app registered with
+     `http://localhost:8080/...`: edit it and change the callback URL, or keep 8080 in both places).
 2. **Register application** → copy the **Client ID** → **Generate a new client secret**.
 3. `.env`:
    ```
    GITHUB_CLIENT_ID=<client id>
    GITHUB_CLIENT_SECRET=<client secret>
-   GITHUB_OAUTH_REDIRECT_URI=http://localhost:8080/api/v1/verification/oauth/github/callback
+   GITHUB_OAUTH_REDIRECT_URI=http://localhost:8088/api/v1/verification/oauth/github/callback
    AGENT_GITHUB_TOKEN=<optional personal access token, avoids the 60 requests/hour limit>
    ```
    `APP_ENCRYPTION_KEY` must be valid; the dev default is.
@@ -2277,7 +2353,7 @@ run `docker compose up -d` (it recreates the affected containers).
 5. **Verify:**
    - Candidate → **Add a source** → GitHub → consent → **Continue with GitHub** → authorise on GitHub (scope
      `read:user`).
-   - **Expected:** back on `http://localhost:5173/verification?connected=github` with "GitHub connected" / "GitHub is
+   - **Expected:** back on `http://localhost:8088/candidate/verification?connected=github` with "GitHub connected" / "GitHub is
      connected and ownership is proven…". The source shows "Ownership proven · GitHub sign-in".
    - A real login is not `demo-`, so the run reads the real GitHub API.
    - Finish in the **same browser**; another browser ends with `?error=BROWSER_MISMATCH`.
@@ -2285,12 +2361,13 @@ run `docker compose up -d` (it recreates the affected containers).
 ### 9.2 Staff SSO (Google, Microsoft Entra, generic OIDC)
 
 1. Register a **Web** application with the provider. Redirect URI:
-   `http://localhost:8080/api/v1/auth/sso/<google|microsoft|oidc>/callback`.
+   `http://localhost:8088/api/v1/auth/sso/<google|microsoft|oidc>/callback` (gateway origin).
 2. `.env`:
    - `SSO_GOOGLE_CLIENT_ID` and `SSO_GOOGLE_CLIENT_SECRET`;
    - or `SSO_MICROSOFT_CLIENT_ID`, `SSO_MICROSOFT_CLIENT_SECRET` and `SSO_MICROSOFT_TENANT_ID`;
    - or `SSO_OIDC_NAME`, `SSO_OIDC_CLIENT_ID`, `SSO_OIDC_CLIENT_SECRET` and `SSO_OIDC_ISSUER`;
-   - keep `SSO_REDIRECT_BASE_URL=http://localhost:8080`.
+   - `SSO_REDIRECT_BASE_URL=http://localhost:8088` (the compose default; an older `.env` may still say
+     `http://localhost:8080`, which works only if the provider has that redirect URI registered).
 3. `docker compose up -d backend`
 4. Admin → **Organisation** → **Allowed email domains** → your company domain → **Save changes**. The staff account
    must already exist with that exact email (invite it): there is no auto-provisioning.
@@ -2343,7 +2420,8 @@ docker compose up -d ai-service agent-service backend
 | Backend exits: `app.encryption.key must be Base64 encoded` / `must decode to exactly 32 bytes` | Bad `APP_ENCRYPTION_KEY`. Empty it or generate one (3). |
 | Backend exits: Flyway "validate failed" / "checksum mismatch" / "not resolved locally" | The database came from another branch or version. `docker compose down -v`, then `up`. |
 | Signed out right after a restart, "Your session has ended", or both portals loop to sign-in | Stale refresh cookie (after `down -v`). Sign in again. If it persists: DevTools → Application → **Clear site data** for `localhost`. |
-| Portal loads but every action fails, or CORS errors in the console | Backend not ready (wait for `Started RecruitProApplication`), or you used `127.0.0.1`. Use exactly `http://localhost:5173` and `:5174`. |
+| Portal loads but every action fails | Backend not ready (wait for `Started RecruitProApplication`); the gateway answers 502 for `/api/` until it is. Use `http://localhost:8088`. With the per-port services: CORS errors mean you used `127.0.0.1`; use exactly `http://localhost:5173` and `:5174`. |
+| http://localhost:8088 does not open | `docker compose ps gateway` (healthy?); port taken or reserved: set `GATEWAY_PORT` and `PUBLIC_URL` in `.env` (1, "Ports"). |
 | Runs end failed with `AGENT_SERVICE_REJECTED` while the dashboard says agents Up | **Token mismatch**: the backend's `AGENT_SERVICE_TOKEN` differs from the agent's. Set it once in `.env` (compose passes it to both), then `docker compose up -d backend agent-service`. The same applies to `AI_SERVICE_TOKEN` (resumes stuck or failing). |
 | AI service or PostgreSQL "not reachable" from the host | By design: they have no host port. Use the `docker compose exec` lines (5.2). For host access to PostgreSQL, add a `docker-compose.override.yml` (README "Quick start"). |
 | `demo-asha` gives "Not found" or `SOURCE_NOT_FOUND` | `http://localhost:8100/health` must show `"demoFixtures":true`. Only `demo-asha`, `demo-ravi` and the hosts in 6.3 exist. |

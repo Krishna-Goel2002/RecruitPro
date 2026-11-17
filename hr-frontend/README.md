@@ -8,7 +8,7 @@ Stack: `react-router-dom` 6, `@tanstack/react-query` 5, no UI library. Plan refe
 
 ```powershell
 pnpm install
-pnpm dev        # http://localhost:5174 (strict port)
+pnpm dev        # http://localhost:5174/hr/ (strict port; proxies /api to http://localhost:8080)
 pnpm build      # tsc --noEmit && vite build
 ```
 
@@ -16,9 +16,11 @@ The Dockerfile builds with pnpm 10 (the `pnpm-workspace.yaml` uses the pnpm 10 `
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VITE_API_BASE_URL` | `http://localhost:8080/api/v1` | API base URL, compiled into the bundle. Put overrides in `.env.local`. |
+| `VITE_API_BASE_URL` | `/api/v1` (same origin: gateway, `pnpm dev` proxy) | API base URL, compiled into the bundle. Put overrides in `.env.local`; absolute for the per-port image. |
+| `VITE_HR_URL` | `/hr` | where this portal lives; its path is the Vite base and router basename (`http://localhost:5174` → base `/`) |
+| `VITE_SITE_URL`, `VITE_CANDIDATE_URL` | `/`, `/candidate` | landing site and candidate portal for the cross-links (one config: `src/design/lib/links.ts`) |
 
-The backend must list this origin in `app.cors.allowed-origins` (default includes `http://localhost:5174`) because every request uses `credentials: 'include'`.
+With an absolute API URL (per-port mode) the backend must list this origin in `app.cors.allowed-origins` (compose includes `http://localhost:5174`) because every request uses `credentials: 'include'`.
 
 With the backend's demo seed (`APP_SEED_DEMO=true`) you can sign in as `admin@acme.test`, `hr@acme.test`, `recruiter@acme.test` or `interviewer@acme.test` (password `ChangeMe-123!` unless `app.seed.password` says otherwise).
 

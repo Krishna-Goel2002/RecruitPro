@@ -15,6 +15,9 @@
 //   --full                      full-page screenshots (default: full page)  --viewport  viewport only
 //   --motion                    do NOT emulate prefers-reduced-motion (default: reduced, for stable pixels)
 //   --api-prefix /api/v1        path prefix the bundle calls (any origin)
+//   --origin <url>              capture from an already running server instead of serving --dist, e.g. the gateway
+//                               (http://localhost:8088); --dist is then not needed
+//   --base /candidate           path prefix of the app on that server (screen paths are relative to it; default "")
 //   --axe                       run axe-core WCAG 2.1 A/AA rules on every capture (needs `npm i axe-core`)
 //
 // Exit code 1 when any capture crashed (blank #root or page error), overflows horizontally, or (with --axe) has a
@@ -40,11 +43,20 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, cur, i, all) 
 }, []))
 
 const portal = args.portal
-if (!['candidate', 'hr', 'site'].includes(portal) || !args.dist) {
-  console.error('usage: node snap.mjs --portal candidate|hr|site --dist <built dist dir> [--out dir] [--theme light|dark|both] [--only a,b]')
+if (!['candidate', 'hr', 'site'].includes(portal) || (!args.dist && !args.origin)) {
+  console.error('usage: node snap.mjs --portal candidate|hr|site (--dist <built dist dir> | --origin <url> [--base /prefix]) [--out dir] [--theme light|dark|both] [--only a,b]')
   process.exit(2)
 }
-const dist = path.resolve(args.dist)
+const dist = args.dist ? path.resolve(args.dist) : null
+// The app's base path. With --dist it is read from the built index.html (a gateway build lives under /candidate/ or
+// /hr/; a per-port build under /), so the static server below can serve it at the same path.
+function detectBase() {
+  if (!dist) return ''
+  const html = fs.readFileSync(path.join(dist, 'index.html'), 'utf8')
+  const m = /src="(\/[^"]*?)assets\//.exec(html)
+  return m ? m[1].replace(/\/+$/, '') : ''
+}
+const basePrefix = typeof args.base === 'string' ? args.base.replace(/\/+$/, '') : detectBase()
 const outDir = path.resolve(args.out ?? path.join(here, 'out', portal))
 const themes = args.theme === 'both' ? ['light', 'dark'] : [args.theme === 'dark' ? 'dark' : 'light']
 const widths = String(args.widths ?? '1440,390').split(',').map(Number)
@@ -72,15 +84,16 @@ fs.mkdirSync(outDir, { recursive: true })
 
 // ---------------------------------------------------------------- static server with SPA fallback
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.json': 'application/json', '.ico': 'image/x-icon' }
-const server = http.createServer((reqst, res) => {
-  const urlPath = decodeURIComponent(new URL(reqst.url, 'http://x').pathname)
+const server = dist && http.createServer((reqst, res) => {
+  let urlPath = decodeURIComponent(new URL(reqst.url, 'http://x').pathname)
+  if (basePrefix && (urlPath === basePrefix || urlPath.startsWith(basePrefix + '/'))) urlPath = urlPath.slice(basePrefix.length) || '/'
   let file = path.join(dist, urlPath)
   if (!file.startsWith(dist) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(dist, 'index.html')
   res.writeHead(200, { 'Content-Type': types[path.extname(file)] ?? 'application/octet-stream' })
   fs.createReadStream(file).pipe(res)
 })
-await new Promise((r) => server.listen(0, '127.0.0.1', r))
-const origin = `http://127.0.0.1:${server.address().port}`
+if (server) await new Promise((r) => server.listen(0, '127.0.0.1', r))
+const origin = server ? `http://127.0.0.1:${server.address().port}` : new URL(args.origin).origin
 
 // ---------------------------------------------------------------- browser
 async function launch() {
@@ -104,6 +117,9 @@ const unmatched = new Set()
 
 async function capture(screen, theme, width) {
   const page = await browser.newPage()
+  // axe-core is injected as an inline script, which a served CSP (--origin, e.g. the gateway) forbids. Without --axe the
+  // page keeps its real CSP, and any CSP violation is reported below.
+  if (args.axe && !server) await page.setBypassCSP(true)
   const height = width < 700 ? 844 : 900
   await page.setViewport({ width, height, deviceScaleFactor: 1, isMobile: width < 700, hasTouch: width < 700 })
   await page.emulateMediaFeatures([
@@ -147,9 +163,23 @@ async function capture(screen, theme, width) {
   })
   const errors = []
   page.on('pageerror', (err) => { errors.push(err.message); console.warn(`  [${screen.name}] page error: ${err.message}`) })
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && /Content Security Policy/i.test(msg.text())) {
+      errors.push(`CSP: ${msg.text()}`)
+      console.warn(`  [${screen.name}] CSP: ${msg.text()}`)
+    }
+  })
+  // A page file that the server does not have (wrong base path, missing asset) is an error too.
+  page.on('response', (response) => {
+    const url = new URL(response.url())
+    if (url.origin === origin && !url.pathname.includes(apiPrefix + '/') && response.status() >= 400) {
+      errors.push(`HTTP ${response.status()} ${url.pathname}`)
+      console.warn(`  [${screen.name}] HTTP ${response.status()} ${url.pathname}`)
+    }
+  })
 
   // Screen options: waitUntil ('networkidle0' default; 'domcontentloaded' to catch loading states), settle (ms, default 500).
-  await page.goto(origin + screen.path, { waitUntil: screen.waitUntil ?? 'networkidle0', timeout: 30000 }).catch((e) => console.warn(`  [${screen.name}] ${e.message}`))
+  await page.goto(origin + basePrefix + screen.path, { waitUntil: screen.waitUntil ?? 'networkidle0', timeout: 30000 }).catch((e) => console.warn(`  [${screen.name}] ${e.message}`))
   await new Promise((r) => setTimeout(r, screen.settle ?? 500))
   if (screen.action) await screen.action(page)
   // Layout checks: horizontal overflow, elements poking past the viewport, empty render (crash = blank #root).
@@ -227,7 +257,7 @@ for (const screen of fixtures.screens) {
   }
 }
 await browser.close()
-server.close()
+server?.close()
 if (unmatched.size) console.warn(`\nUnanswered API calls (add fixtures):\n  ${[...unmatched].sort().join('\n  ')}`)
 fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify({ portal, unmatched: [...unmatched].sort(), screens: report }, null, 2))
 const failed = report.filter((r) => r.blank || r.errors.length || r.overflowX > 0 || (r.axe && r.axe.some((v) => ['serious', 'critical'].includes(v.impact))))

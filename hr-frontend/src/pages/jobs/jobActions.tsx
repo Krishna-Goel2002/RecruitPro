@@ -10,6 +10,7 @@ import { ActionDialog } from '../../components/ActionDialog'
 import { useToast, type MenuItem } from '../../design/components'
 import { formatDate, plural } from '../../design/lib/format'
 import { Copy, Download, Link2, Pencil, Trash2, X } from '../../design/icons'
+import { absoluteAppUrl } from '../../lib/appUrl'
 
 export type JobAction = 'PUBLISH' | 'HOLD' | 'RESUME' | 'CLOSE' | 'CANCEL' | 'DELETE'
 
@@ -187,7 +188,7 @@ export function useJobActions() {
       label: 'Copy link',
       icon: Link2,
       onSelect: () => {
-        const url = `${window.location.origin}/jobs/${job.id}`
+        const url = absoluteAppUrl(`/jobs/${job.id}`)
         const failed = () => toast({ tone: 'warning', title: 'Could not copy the link', body: url })
         if (!navigator.clipboard) failed()
         else void navigator.clipboard.writeText(url).then(() => toast({ tone: 'success', title: 'Link copied', duration: 3000 }), failed)

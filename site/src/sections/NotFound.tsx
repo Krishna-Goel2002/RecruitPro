@@ -4,9 +4,13 @@ import { buttonProps, ThemeSwitch } from '../design/components'
 import { ArrowLeft, Icon } from '../design/icons'
 import type { PortalLinks } from '../site/config'
 
-/** Paths the landing page itself answers; nginx serves index.html for every other path too. */
-export function isLandingPath(pathname: string): boolean {
-  return pathname === '/' || pathname === '' || pathname === '/index.html'
+/**
+ * Paths the landing page itself answers (its base, "/" behind the gateway and on its own port); nginx serves
+ * index.html for every other path too.
+ */
+export function isLandingPath(pathname: string, base: string = import.meta.env.BASE_URL): boolean {
+  const root = base.endsWith('/') ? base : `${base}/`
+  return pathname === root || pathname === root.slice(0, -1) || pathname === `${root}index.html`
 }
 
 /**
@@ -22,7 +26,7 @@ export function NotFound({ links }: { links: PortalLinks }) {
     <div className="site" id="top">
       <header className="hd">
         <div className="hd-bar wrap">
-          <a href="/" className="hd-brand" aria-label={`${brand.name}, home`}>
+          <a href={links.home} className="hd-brand" aria-label={`${brand.name}, home`}>
             <brand.Mark size={22} />
             <span className="p-wordmark">{brand.name}</span>
           </a>
@@ -36,7 +40,7 @@ export function NotFound({ links }: { links: PortalLinks }) {
           <h1 className="sec-title">There is nothing at this address</h1>
           <p className="sec-lead">The link may be old or mistyped. These are the places people usually look for.</p>
           <div className="ft-cta-actions nf-actions">
-            <a href="/" {...buttonProps('primary', 'lg')}>
+            <a href={links.home} {...buttonProps('primary', 'lg')}>
               <Icon icon={ArrowLeft} size={16} />
               <span className="ui-btn-label">Back to the home page</span>
             </a>
@@ -44,7 +48,7 @@ export function NotFound({ links }: { links: PortalLinks }) {
               <span className="ui-btn-label">For candidates: find jobs</span>
             </a>
             <a href={links.hrSignIn} {...buttonProps('secondary', 'lg')}>
-              <span className="ui-btn-label">For companies: HR portal</span>
+              <span className="ui-btn-label">For companies: HR sign in</span>
             </a>
           </div>
         </div>

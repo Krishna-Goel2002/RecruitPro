@@ -25,6 +25,17 @@ node snap.mjs --portal hr --dist ../../hr-frontend/dist --theme both --axe
 node snap.mjs --portal site --dist ../../site/dist --theme both --axe   # landing page (build site/ first)
 ```
 
+**Against the gateway** (one origin, the real nginx config and CSP): start the stack (`docker compose up --build -d`) and
+point the harness at it instead of a `dist/`. Screen paths are relative to `--base`; API calls are still answered from
+the fixtures. Any page file the server answers with 4xx/5xx (wrong base path, missing asset) and any CSP violation is
+reported as an error (with `--axe` the CSP is bypassed so axe-core can be injected; run once without it for the CSP):
+
+```bash
+node snap.mjs --portal site --origin http://localhost:8088 --theme both --only landing,not-found
+node snap.mjs --portal candidate --origin http://localhost:8088 --base /candidate --theme both --only login,register,jobs
+node snap.mjs --portal hr --origin http://localhost:8088 --base /hr --theme both --only login,signup,jobs
+```
+
 On Windows or macOS, point it at an installed browser: `CHROME_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"` (Edge works too). Without `CHROME_PATH` it uses `@sparticuz/chromium`, which only runs on Linux.
 
 | Flag | Meaning |
@@ -38,6 +49,8 @@ On Windows or macOS, point it at an installed browser: `CHROME_PATH="C:\Program 
 | `--viewport` | viewport-only shots instead of full page (a screen can also set `viewport: true`, e.g. a fixed side panel) |
 | `--motion` | allow animations (default emulates `prefers-reduced-motion: reduce` so pixels are stable) |
 | `--axe` | run axe-core (tags wcag2a, wcag2aa, wcag21a, wcag21aa) on every capture |
+| `--origin <url>` | capture from a running server (e.g. the gateway, http://localhost:8088) instead of `--dist` |
+| `--base /candidate` | the app's path on that server; screen paths are relative to it |
 
 Files are named `<screen>--<theme>--<width>.png`. `out/<portal>/report.json` lists, per capture: page errors, `blank` (nothing rendered in `#root`), `overflowX` and the first elements that stick out of the viewport (elements inside a scroll container are ignored), and axe violations. **The process exits 1** if any capture crashed, overflowed, or has a serious/critical axe violation — use it as the acceptance gate for each redesigned screen.
 
@@ -54,7 +67,7 @@ Known limitation: with `@sparticuz/chromium`, full-page captures taller than abo
 
 ## How the mocking works
 
-The bundle calls `VITE_API_BASE_URL` (default `http://localhost:8080/api/v1`). Puppeteer intercepts any request whose path contains `/api/v1/`, answers CORS preflights, and replies with the backend envelope `{ success, message, data }`. Session restore works because `POST /auth/refresh` returns a session from the fixture; screens marked `anonymous: true` get a 401 refresh instead. Every other request to a third-party origin is aborted (the production CSP forbids them anyway). Unanswered API calls are printed at the end — add a route for each.
+The bundle calls `VITE_API_BASE_URL` (default `/api/v1` on its own origin). Puppeteer intercepts any request whose path contains `/api/v1/`, answers CORS preflights, and replies with the backend envelope `{ success, message, data }`. Session restore works because `POST /auth/refresh` returns a session from the fixture; screens marked `anonymous: true` get a 401 refresh instead. Every other request to a third-party origin is aborted (the production CSP forbids them anyway). Unanswered API calls are printed at the end — add a route for each.
 
 Adding a screen:
 

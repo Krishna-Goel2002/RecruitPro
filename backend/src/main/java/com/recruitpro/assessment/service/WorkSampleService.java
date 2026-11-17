@@ -30,6 +30,7 @@ import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.common.time.UtcTime;
 import com.recruitpro.common.util.AnchorLevels;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.evidence.service.MatchRequestBuilder;
 import com.recruitpro.evidence.service.MatchTriggerService;
 import com.recruitpro.hr.entity.Job;
@@ -611,14 +612,7 @@ public class WorkSampleService {
     }
 
     static String trimTrailingSlash(String url) {
-        if (url == null) {
-            return "";
-        }
-        String trimmed = url.trim();
-        while (trimmed.endsWith("/")) {
-            trimmed = trimmed.substring(0, trimmed.length() - 1);
-        }
-        return trimmed;
+        return PortalUrls.base(url);
     }
 
     static String limit(String value, int max) {

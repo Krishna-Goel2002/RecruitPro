@@ -31,6 +31,9 @@ export type AuthContextValue = {
 /** Exported for tests (they provide a fixed session); the app uses AuthProvider. */
 export const AuthContext = createContext<AuthContextValue | null>(null)
 
+/** Shown on the sign-in page after the user pressed "Sign out". */
+export const SIGNED_OUT_NOTICE = 'You have signed out.'
+
 export const NON_STAFF_MESSAGE = 'This workspace is for organisation staff. Candidates sign in on the candidate portal.'
 
 export function AuthProvider({ children }: { children: ReactNode }) {

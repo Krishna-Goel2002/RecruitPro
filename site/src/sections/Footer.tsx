@@ -11,7 +11,7 @@ export function Footer({ links }: { links: PortalLinks }) {
           <h2 className="ft-cta-title">Hire on evidence you can trace.</h2>
           <div className="ft-cta-actions">
             <a href={links.hrSignIn} className="ui-btn" data-variant="primary" data-size="lg">
-              <span className="ui-btn-label">For companies: HR portal</span>
+              <span className="ui-btn-label">For companies: HR sign in</span>
             </a>
             <a href={links.findJobs} className="ui-btn" data-variant="secondary" data-size="lg">
               <span className="ui-btn-label">For candidates: find jobs</span>

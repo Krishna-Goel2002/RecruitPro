@@ -7,6 +7,7 @@ import com.recruitpro.candidate.service.CandidateProfileService;
 import com.recruitpro.common.crypto.SecretCipher;
 import com.recruitpro.common.exception.TooManyRequestsException;
 import com.recruitpro.common.time.UtcTime;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.user.entity.User;
 import com.recruitpro.verification.client.GitHubOAuthClient;
 import com.recruitpro.verification.dto.OAuthStartResponse;
@@ -87,7 +88,7 @@ public class GitHubOAuthService {
         this.sourceService = sourceService;
         this.auditService = auditService;
         this.transactions = new TransactionTemplate(transactionManager);
-        this.candidateUrl = candidateUrl.endsWith("/") ? candidateUrl.substring(0, candidateUrl.length() - 1) : candidateUrl;
+        this.candidateUrl = PortalUrls.base(candidateUrl);
     }
 
     /**

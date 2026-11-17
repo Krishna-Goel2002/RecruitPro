@@ -9,10 +9,12 @@ RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --network-concurrency=4
 COPY . .
-# Where the calls to action point. Compiled into the bundle by Vite; change them for a real deployment.
+# Per-port image (compose profile "ports"; the single-origin gateway builds its own copy, gateway/Dockerfile).
+# Where the calls to action point (src/design/lib/links.ts). Compiled into the bundle by Vite.
+ARG VITE_SITE_URL=http://localhost:5170
 ARG VITE_CANDIDATE_URL=http://localhost:5173
 ARG VITE_HR_URL=http://localhost:5174
-ENV VITE_CANDIDATE_URL=${VITE_CANDIDATE_URL} VITE_HR_URL=${VITE_HR_URL}
+ENV VITE_SITE_URL=${VITE_SITE_URL} VITE_CANDIDATE_URL=${VITE_CANDIDATE_URL} VITE_HR_URL=${VITE_HR_URL}
 RUN pnpm build
 
 FROM nginx:1.27-alpine

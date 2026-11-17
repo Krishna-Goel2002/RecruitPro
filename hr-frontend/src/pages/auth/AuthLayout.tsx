@@ -2,6 +2,8 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import brand from '../../design/brand/active'
 import { Alert, CoverageMeter, EvidenceLadder, ThemeSwitch } from '../../design/components'
+import { ArrowLeft, Icon } from '../../design/icons'
+import { appLinks } from '../../design/lib/links'
 import { usePageTitle } from '../../lib/hooks'
 import './auth.css'
 
@@ -33,6 +35,7 @@ export function AuthLayout({ title, intro, overline, children, footer, stepKey, 
   documentTitle?: string
 }) {
   usePageTitle(documentTitle ?? title)
+  const links = appLinks()
   const heading = useRef<HTMLHeadingElement>(null)
   const location = useLocation()
   const first = useRef(true)
@@ -49,7 +52,13 @@ export function AuthLayout({ title, intro, overline, children, footer, stepKey, 
       <div className="hra-auth-col">
         <header className="hra-auth-top">
           <AuthBrand />
-          <ThemeSwitch variant="icon" />
+          <span className="hra-auth-top-end">
+            <a href={links.site} className="hra-auth-site-link">
+              <Icon icon={ArrowLeft} size={14} />
+              Back to home
+            </a>
+            <ThemeSwitch variant="icon" />
+          </span>
         </header>
         <main className="hra-auth-main" id="main-content">
           <div className="hra-auth-body" key={stepKey}>
@@ -63,6 +72,9 @@ export function AuthLayout({ title, intro, overline, children, footer, stepKey, 
         </main>
         <footer className="hra-auth-foot">
           {footer && <div className="hra-auth-links">{footer}</div>}
+          <p className="hra-auth-switch">
+            Looking for a job? <a href={links.candidateLogin}>Candidate sign in</a>
+          </p>
           <p className="hra-auth-legal">Staff workspace. Every action is checked against your role on the server.</p>
         </footer>
       </div>

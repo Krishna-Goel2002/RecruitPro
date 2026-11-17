@@ -36,7 +36,7 @@ describe('RefereePage', () => {
     mockApi([{ path: PATH, reply: ok(reference) }])
     renderReferee()
     await screen.findByRole('heading', { level: 1 })
-    expect(screen.getByRole('link', { name: `About ${brand.name}` })).toHaveAttribute('href', 'http://localhost:5170/')
+    expect(screen.getByRole('link', { name: `About ${brand.name}` })).toHaveAttribute('href', '/')
   })
 
   it('shows "not valid" for an unknown token (404)', async () => {

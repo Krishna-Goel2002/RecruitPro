@@ -11,6 +11,7 @@ import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.common.exception.ForbiddenException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.common.time.UtcTime;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.evidence.service.MatchTriggerService;
 import com.recruitpro.hr.dto.DecisionRequest;
 import com.recruitpro.hr.dto.RequirementEvidenceResponse;
@@ -682,13 +683,6 @@ public class InterviewService {
     }
 
     private static String trimTrailingSlash(String url) {
-        if (url == null) {
-            return "";
-        }
-        String trimmed = url.trim();
-        while (trimmed.endsWith("/")) {
-            trimmed = trimmed.substring(0, trimmed.length() - 1);
-        }
-        return trimmed;
+        return PortalUrls.base(url);
     }
 }

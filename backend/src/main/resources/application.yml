@@ -160,9 +160,12 @@ app:
     # When true, POST /api/v1/admin/invitations returns the invitation link (development only).
     expose-link: ${INVITATIONS_EXPOSE_LINK:false}
 
+  # Where the portals live; every e-mail and redirect link is built from these (common.web.PortalUrls keeps a path).
+  # docker compose sets the single-origin gateway (http://localhost:8088/candidate, .../hr). The defaults fit a backend
+  # run outside Docker with `pnpm dev` in both portals (Vite serves them under /candidate/ and /hr/).
   frontend:
-    candidate-url: ${CANDIDATE_PORTAL_URL:http://localhost:5173}
-    hr-url: ${HR_PORTAL_URL:http://localhost:5174}
+    candidate-url: ${CANDIDATE_PORTAL_URL:http://localhost:5173/candidate}
+    hr-url: ${HR_PORTAL_URL:http://localhost:5174/hr}
 
   # First organisation + administrator, created once when no organisation exists (any profile).
   bootstrap:

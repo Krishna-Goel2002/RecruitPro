@@ -15,6 +15,7 @@ import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.TooManyRequestsException;
 import com.recruitpro.common.exception.UnauthorizedException;
 import com.recruitpro.common.time.UtcTime;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.notification.entity.NotificationTemplate;
 import com.recruitpro.notification.service.NotificationRecipient;
 import com.recruitpro.notification.service.NotificationService;
@@ -304,7 +305,7 @@ public class AuthService {
     }
 
     private String portalFor(User user) {
-        String base = user.getRole() == Role.CANDIDATE ? candidatePortalUrl : hrPortalUrl;
-        return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        // A base may carry a path (gateway: http://localhost:8088/candidate); PortalUrls keeps it and trims slashes.
+        return PortalUrls.base(user.getRole() == Role.CANDIDATE ? candidatePortalUrl : hrPortalUrl);
     }
 }

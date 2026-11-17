@@ -1,25 +1,16 @@
 /*
- * Where the calls to action point. Both origins are compiled in at build time (Docker build args
- * VITE_CANDIDATE_URL / VITE_HR_URL); anything that is not an absolute http(s) URL falls back to the local default,
- * so a typo can never produce a javascript: or relative link.
+ * Where the calls to action point. Every address comes from the shared link config (src/design/lib/links.ts, the same
+ * file in both portals): by default the single-origin gateway paths (/candidate/..., /hr/...), or the absolute portal
+ * URLs a per-port build sets (Docker build args VITE_CANDIDATE_URL / VITE_HR_URL / VITE_SITE_URL). A value that is
+ * neither a same-origin path nor an absolute http(s) URL falls back to the default, so a typo can never produce a
+ * javascript: link.
  */
-export const DEFAULT_CANDIDATE_URL = 'http://localhost:5173'
-export const DEFAULT_HR_URL = 'http://localhost:5174'
-
-export function portalOrigin(value: string | undefined, fallback: string): string {
-  const v = (value ?? '').trim()
-  if (!v) return fallback
-  try {
-    const url = new URL(v)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return fallback
-    return v.replace(/\/+$/, '')
-  } catch {
-    return fallback
-  }
-}
+import { appLinks, type LinkEnv } from '../design/lib/links'
 
 export interface PortalLinks {
-  /** Candidate portal: browse open roles (sign-in first when signed out). */
+  /** This landing page (the 404 page's way home). */
+  home: string
+  /** Candidate portal: open roles (signed-out visitors sign in first and land on the list). */
   findJobs: string
   /** Candidate portal: create an account. */
   register: string
@@ -29,13 +20,13 @@ export interface PortalLinks {
   hrSignIn: string
 }
 
-export function portalLinks(env: { VITE_CANDIDATE_URL?: string; VITE_HR_URL?: string } = import.meta.env): PortalLinks {
-  const candidate = portalOrigin(env.VITE_CANDIDATE_URL, DEFAULT_CANDIDATE_URL)
-  const hr = portalOrigin(env.VITE_HR_URL, DEFAULT_HR_URL)
+export function portalLinks(env: LinkEnv = import.meta.env): PortalLinks {
+  const links = appLinks(env)
   return {
-    findJobs: `${candidate}/jobs`,
-    register: `${candidate}/register`,
-    candidateSignIn: `${candidate}/login`,
-    hrSignIn: `${hr}/login`,
+    home: links.site,
+    findJobs: links.candidateJobs,
+    register: links.candidateRegister,
+    candidateSignIn: links.candidateLogin,
+    hrSignIn: links.hrLogin,
   }
 }

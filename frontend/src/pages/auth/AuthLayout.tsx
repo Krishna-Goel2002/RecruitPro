@@ -5,7 +5,7 @@ import { EvidenceLadder, Spinner, ThemeSwitch, VerdictChip } from '../../design/
 import { useDocumentTitle } from '../../design/components/PageHeader'
 import { reduced } from '../../design/motion'
 import { ArrowLeft, Icon } from '../../design/icons'
-import { siteUrl } from '../../lib/site'
+import { appLinks } from '../../design/lib/links'
 import './auth.css'
 
 /**
@@ -16,6 +16,7 @@ import './auth.css'
 export function AuthLayout() {
   const location = useLocation()
   const firstRender = useRef(true)
+  const links = appLinks()
 
   useEffect(() => {
     if (firstRender.current) {
@@ -34,9 +35,9 @@ export function AuthLayout() {
             <span className="p-wordmark">{brand.name}</span>
           </Link>
           <span className="auth-top-end">
-            <a href={siteUrl()} className="auth-site-link">
+            <a href={links.site} className="auth-site-link">
               <Icon icon={ArrowLeft} size={14} />
-              About {brand.name}
+              Back to home
             </a>
             <ThemeSwitch variant="icon" />
           </span>
@@ -55,6 +56,9 @@ export function AuthLayout() {
             </Suspense>
           </div>
         </div>
+        <p className="auth-portal-switch">
+          Hiring? <a href={links.hrLogin}>Sign in to the HR workspace</a>
+        </p>
         <p className="auth-foot">A person reviews every application. Nothing you connect is shown to employers until you choose.</p>
       </main>
       <aside className="auth-aside" aria-hidden="true">

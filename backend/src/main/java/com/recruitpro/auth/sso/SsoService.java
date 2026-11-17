@@ -10,6 +10,7 @@ import com.recruitpro.auth.service.TokenHashing;
 import com.recruitpro.auth.web.Portal;
 import com.recruitpro.common.crypto.SecretCipher;
 import com.recruitpro.common.time.UtcTime;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.organization.dto.SsoDomains;
 import com.recruitpro.organization.entity.Organization;
 import com.recruitpro.organization.repository.OrganizationRepository;
@@ -326,14 +327,7 @@ public class SsoService {
     }
 
     private static String trimSlash(String url) {
-        if (url == null) {
-            return "";
-        }
-        String trimmed = url.trim();
-        while (trimmed.endsWith("/")) {
-            trimmed = trimmed.substring(0, trimmed.length() - 1);
-        }
-        return trimmed;
+        return PortalUrls.base(url);
     }
 
     static boolean sameState(String state, String browserState) {

@@ -11,6 +11,7 @@ import com.recruitpro.common.exception.BadRequestException;
 import com.recruitpro.common.exception.DuplicateResourceException;
 import com.recruitpro.common.exception.ResourceNotFoundException;
 import com.recruitpro.common.time.UtcTime;
+import com.recruitpro.common.web.PortalUrls;
 import com.recruitpro.notification.entity.NotificationTemplate;
 import com.recruitpro.notification.service.NotificationRecipient;
 import com.recruitpro.notification.service.NotificationService;
@@ -83,7 +84,7 @@ public class InvitationService {
         this.securityUtils = securityUtils;
         this.ttlDays = Math.max(1, ttlDays);
         this.exposeLink = exposeLink;
-        this.hrPortalUrl = hrPortalUrl.endsWith("/") ? hrPortalUrl.substring(0, hrPortalUrl.length() - 1) : hrPortalUrl;
+        this.hrPortalUrl = PortalUrls.base(hrPortalUrl);
     }
 
     @Transactional

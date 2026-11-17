@@ -8,7 +8,10 @@ import { ThemeSwitch } from './ThemeSwitch'
 
 export interface AccountLink {
   label: string
-  to: string
+  /** In-app route (React Router). */
+  to?: string
+  /** A page outside this app, e.g. the landing site (a plain link, same tab). */
+  href?: string
   icon?: IconComponent
 }
 
@@ -63,11 +66,18 @@ export function AccountMenu({ name, email, detail, links = [], onSignOut, signin
         {links.length > 0 && (
           <ul className="p-account-links" role="list">
             {links.map(l => (
-              <li key={l.to}>
-                <Link to={l.to} className="p-account-link" onClick={() => setOpen(false)}>
-                  {l.icon && <Icon icon={l.icon} size={16} />}
-                  {l.label}
-                </Link>
+              <li key={l.to ?? l.href ?? l.label}>
+                {l.href ? (
+                  <a href={l.href} className="p-account-link">
+                    {l.icon && <Icon icon={l.icon} size={16} />}
+                    {l.label}
+                  </a>
+                ) : (
+                  <Link to={l.to ?? '/'} className="p-account-link" onClick={() => setOpen(false)}>
+                    {l.icon && <Icon icon={l.icon} size={16} />}
+                    {l.label}
+                  </Link>
+                )}
               </li>
             ))}
           </ul>

@@ -11,17 +11,19 @@ The API contract is `docs/plan/IMPLEMENTATION_PLAN.md` Section 5; work-package n
 
 ```bash
 pnpm install        # pnpm 10 (pnpm-workspace.yaml uses pnpm 10 settings)
-pnpm dev            # http://localhost:5173
+pnpm dev            # http://localhost:5173/candidate/ (proxies /api to http://localhost:8080)
 pnpm build          # tsc --noEmit && vite build  (gate G-FE)
 pnpm exec vite preview   # serve the production build on http://localhost:4173
 ```
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VITE_API_BASE_URL` | `http://localhost:8080/api/v1` | API base URL, compiled into the bundle (`.env.local` or Docker build arg) |
+| `VITE_API_BASE_URL` | `/api/v1` (same origin: gateway, `pnpm dev` proxy) | API base URL, compiled into the bundle (`.env.local` or Docker build arg); absolute for the per-port image |
+| `VITE_CANDIDATE_URL` | `/candidate` | where this portal lives; its path is the Vite base and router basename (`http://localhost:5173` → base `/`) |
+| `VITE_SITE_URL`, `VITE_HR_URL` | `/`, `/hr` | landing site and HR portal for the cross-links (one config: `src/design/lib/links.ts`) |
 
 The backend must list the portal's origin in `CORS_ALLOWED_ORIGINS` (credentials are allowed for configured
-origins). Docker: `docker compose up --build` builds this folder into nginx with an SPA fallback (`nginx.conf`).
+origins). Docker: the `gateway` service serves this portal at http://localhost:8088/candidate/; `docker compose --profile ports up --build` also builds this folder's own image (nginx with an SPA fallback, `nginx.conf`) on :5173.
 
 ## Sessions and security
 

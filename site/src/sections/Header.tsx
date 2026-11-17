@@ -33,7 +33,7 @@ function useActiveSection(ids: readonly string[]): string | null {
 }
 
 /**
- * Sticky header: wordmark, section links, theme toggle and the two portal entries. It gains a hairline and a
+ * Sticky header: wordmark, section links, theme toggle and the two sign-ins (candidate, HR). It gains a hairline and a
  * surface once the page scrolls. Below 1060 px the links move into a disclosure panel (Menu button; Escape closes
  * and returns focus; choosing a link closes it).
  */
@@ -83,11 +83,11 @@ export function Header({ links }: { links: PortalLinks }) {
         </nav>
         <div className="hd-end">
           <ThemeSwitch variant="icon" />
-          <a href={links.findJobs} {...buttonProps('ghost', 'md', 'hd-cta-secondary')}>
-            Find jobs
+          <a href={links.candidateSignIn} {...buttonProps('ghost', 'md', 'hd-cta-secondary')}>
+            Candidate sign in
           </a>
           <a href={links.hrSignIn} {...buttonProps('primary', 'md', 'hd-cta')}>
-            <span className="ui-btn-label">HR portal</span>
+            <span className="ui-btn-label">HR sign in</span>
             <Icon icon={ArrowRight} size={16} className="ui-btn-trailing" />
           </a>
           <IconButton
@@ -107,10 +107,13 @@ export function Header({ links }: { links: PortalLinks }) {
           <ul className="hd-panel-links">{navLinks(() => setMenuOpen(false))}</ul>
           <div className="hd-panel-ctas">
             <a href={links.hrSignIn} {...buttonProps('primary', 'lg')} data-block="">
-              <span className="ui-btn-label">For companies: HR portal</span>
+              <span className="ui-btn-label">For companies: HR sign in</span>
             </a>
-            <a href={links.findJobs} {...buttonProps('secondary', 'lg')} data-block="">
-              <span className="ui-btn-label">For candidates: find jobs</span>
+            <a href={links.candidateSignIn} {...buttonProps('secondary', 'lg')} data-block="">
+              <span className="ui-btn-label">For candidates: sign in</span>
+            </a>
+            <a href={links.findJobs} {...buttonProps('ghost', 'lg')} data-block="">
+              <span className="ui-btn-label">Find jobs</span>
             </a>
           </div>
         </nav>

@@ -25,7 +25,7 @@ export function Hero({ links }: { links: PortalLinks }) {
               <Icon icon={Building2} size={20} className="door-icon" />
               <span className="door-text">
                 <span className="door-kicker">For companies</span>
-                <span className="door-label">Open the HR portal</span>
+                <span className="door-label">HR sign in</span>
               </span>
               <Icon icon={ArrowRight} size={20} className="door-arrow" />
             </a>

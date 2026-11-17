@@ -22,6 +22,7 @@ import { flagInfo } from '../../lib/format'
 import { usePendingPoll, usePollRef } from '../../lib/hooks'
 import { lastSeen, markSeen, readFlag, writeFlag } from '../../lib/lastSeen'
 import { useSearchState } from '../../lib/useSearchState'
+import { absoluteAppUrl } from '../../lib/appUrl'
 import { ApplicantCompare } from './ApplicantCompare'
 import { ApplicantPeek } from './ApplicantPeek'
 import { applyOverride, useListDecisions } from './listDecisions'
@@ -395,7 +396,7 @@ export function ApplicantsTab({ job }: { job: JobStaff }) {
           icon={Link2}
           size="sm"
           onClick={() => {
-            const url = `${window.location.origin}${location.pathname}${location.search}`
+            const url = absoluteAppUrl(`${location.pathname}${location.search}`)
             const failed = () => toast({ tone: 'warning', title: 'Could not copy the link', body: url })
             if (!navigator.clipboard) failed()
             else void navigator.clipboard.writeText(url).then(() => toast({ tone: 'success', title: 'Link to this view copied', duration: 3000 }), failed)

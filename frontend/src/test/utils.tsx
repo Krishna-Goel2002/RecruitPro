@@ -78,9 +78,10 @@ export function mockApi(routes: MockRoute[]) {
   const unmatched: string[] = []
   const used = new Map<MockRoute, number>()
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
-    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+    // The API base is relative ("/api/v1", same origin) by default; resolve against the page like the browser does.
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.href)
     const method = (init.method ?? 'GET').toUpperCase()
-    const path = url.pathname.replace(new URL(API_BASE_URL).pathname, '')
+    const path = url.pathname.replace(new URL(API_BASE_URL, window.location.href).pathname, '')
     let body: unknown = init.body
     if (typeof init.body === 'string') {
       try {

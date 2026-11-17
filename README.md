@@ -29,12 +29,26 @@ python tools/generate_env.py   # once: writes a git-ignored .env with fresh rand
 docker compose up --build
 ```
 
+**Open http://localhost:8088 — everything is there.** One address (the `gateway` service) serves the whole product, so a demo never switches ports:
+
+| Path on http://localhost:8088 | What |
+|---|---|
+| `/` | landing site ("HR sign in", "Candidate sign in", "Find jobs") |
+| `/candidate/` (`/candidate/login`, `/candidate/jobs`, `/candidate/reference/<token>`, ...) | candidate portal |
+| `/hr/` (`/hr/login`, `/hr/jobs/1`, `/hr/accept-invite?token=...`, ...) | HR, interviewer and admin portal |
+| `/api/v1` | backend API (same origin as the pages: no CORS, CSP `connect-src 'self'`) |
+
+Everything is connected: **Sign out** in either portal returns to that portal's sign-in page ("You have signed out."); every sign-in, sign-up and password page has **← Back to home** (the landing site) and a switch to the other portal ("Hiring? Sign in to the HR workspace" / "Looking for a job? Candidate sign in"); the account menu has **RecruitPro home**; 404 pages link home. Demo click-path: landing → **HR sign in** → work in the HR portal → account menu → **Sign out** → **Back to home** → **Candidate sign in** → ... → **Sign out**.
+
+The gateway listens on `127.0.0.1:${GATEWAY_PORT:-8088}`. Not port 80 on purpose: on Windows it is often taken or reserved (IIS, the HTTP.sys "System" process, Hyper-V/WSL excluded port ranges — `netsh interface ipv4 show excludedportrange protocol=tcp`). To use another port set `GATEWAY_PORT` **and** `PUBLIC_URL` (e.g. `http://localhost:9000`) in `.env`; `GATEWAY_BIND=0.0.0.0` shows it on your network. Mailpit stays on its own address, http://localhost:8025 (moving it under `/mail/` would change Mailpit's API path, which `tools/simulate` uses).
+
+> **GitHub OAuth ("Connect with GitHub") — update the callback URL.** The backend now sends GitHub the gateway callback `http://localhost:8088/api/v1/verification/oauth/github/callback`. On github.com → Settings → Developer settings → OAuth Apps → your app, set **Authorization callback URL** to exactly that value, and in your `.env` set `GITHUB_OAUTH_REDIRECT_URI` to the same value (an `.env` made from the old `.env.example` still says `http://localhost:8080/...`, which keeps working as long as the GitHub app says the same; they must match). The same applies to SSO: register `<SSO_REDIRECT_BASE_URL>/api/v1/auth/sso/<id>/callback` with `SSO_REDIRECT_BASE_URL=http://localhost:8088`. After changing `.env` or pulling this change: `docker compose up --build -d`.
+
 | Service | URL / port |
 |---|---|
-| Candidate portal | http://localhost:5173 |
-| HR, interviewer and admin portal | http://localhost:5174 |
-| Landing site (public, static; links to both portals) | http://localhost:5170 |
-| Backend API | http://localhost:8080/api/v1 (Swagger UI: http://localhost:8080/swagger-ui.html, not in `prod`) |
+| **Everything (landing site, both portals, API)** | **http://localhost:8088** (127.0.0.1 only by default) |
+| Old per-port addresses (development) | `docker compose --profile ports up --build`: candidate portal http://localhost:5173, HR portal http://localhost:5174, landing site http://localhost:5170 (same apps built with base `/` and the absolute API URL); stop with `docker compose --profile ports down` |
+| Backend API (direct) | http://localhost:8080/api/v1 (Swagger UI: http://localhost:8080/swagger-ui.html, not in `prod`) |
 | AI service | not published (internal network, no egress): `docker compose exec ai-service python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8000/health').read().decode())"` (the same line works in PowerShell) |
 | Agent service (verification agents) | http://localhost:8100/health (127.0.0.1 only) |
 | Mailpit (every outgoing email) | http://localhost:8025 (SMTP on 1025; 127.0.0.1 only) |
@@ -52,11 +66,11 @@ With `APP_SEED_DEMO=true` (the compose default) the backend creates the organisa
 
 | Email | Role | Sign in at |
 |---|---|---|
-| admin@acme.test | ADMIN (organisation administrator) | HR portal, :5174 |
-| hr@acme.test | HR_MANAGER | HR portal, :5174 |
-| recruiter@acme.test | RECRUITER | HR portal, :5174 |
-| interviewer@acme.test | INTERVIEWER | HR portal, :5174 |
-| candidate@demo.test | CANDIDATE | Candidate portal, :5173 |
+| admin@acme.test | ADMIN (organisation administrator) | HR portal, http://localhost:8088/hr/login |
+| hr@acme.test | HR_MANAGER | HR portal, http://localhost:8088/hr/login |
+| recruiter@acme.test | RECRUITER | HR portal, http://localhost:8088/hr/login |
+| interviewer@acme.test | INTERVIEWER | HR portal, http://localhost:8088/hr/login |
+| candidate@demo.test | CANDIDATE | Candidate portal, http://localhost:8088/candidate/login |
 
 Seeding is idempotent and never runs in the `prod` profile. It also creates, for "Backend Engineer (Java)", an interview kit, a work sample, Casey's application in INTERVIEWING with a scored work sample, a completed interview with a scorecard and a scheduled interview; and for verification, Acme Labs in VISIBLE mode with Casey's GitHub source `demo-asha` and shared verdicts (synthetic data). See guide section 5.
 
@@ -73,7 +87,7 @@ Seeding is idempotent and never runs in the `prod` profile. It also creates, for
 
 The guide uses a candidate account **Asha Synthetica, `asha.demo@example.com`** that you register yourself (section 5.3).
 
-**Separate sessions per portal.** Both portals can be signed in at the same time in one browser. Each sends `X-RecruitPro-Portal: candidate|staff` and gets its own refresh cookie (`rp_refresh_candidate` / `rp_refresh_staff`). A staff account cannot sign in on the candidate portal and a candidate cannot sign in on the HR portal (403 with an explanation).
+**Separate sessions per portal.** Both portals can be signed in at the same time in one browser (also on the one gateway origin: the refresh cookies have `Path=/api/v1/auth` and different names). Each sends `X-RecruitPro-Portal: candidate|staff` and gets its own refresh cookie (`rp_refresh_candidate` / `rp_refresh_staff`). A staff account cannot sign in on the candidate portal and a candidate cannot sign in on the HR portal (403 with an explanation).
 
 ### First account on a fresh installation
 
@@ -111,13 +125,15 @@ Every variable except the four generated secrets has a development default; the 
 | `AGENT_SERVICE_TOKEN`, `AGENT_SERVICE_URL` | backend + agent service | compose dev value, `http://localhost:8100` | verification agent service (header `X-Internal-Service-Token`) |
 | `AGENT_DEMO_FIXTURES`, `AGENT_LLM_PROVIDER`, `AGENT_GITHUB_TOKEN` | agent service | `true` (local only), `none`, empty | offline `demo-*` fixtures (**must be `false` outside demos**); optional summary LLM; GitHub API token for real runs |
 | `APP_ENCRYPTION_KEY` | backend | compose dev key; empty elsewhere | 32 bytes Base64 (AES-256-GCM). Needed for MFA, SSO and GitHub OAuth; without it they are unavailable |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI` | backend | empty, empty, `http://localhost:8080/api/v1/verification/oauth/github/callback` | "Connect with GitHub" (OAuth + PKCE, browser-bound state); empty = username + bio code only |
-| `SSO_REDIRECT_BASE_URL`, `SSO_GOOGLE_*`, `SSO_MICROSOFT_*`, `SSO_OIDC_*` | backend | `http://localhost:8080`, empty | staff single sign-on providers (shown only when configured) |
+| `GATEWAY_PORT`, `GATEWAY_BIND`, `PUBLIC_URL` | compose (gateway, backend links) | `8088`, `127.0.0.1`, `http://localhost:8088` | the single address; `PUBLIC_URL` builds `CANDIDATE_PORTAL_URL` (`<PUBLIC_URL>/candidate`), `HR_PORTAL_URL` (`/hr`) and the CORS list |
+| `VITE_SITE_URL`, `VITE_CANDIDATE_URL`, `VITE_HR_URL`, `VITE_API_BASE_URL` | the three web apps (build time) | `/`, `/candidate`, `/hr`, `/api/v1` | one link config for every cross-link (`src/design/lib/links.ts`, shared by all three apps): a same-origin path (gateway) or an absolute URL (per-port images). A portal's own entry also sets its Vite base and router basename |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI` | backend | empty, empty, `http://localhost:8088/api/v1/verification/oauth/github/callback` (compose) | "Connect with GitHub" (OAuth + PKCE, browser-bound state); empty = username + bio code only |
+| `SSO_REDIRECT_BASE_URL`, `SSO_GOOGLE_*`, `SSO_MICROSOFT_*`, `SSO_OIDC_*` | backend | `http://localhost:8088` (compose; `http://localhost:8080` outside it), empty | staff single sign-on providers (shown only when configured) |
 | `RATE_LIMIT_STORE`, `METRICS_PUBLIC` | backend | `memory`, `false` | `database` for several backend instances; `/actuator/prometheus` without a token |
 | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | backend | `jdbc:postgresql://localhost:5432/recruitpro`, `recruitpro`, `recruitpro` | PostgreSQL 16 (required in `prod`) |
 | `SPRING_PROFILES_ACTIVE` | backend | `dev` | `dev`, `prod` or `test` |
-| `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:5173,http://localhost:5174` | portal origins (credentials allowed; no `*`) |
-| `CANDIDATE_PORTAL_URL`, `HR_PORTAL_URL` | backend | `http://localhost:5173`, `:5174` | links in emails |
+| `CORS_ALLOWED_ORIGINS` | backend | compose: `http://localhost:8088,http://localhost:5173,http://localhost:5174` | portal origins for the per-port mode (credentials allowed; no `*`); the gateway is same-origin |
+| `CANDIDATE_PORTAL_URL`, `HR_PORTAL_URL` | backend | compose: `http://localhost:8088/candidate`, `http://localhost:8088/hr`; outside compose `http://localhost:5173/candidate`, `http://localhost:5174/hr` (`pnpm dev`) | links in emails and redirects; a path is kept (`common.web.PortalUrls`) |
 | `AUTH_COOKIE_SECURE` | backend | `false` in dev, `true` otherwise | `Secure` flag of the refresh cookies |
 | `AUTH_REQUIRE_VERIFIED_EMAIL_TO_APPLY` | backend | `false` (prod `true`) | candidates verify their email before applying |
 | `RATE_LIMIT_ENABLED`, `ORG_SELF_SIGNUP_ENABLED` | backend | `true`, `true` | per-IP limits on auth routes; organisation sign-up |
@@ -129,10 +145,10 @@ Every variable except the four generated secrets has a development default; the 
 | `LLM_PROVIDER`, `LLM_MODEL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_API_KEY` | AI service | `none` | optional LLM enhancement (only de-identified text is sent) |
 | `PARSE_WORKERS`, `PARSE_TIMEOUT_SECONDS`, `MAX_UPLOAD_BYTES`, `OCR_ENABLED` | AI service | `2`, `60`, 10 MiB, `false` | parsing limits; OCR needs `requirements-ocr.txt` (installed in the default Docker image) |
 | `RETENTION_ENABLED`, `RETENTION_CRON`, `RETENTION_AUDIT_DAYS` | backend | `true`, `0 30 3 * * *`, `730` | daily data-retention purge (`Kshitij-redesign`) |
-| `VITE_API_BASE_URL` | both portals (build time) | `http://localhost:8080/api/v1` | API base URL compiled into the bundle |
-| `API_ORIGIN` | both portal images (run time) | `http://localhost:8080` | origin of `VITE_API_BASE_URL`, written into the nginx CSP `connect-src`; change it together with `VITE_API_BASE_URL` |
+| `VITE_API_BASE_URL` | both portals (build time) | `/api/v1` (gateway and `pnpm dev`); per-port images `http://localhost:8080/api/v1` | API base URL compiled into the bundle |
+| `API_ORIGIN` | per-port portal images (run time) | `http://localhost:8080` | origin of `VITE_API_BASE_URL`, written into the nginx CSP `connect-src`; change it together with `VITE_API_BASE_URL` (the gateway needs none: `connect-src 'self'`) |
 
-The refresh cookies are `SameSite=Strict` (the GitHub OAuth binding cookie is `SameSite=Lax`), so each portal and the API must be on the same site (`localhost:5173` → `localhost:8080` works; in production use e.g. `jobs.example.com`, `hr.example.com` and `api.example.com`).
+The refresh cookies are `SameSite=Strict` (the GitHub OAuth binding cookie is `SameSite=Lax`), so each portal and the API must be on the same site. The gateway puts them on one origin (`localhost:8088/hr` → `localhost:8088/api/v1`); the per-port mode is same-site too (`localhost:5173` → `localhost:8080`). In production, one domain behind a gateway like `gateway/nginx.conf` (set `PUBLIC_URL`, `SSO_REDIRECT_BASE_URL`, `GITHUB_OAUTH_REDIRECT_URI`; the web apps need no rebuild) or e.g. `jobs.example.com`, `hr.example.com` and `api.example.com` with absolute `VITE_*` URLs.
 
 ## Manual setup (without Docker)
 
@@ -169,12 +185,14 @@ Requirements: JDK 21, Node.js 22 with pnpm 10, Python 3.10–3.12 (CI and the im
    With `MAIL_ENABLED=false` (default outside Docker) emails are not sent; verification, reset and invitation links are written to the backend log.
 5. **Portals** (two terminals, each from the repository root; `pnpm dev` keeps running)
    ```bash
-   cd frontend && pnpm install && pnpm dev       # terminal 1: http://localhost:5173
-   cd hr-frontend && pnpm install && pnpm dev    # terminal 2: http://localhost:5174
+   cd frontend && pnpm install && pnpm dev       # terminal 1: http://localhost:5173/candidate/
+   cd hr-frontend && pnpm install && pnpm dev    # terminal 2: http://localhost:5174/hr/
    cd site && pnpm install && pnpm dev           # optional, landing site: http://localhost:5170
    ```
-   The landing site's calls to action use `VITE_HR_URL` and `VITE_CANDIDATE_URL` (defaults `:5174` and `:5173`); the
-   candidate portal's signed-out pages link back to `VITE_SITE_URL` (default `http://localhost:5170`).
+   The portals are served under `/candidate/` and `/hr/` (the gateway's paths) and proxy `/api` to the backend on
+   :8080 (`VITE_DEV_API_TARGET`), so the default same-origin API URL works. Cross-links (landing site, the other
+   portal) default to the gateway paths; for separate dev servers set e.g. `VITE_SITE_URL=http://localhost:5170`
+   `VITE_HR_URL=http://localhost:5174/hr` in `frontend/.env.local` (one config: `src/design/lib/links.ts`).
 
 ## Verification gates
 
@@ -201,7 +219,8 @@ Run all of these before merging. CI (`.github/workflows/ci.yml`, on every push t
 ## Architecture
 
 ```
- Candidate portal (5173)          HR / interviewer / admin portal (5174)      React 18 + TypeScript, nginx
+ Gateway http://localhost:8088:  /  landing site   /candidate/  /hr/  (static files)   /api/  -> backend:8080
+ Candidate portal (/candidate)    HR / interviewer / admin portal (/hr)       React 18 + TypeScript, nginx
    X-RecruitPro-Portal: candidate     X-RecruitPro-Portal: staff
             \                              /
              \  REST + JSON; access token in memory; refresh token in a per-portal httpOnly cookie
@@ -242,7 +261,8 @@ ai-service/     FastAPI resume intelligence service and evaluation harness (eval
 agent-service/  FastAPI verification agents (code, web, document, badge, reference) and evaluation harness (eval/)
 frontend/       Candidate portal (Vite + React)
 hr-frontend/    HR, interviewer and administration portal (Vite + React)
-site/           Public landing page (Vite + React, static, nginx with a strict CSP; compose service `site`, port 5170)
+site/           Public landing page (Vite + React, static, nginx with a strict CSP; served at / by the gateway)
+gateway/        Single-origin nginx (compose service `gateway`, :8088): builds the three web apps, serves them, proxies /api
 docs/           Handbook, guides (run and test), architecture, database, the implementation plans and STATUS.md
 tools/          Checks used locally and in CI (migrations, entity/schema, Java static, design sync, taxonomy sync),
                 totp.py (MFA codes for demos) and ui-snapshots/ (headless screenshot harness, Kshitij-redesign)

@@ -9,9 +9,14 @@ RUN npm install -g pnpm@10
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --network-concurrency=4
 COPY . .
-# The API base URL is compiled into the bundle by Vite.
+# Per-port image (compose profile "ports"; the single-origin gateway builds its own copy, gateway/Dockerfile).
+# Compiled into the bundle by Vite (src/design/lib/links.ts): the API base URL and the three app addresses for the
+# cross-links. Absolute URLs here make this portal's base path "/" (its own port).
 ARG VITE_API_BASE_URL=http://localhost:8080/api/v1
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+ARG VITE_SITE_URL=http://localhost:5170
+ARG VITE_CANDIDATE_URL=http://localhost:5173
+ARG VITE_HR_URL=http://localhost:5174
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} VITE_SITE_URL=${VITE_SITE_URL} VITE_CANDIDATE_URL=${VITE_CANDIDATE_URL} VITE_HR_URL=${VITE_HR_URL}
 RUN pnpm build
 
 FROM nginx:1.27-alpine

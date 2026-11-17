@@ -6,6 +6,7 @@ import { AuthProvider } from './auth/AuthProvider'
 import { PublicOnly, RequireAuth } from './auth/guards'
 import { Layout } from './components/Layout'
 import { ToastProvider } from './design/components'
+import { routerBasename } from './design/lib/links'
 import { AuthLayout } from './pages/auth/AuthLayout'
 import { LoginPage } from './pages/auth/LoginPage'
 
@@ -54,7 +55,8 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      {/* /candidate behind the gateway, / on its own port: the Vite base (vite.config.ts) decides both. */}
+      <BrowserRouter basename={routerBasename(import.meta.env.BASE_URL)} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ToastProvider>
           <AuthProvider>
             <Routes>
