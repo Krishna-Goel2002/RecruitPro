@@ -135,6 +135,19 @@ let refreshInFlight: Promise<RefreshOutcome> | null = null
  * Single-flight refresh: concurrent callers share one request, so one rotation happens per expiry.
  * `unauthorized` clears the session; a network failure leaves it alone (the server may just be unreachable).
  */
+/** Delays between session-restore attempts when the server is briefly unreachable (e.g. the backend is restarting). */
+export const RESTORE_RETRY_DELAYS_MS: readonly number[] =
+  import.meta.env.MODE === 'test' ? [] : [1000, 2000, 4000, 8000] // unit tests: no waiting
+
+/** Like {@link refreshSession}, but retries a "network" outcome (no answer, 5xx, 429) with backoff before giving up. */
+export async function restoreSession(delays: readonly number[] = RESTORE_RETRY_DELAYS_MS): Promise<RefreshOutcome> {
+  for (let attempt = 0; ; attempt++) {
+    const outcome = await refreshSession()
+    if (outcome.kind !== 'network' || attempt >= delays.length) return outcome
+    await new Promise(resolve => setTimeout(resolve, delays[attempt]))
+  }
+}
+
 export function refreshSession(): Promise<RefreshOutcome> {
   if (!refreshInFlight) {
     refreshInFlight = (async (): Promise<RefreshOutcome> => {

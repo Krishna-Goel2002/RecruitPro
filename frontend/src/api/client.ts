@@ -252,6 +252,30 @@ async function performRefresh(): Promise<AuthResponse | null> {
  * Exchanges the refresh cookie for a new access token. Concurrent callers share one request.
  * Resolves `null` when the server refuses the cookie (signed out); rejects with `ApiError` on network/5xx/429.
  */
+/** Delays between session-restore attempts when the server is briefly unreachable (e.g. the backend is restarting). */
+export const RESTORE_RETRY_DELAYS_MS: readonly number[] =
+  import.meta.env.MODE === 'test' ? [] : [1000, 2000, 4000, 8000] // unit tests: no waiting
+
+function isTransient(error: unknown): boolean {
+  return error instanceof ApiError ? error.status === 0 || error.status === 429 || error.status >= 500 : true
+}
+
+/**
+ * Like {@link refreshSession}, but retries transient failures (network error, 5xx, 429) with backoff, so a reload while
+ * the backend restarts (or right after an OAuth redirect) does not sign the user out. Rejects only after the last try.
+ */
+export async function restoreSession(delays: readonly number[] = RESTORE_RETRY_DELAYS_MS): Promise<AuthResponse | null> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await refreshSession()
+    } catch (error) {
+      if (attempt >= delays.length || !isTransient(error)) throw error
+      const retryAfter = error instanceof ApiError && error.retryAfterSeconds ? error.retryAfterSeconds * 1000 : 0
+      await new Promise(resolve => setTimeout(resolve, Math.min(10_000, Math.max(delays[attempt], retryAfter))))
+    }
+  }
+}
+
 export function refreshSession(): Promise<AuthResponse | null> {
   if (refreshBlocked) return Promise.resolve(null)
   if (!refreshInFlight) {

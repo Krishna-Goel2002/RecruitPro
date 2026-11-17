@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useLocation } from 'react-router-dom'
-import { ApiError, blockRefreshUntilSignIn, refreshSession, setAccessToken, subscribeSession } from '../api/client'
+import { ApiError, blockRefreshUntilSignIn, restoreSession, setAccessToken, subscribeSession } from '../api/client'
 import { authApi } from '../api/endpoints'
 import type { AuthResponse, AuthUser, LoginRequest, RegisterRequest } from '../api/types'
 
@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (restoring.current) return
     restoring.current = true
     setState(current => ({ ...current, status: 'loading' }))
-    refreshSession()
+    restoreSession()
       .then(auth => {
         if (!auth) {
           setState({ status: 'anonymous', user: null, reason: null })

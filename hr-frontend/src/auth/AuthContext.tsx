@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { authApi } from '../api/auth'
-import { ApiError, onSessionChange, refreshSession, setSession } from '../api/client'
+import { ApiError, onSessionChange, refreshSession, restoreSession, setSession } from '../api/client'
 import type { AuthResponse, AuthUser } from '../api/types'
 import { flushDeferredCommits } from '../lib/deferredCommit'
 import { Capability, can as roleCan, isStaff } from './permissions'
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Session restore: the refresh cookie is httpOnly, so ask the server for a fresh access token.
   useEffect(() => {
     let cancelled = false
-    void refreshSession().then(async outcome => {
+    void restoreSession().then(async outcome => {
       if (cancelled) return
       if (outcome.kind === 'ok' && !isStaff(outcome.auth.user.role)) {
         await authApi.logout().catch(() => undefined)
